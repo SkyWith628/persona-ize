@@ -1,0 +1,5 @@
+graphiti-core==0.31.2
+# graphiti-core 0.31.2는 httpx를 import하지만 의존성으로 선언하지 않는다 (openai 3.x는 httpx2를 쓴다).
+httpx==0.28.1
+python-dotenv==1.2.4
+pytest==9.2.0
