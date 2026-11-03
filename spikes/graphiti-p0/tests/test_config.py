@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import pytest
 
-from p0.config import DEFAULT_GROUP_ID, ConfigError, load_settings
+from p0.config import DEFAULT_GROUP_ID, DEFAULT_LLM_MODEL, ConfigError, load_settings
 
 KEYS = (
-    "NEO4J_URI", "NEO4J_USER", "NEO4J_USERNAME", "NEO4J_PASSWORD", "OPENAI_API_KEY",
+    "NEO4J_URI", "NEO4J_USER", "NEO4J_USERNAME", "NEO4J_PASSWORD", "ANTHROPIC_API_KEY", "VOYAGE_API_KEY",
     "LLM_MODEL", "LLM_SMALL_MODEL", "EMBEDDING_MODEL", "EMBEDDING_DIM", "GROUP_ID",
 )
 
@@ -21,7 +21,8 @@ def clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
 def _set_required(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("NEO4J_URI", "neo4j+s://example.databases.neo4j.io")
     monkeypatch.setenv("NEO4J_PASSWORD", "pw")
-    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setenv("VOYAGE_API_KEY", "test-key")
 
 
 def test_aura_username_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -30,7 +31,7 @@ def test_aura_username_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     settings = load_settings("nonexistent.env")
     assert settings.neo4j_user == "neo4j"
     assert settings.group_id == DEFAULT_GROUP_ID
-    assert settings.llm_model is None
+    assert settings.llm_model == DEFAULT_LLM_MODEL
 
 
 def test_missing_required_raises(monkeypatch: pytest.MonkeyPatch) -> None:

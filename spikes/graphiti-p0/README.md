@@ -20,7 +20,7 @@
 
 1. **Neo4j Aura Free 인스턴스 생성**: https://console.neo4j.io 에서 가입 → New Instance → Free.
    생성 직후 내려받는 접속 파일(`Neo4j-xxxx.txt`)에 URI·사용자·비밀번호가 있다. 비밀번호는 이때만 보여준다.
-2. **OpenAI API 키 발급**: https://platform.openai.com/api-keys
+2. **Anthropic API 키**(https://console.anthropic.com, 월 사용 한도 먼저 설정)와 **Voyage API 키**(https://dash.voyageai.com) 발급
 3. `.env.example`을 `.env`로 복사하고 위 값을 채운다. `.env`는 `.gitignore`에 포함되어 있다.
 
 ```bash
@@ -51,7 +51,7 @@ py -3.14 -m venv .venv
 .venv/Scripts/python.exe ingest.py --dry-run
 ```
 
-**먼저 5개만** 넣어 비용과 시간을 본다. OpenAI 사용량 페이지에서 비용을 확인한 뒤 전체를 넣는다.
+**먼저 5개만** 넣어 비용과 시간을 본다. Anthropic·Voyage 사용량 페이지에서 비용을 확인한 뒤 전체를 넣는다.
 
 ```bash
 .venv/Scripts/python.exe ingest.py --limit 5
@@ -102,7 +102,7 @@ RETURN a.name, r.fact, r.valid_at, r.invalid_at, b.name
 |---|---|
 | 사용 모델 (LLM / 임베딩) | |
 | 에피소드당 평균 시간 | |
-| 36개 수집 총비용 (OpenAI 사용량 기준) | |
+| 36개 수집 총비용 (Anthropic+Voyage 사용량 기준) | |
 | 인물 병합 PASS 수 / 5 | |
 | 무효화 엣지 수 (이서연 관계 변화 반영?) | |
 | 커스텀 속성이 채워진 엣지 비율 | |
@@ -116,7 +116,7 @@ RETURN a.name, r.fact, r.valid_at, r.invalid_at, b.name
 | `p0/schema.py` | 커스텀 타입 `Person`·`Event`, 엣지 `Relationship`·`Involved`, 한국어 추출 규칙 |
 | `p0/episodes.py` | 데이터셋 JSON → 시간 순 에피소드 (잘못된 메시지는 건너뛰지 않고 오류) |
 | `p0/config.py` | `.env` 로딩 (Aura의 `NEO4J_USERNAME` 지원) |
-| `p0/graph.py` | OpenAI LLM·임베딩 + Neo4j로 Graphiti 구성 |
+| `p0/graph.py` | Claude LLM·Voyage 임베딩 + Neo4j로 Graphiti 구성 (리랭커는 패스스루) |
 | `ingest.py` | 순차 수집, 실패 시 중단, `runs/` 보고서 |
 | `inspect_graph.py` | 엔티티·사실 출력, 점검표, 검색, group 단위 삭제 |
 | `data/sample_conversations.json` | 합성 대화 4개방 36메시지 + 점검 기준 |
@@ -125,7 +125,7 @@ RETURN a.name, r.fact, r.valid_at, r.invalid_at, b.name
 
 - `graphiti-core==0.31.2`는 `httpx`를 import하지만 의존성으로 선언하지 않아 `requirements.txt`에 따로 고정했다.
   openai 3.x SDK는 `httpx2`를 쓴다. 두 패키지가 함께 설치되어도 import는 정상 동작함을 확인했다.
-- **실제 API 호출은 아직 검증하지 않았다.** Aura와 OpenAI 키가 없어 테스트·dry-run·import까지만 확인했다.
+- **실제 API 호출은 아직 검증하지 않았다.** Aura와 API 키가 없어 테스트·dry-run·import까지만 확인했다.
   첫 `--limit 5` 실행에서 오류가 나면 `runs/` 보고서의 `failed` 항목을 확인한다.
 - `SEMAPHORE_LIMIT`는 graphiti 모듈 import 시점에 읽히므로, 스크립트는 `.env`를 먼저 읽고 graphiti를 import한다.
 - 에피소드는 메시지 1개 단위다. 팀 설계의 "2~6턴 묶음"과 비교하려면 `p0/episodes.py`에서 묶음 단위로 바꿔 다시 실행한다.

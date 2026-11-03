@@ -8,8 +8,11 @@ from dataclasses import dataclass
 from dotenv import load_dotenv
 
 DEFAULT_GROUP_ID = "p0-sample"
-DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small"
-DEFAULT_EMBEDDING_DIM = 1536
+# graphiti AnthropicClient가 강제 tool_choice로 구조화 출력을 받는다. 5.5 계열은 강제 tool_choice가 400이라
+# 기본은 4.5 Haiku를 쓴다. 다른 모델은 LLM_MODEL로 지정하기 전에 소규모로 검증한다.
+DEFAULT_LLM_MODEL = "claude-haiku-4-5"
+DEFAULT_EMBEDDING_MODEL = "voyage-3.5"  # 미검증: 첫 호출에서 모델명 오류가 나면 Voyage 문서 확인
+DEFAULT_EMBEDDING_DIM = 1024
 
 
 class ConfigError(RuntimeError):
@@ -18,13 +21,14 @@ class ConfigError(RuntimeError):
 
 @dataclass(frozen=True)
 class Settings:
-    """Neo4j·OpenAI 접속 정보와 실험 범위(group_id)."""
+    """Neo4j·Anthropic·Voyage 접속 정보와 실험 범위(group_id)."""
 
     neo4j_uri: str
     neo4j_user: str
     neo4j_password: str
-    openai_api_key: str
-    llm_model: str | None
+    anthropic_api_key: str
+    voyage_api_key: str
+    llm_model: str
     llm_small_model: str | None
     embedding_model: str
     embedding_dim: int
@@ -59,8 +63,9 @@ def load_settings(env_file: str | None = None) -> Settings:
         neo4j_uri=_required("NEO4J_URI"),
         neo4j_user=_required("NEO4J_USER", "NEO4J_USERNAME"),
         neo4j_password=_required("NEO4J_PASSWORD"),
-        openai_api_key=_required("OPENAI_API_KEY"),
-        llm_model=os.getenv("LLM_MODEL", "").strip() or None,
+        anthropic_api_key=_required("ANTHROPIC_API_KEY"),
+        voyage_api_key=_required("VOYAGE_API_KEY"),
+        llm_model=os.getenv("LLM_MODEL", "").strip() or DEFAULT_LLM_MODEL,
         llm_small_model=os.getenv("LLM_SMALL_MODEL", "").strip() or None,
         embedding_model=os.getenv("EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL).strip(),
         embedding_dim=embedding_dim,

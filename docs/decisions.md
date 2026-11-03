@@ -7,3 +7,9 @@
 - 리스크: 그래프 수집 비용·한국어 추출 품질 미검증 → 1주차에 스파이크 `--limit 5`로 확인, 실패하면 D 범위를 축소(관계·사건 질의 사례 한정).
 - 리스크: 공모전 공고 미정 → 3주차 말(11/22)에 시연 가능한 체크포인트를 만든다.
 - 예산: 인당 구독 $20/월은 API와 별개. 팀 공용 API 한도를 정해(초안 $50~100, 미확정) 사용량 알림을 건다.
+
+## 2026-11-04 모델 제공자: Claude + Voyage
+- 결정: LLM은 Anthropic Claude, 임베딩은 Voyage AI(`voyage-3.5`, 1024차원). Graphiti 리랭커는 패스스루(OpenAI 기본값 제거). OpenAI 키는 쓰지 않는다.
+- 이유: Anthropic은 임베딩 모델이 없고 Voyage를 권장한다. 키 두 개(Anthropic, Voyage)로 통일.
+- 제약: graphiti `AnthropicClient`는 강제 `tool_choice`를 쓰는데 Sonnet/Opus 5.5는 이를 400으로 거부한다. 그래프 수집은 `claude-haiku-4-5`로 시작하고, 5.5 계열은 소규모 검증 후에만 쓴다. 첨삭·검증 코드는 직접 작성하므로 구조화 출력을 쓴다.
+- 미검증: Voyage 모델명·한국어 검색 품질, Claude 한국어 그래프 추출 품질. 임베딩 차원이 바뀌었으므로 기존 Aura 데이터는 `--reset` 필요.
