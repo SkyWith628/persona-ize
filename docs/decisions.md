@@ -32,3 +32,9 @@
 - 결정: 11/08 뼈대가 코드를 대체하고(`spikes/` → `graph/graphiti_p0/`), 원격 이력은 `-s ours` 병합으로 보존한다. 원격에만 있던 리랭커 패스스루·haiku-4-5 제약·PR 템플릿·데이터셋 가이드는 이식한다.
 - 결정: **평가셋 열은 `docs/dataset-guide.md`(비전공자용) 기준**으로 통일한다 — `case_id, relation, situation, original_text, preserve_items, must_not_change, expected_notes, needs_graph, relevant_msg_ids, as_of, split`. 등장인물 표는 `evals/characters.csv`로 두고 `relation`→`relationship_type` 매핑은 거기서 한다. 메시지 참조는 `대화방id:메시지id`(예 `c1:m03`), `graph/graph_queries.csv`와 같다.
 - 이유: 팀원이 이미 가이드를 보고 작성할 수 있으므로 코드가 가이드를 따르는 쪽이 맞다.
+
+## 2026-11-08 그래프 스파이크 첫 수집: Aura Free + haiku-4-5, 판정은 36개 후
+- 상황: 이 Windows PC에 Docker가 없어 Neo4j는 **Aura Free**(`neo4j+s://`)로 돌렸다. 앞 5개 에피소드 수집 성공, 에피소드당 10.8~13.8초. 호칭 병합·관계 무효화·커스텀 속성·한국어 검색은 5개 규모에서 PASS (`graph/graph-spike-report.md`).
+- 결정: D 진행/축소 판정은 36개 전체 수집 뒤로 미룬다. 5개에는 이서연 관계 변화 장면과 다른 인물이 없어 핵심 기준(5명 병합, 이서연 무효화)을 아직 못 봤다.
+- 결정: 로컬 Neo4j 컨테이너 기본은 유지하되 Docker 없는 PC는 Aura Free를 공식 대안으로 둔다. Aura TLS 루트 문제는 certifi 번들 지정으로 코드에서 해결했다.
+- 리스크: `valid_at` 시간대가 KST·UTC로 섞여 들어오고 "다음 주 수요일"이 날짜로 바뀌지 않는다 → 36개 수집 전 추출 지시에 시간대 규칙을 넣을지 결정. graphiti 0.31.2와 anthropic SDK 2.x 사이 호환 패치(`temperature` 제거)가 필요했으므로 graphiti 버전을 고정한다.

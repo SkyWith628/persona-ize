@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from graphiti_core import Graphiti
 from graphiti_core.cross_encoder.client import CrossEncoderClient
 from graphiti_core.embedder.client import EmbedderClient
@@ -21,6 +23,32 @@ class PassthroughReranker(CrossEncoderClient):
     async def rank(self, query: str, passages: list[str]) -> list[tuple[str, float]]:
         total = len(passages)
         return [(passage, float(total - i)) for i, passage in enumerate(passages)]
+
+
+class _MessagesWithoutTemperature:
+    """`messages.create(...)`에서 `temperature`를 떼어내고 나머지는 그대로 SDK에 넘긴다.
+
+    anthropic SDK 2.x는 `messages.create`에서 temperature 인자를 없앴는데, graphiti-core 0.31.2의
+    AnthropicClient는 여전히 넘겨서 TypeError가 난다 (2026-11-08 `--limit 5` 첫 실행에서 발견).
+    """
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+    async def create(self, **kwargs: Any) -> Any:
+        kwargs.pop("temperature", None)
+        return await self._inner.create(**kwargs)
+
+
+class GraphAnthropicClient(AnthropicClient):
+    """graphiti의 AnthropicClient를 현재 anthropic SDK와 맞춘다 (temperature 제거)."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.client.messages = _MessagesWithoutTemperature(self.client.messages)
 
 
 def build_embedder(settings: Settings) -> EmbedderClient:
@@ -62,7 +90,7 @@ def build_graphiti(settings: Settings) -> Graphiti:
         settings.neo4j_uri,
         settings.neo4j_user,
         settings.neo4j_password,
-        llm_client=AnthropicClient(config=llm_config),
+        llm_client=GraphAnthropicClient(config=llm_config),
         embedder=build_embedder(settings),
         cross_encoder=PassthroughReranker(),
     )

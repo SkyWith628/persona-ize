@@ -7,7 +7,8 @@ Anthropic은 임베딩 API가 없으므로 임베딩 제공자를 따로 고른�
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Literal
 
 from dotenv import load_dotenv
@@ -36,13 +37,13 @@ class Settings:
 
     neo4j_uri: str
     neo4j_user: str
-    neo4j_password: str
-    anthropic_api_key: str | None
+    neo4j_password: str = field(repr=False)  # 로그·테스트 출력에 비밀값이 찍히지 않게 repr에서 제외
+    anthropic_api_key: str | None = field(repr=False)
     llm_model: str
     embedding_provider: EmbeddingProvider
     embedding_model: str
     embedding_dim: int
-    voyage_api_key: str | None
+    voyage_api_key: str | None = field(repr=False)
     group_id: str
 
 
@@ -59,13 +60,52 @@ def _optional(name: str) -> str | None:
     return os.getenv(name, "").strip() or None
 
 
+def _find_env_upwards(env_file: Path) -> Path | None:
+    """`env_file`이 있으면 그대로, 없으면 같은 이름의 파일을 상위 폴더에서 차례로 찾는다."""
+    env_file = env_file.resolve()
+    for folder in (env_file.parent, *env_file.parent.parents):
+        candidate = folder / env_file.name
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def ensure_ca_bundle() -> str | None:
+    """SSL_CERT_FILE이 비어 있으면 certifi 번들을 지정한다. 지정한 경로를 돌려준다(없으면 None).
+
+    Aura(`neo4j+s://`)의 인증서는 SSL.com 루트로 서명돼 있는데, Windows는 루트 인증서를 처음 쓸 때
+    내려받으므로 새 PC의 로컬 저장소에 없을 수 있다. Python의 neo4j 드라이버는 로컬 저장소만 읽어
+    "self-signed certificate in certificate chain"으로 실패한다 (2026-11-08). certifi 번들을 함께 신뢰하면
+    해결되며, Python은 Windows 저장소와 SSL_CERT_FILE을 둘 다 읽는다.
+    사용자가 이미 지정했으면 건드리지 않는다.
+    """
+    if os.getenv("SSL_CERT_FILE", "").strip():
+        return None
+    try:
+        import certifi
+    except ImportError:  # 선택 의존성. 없으면 시스템 저장소만 쓴다.
+        return None
+    path = certifi.where()
+    os.environ["SSL_CERT_FILE"] = path
+    return path
+
+
 def load_settings(env_file: str | None = None) -> Settings:
     """`.env`를 읽어 Settings를 만든다.
 
     - ANTHROPIC_API_KEY가 비어 있어도 막지 않는다 (SDK가 `ant auth login` 프로필을 읽을 수 있다).
     - EMBEDDING_PROVIDER=voyage면 VOYAGE_API_KEY가 필수다.
+    - TLS 검증에 certifi 번들을 추가한다 (`ensure_ca_bundle`). 드라이버를 만들기 전에 호출해야 효과가 있다.
+    - `env_file`을 넘겼는데 그 파일이 없으면 상위 폴더를 거슬러 가장 가까운 `.env`(보통 저장소 루트)를 쓴다.
+      스파이크 폴더에 `.env`를 따로 두지 않고 루트 `.env` 하나만 관리하기 위해서다.
     """
-    load_dotenv(env_file)
+    if env_file is None:
+        load_dotenv()
+    else:
+        found = _find_env_upwards(Path(env_file))
+        if found is not None:
+            load_dotenv(found)
+    ensure_ca_bundle()
 
     provider_raw = (
         os.getenv("EMBEDDING_PROVIDER", DEFAULT_EMBEDDING_PROVIDER).strip() or DEFAULT_EMBEDDING_PROVIDER

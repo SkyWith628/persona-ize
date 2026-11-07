@@ -13,7 +13,7 @@
 | 추출 LLM | **Claude** (`GRAPH_LLM_MODEL`, 기본 `claude-haiku-4-5`) | 팀 API 키가 Anthropic. graphiti의 강제 `tool_choice`를 5.5 계열이 400으로 거부해 4.5 Haiku로 시작 |
 | 임베딩 | **로컬 sentence-transformers** (`intfloat/multilingual-e5-small`) 또는 Voyage AI | Anthropic에 임베딩 API가 없음. 로컬은 키·비용 없음, Voyage는 품질 비교용 |
 | 리랭커 | **패스스루** (`PassthroughReranker`) | graphiti 기본 리랭커는 OpenAI 호출. 필요해지면 로컬 cross-encoder로 교체 |
-| 그래프 DB | **로컬 Neo4j 컨테이너** (`docker compose up neo4j`) | 비용 없음, Neo4j Browser로 바로 확인. Aura는 선택 |
+| 그래프 DB | **로컬 Neo4j 컨테이너** (`docker compose up neo4j`) 또는 **Aura Free** | 로컬은 비용 없음. Docker가 없는 PC는 Aura Free(`neo4j+s://`)로 — 2026-11-08 첫 수집은 Aura에서 했다 |
 
 ## 확인할 것
 
@@ -28,9 +28,9 @@
 
 ## 1. 준비
 
-1. 저장소 루트에서 `docker compose up -d neo4j` (Neo4j Browser: http://localhost:7474).
-2. 루트 `.env`에 `ANTHROPIC_API_KEY`를 채운다 (또는 `ant auth login`). Console에서 월 사용량 한도를 먼저 건다.
-3. 이 폴더의 `.env.example`은 참고용이다. 루트 `.env`를 그대로 읽는다 (`load_dotenv`가 상위 폴더를 찾지는 않으므로 실행 시 `--env ../../.env` 또는 복사).
+1. Neo4j: 로컬이면 저장소 루트에서 `docker compose up -d neo4j` (Browser: http://localhost:7474). Docker가 없으면 **Aura Free**(https://console.neo4j.io) 인스턴스를 만들고, 생성 직후 내려받는 접속 파일의 값을 루트 `.env`에 넣는다 — `NEO4J_URI=neo4j+s://xxxx.databases.neo4j.io`, `NEO4J_USERNAME`, `NEO4J_PASSWORD`(이때만 보여준다).
+2. 루트 `.env`에 `ANTHROPIC_API_KEY`를 채운다 (또는 `ant auth login`). Console에서 월 사용량 한도를 먼저 건다. `GRAPH_LLM_MODEL`은 비우거나 `claude-haiku-4-5`.
+3. 이 폴더의 `.env.example`은 참고용이다. 어느 폴더에서 실행해도 `load_dotenv`가 상위 폴더를 거슬러 루트 `.env`를 찾는다 (2026-11-08 확인).
 
 ## 2. 설치
 
@@ -74,7 +74,9 @@ cd graph/graphiti_p0
 
 ## 알려진 사항
 
-- **실제 API 호출은 아직 검증하지 않았다.** 테스트·dry-run·import까지만 확인했다. `--limit 5`가 1주차 말 과제다.
+- **`--limit 5`는 2026-11-08 Aura에서 검증했다** (5/5 수집, 에피소드당 10.8~13.8초, 병합·무효화·한국어 검색 PASS). 결과와 남은 과제는 [../graph-spike-report.md](../graph-spike-report.md). 36개 전체 수집은 아직.
+- graphiti-core 0.31.2의 `AnthropicClient`는 `messages.create`에 `temperature`를 넘기는데 anthropic SDK 2.x에는 그 인자가 없어 TypeError가 난다. `p0/graph.py`의 `GraphAnthropicClient`가 호출 직전에 `temperature`를 떼어낸다 (2026-11-08). graphiti를 올릴 때 이 래퍼가 여전히 필요한지 확인한다.
 - graphiti-core 0.31.2의 `AnthropicClient`는 구조화 출력을 **강제 tool_choice**로 구현한다. Opus/Sonnet/Haiku 5.5는 이를 400으로 거부하므로 기본 모델은 `claude-haiku-4-5`다. 모델별 `max_tokens` 매핑도 구버전 기준이라 새 모델명은 기본값(8192)을 쓴다 — 추출 결과가 잘리면 확인한다.
+- **Aura 접속 시 `self-signed certificate in certificate chain`**: Aura 인증서는 SSL.com 루트로 서명돼 있고, 새 Windows PC의 루트 저장소에는 그 루트가 아직 없을 수 있다(Windows는 처음 쓸 때 내려받는데 Python 드라이버는 로컬 저장소만 읽는다). `load_settings()`가 `SSL_CERT_FILE`이 비어 있으면 certifi 번들을 지정해 해결한다 (2026-11-08). 직접 지정한 `SSL_CERT_FILE`은 그대로 쓴다.
 - Voyage를 쓰면 임베딩 차원이 1024로 바뀐다. 제공자를 바꾸면 `inspect_graph.py --reset --yes`로 지우고 다시 넣는다 (차원 혼합 금지).
 - Neo4j 전문검색(BM25)의 한국어 토큰화가 약할 수 있다. 검색이 나쁘면 임베딩 비중을 높인다.
