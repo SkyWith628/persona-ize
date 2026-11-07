@@ -1,0 +1,11 @@
+# 저장소 전체(backend, evals, scripts, graph)에 같은 규칙을 적용한다.
+line-length = 110
+target-version = "py312"
+extend-exclude = [".venv", "evals/results", "graph/graphiti_p0/runs"]
+
+[lint]
+select = ["E", "F", "I", "B", "UP", "N"]
+ignore = ["B008"]  # FastAPI Depends()를 기본 인자로 쓰는 관례
+
+[lint.isort]
+known-first-party = ["app", "p0"]  # backend/app, graph/graphiti_p0/p0

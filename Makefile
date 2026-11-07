@@ -6,9 +6,10 @@ ifeq (,$(wildcard $(PY)))
 PY := .venv/bin/python
 endif
 
-.PHONY: help venv up down logs dev test lint eval graph-dry-run
+.PHONY: help setup venv up down logs dev test lint eval graph-dry-run
 
 help:
+	@echo "make setup     - .env.example → .env (최초 1회)"
 	@echo "make venv      - 가상환경 생성 + 백엔드 설치"
 	@echo "make up        - PostgreSQL(pgvector), Neo4j, 백엔드 컨테이너 기동"
 	@echo "make down      - 컨테이너 종료"
@@ -18,12 +19,15 @@ help:
 	@echo "make eval      - evals/eval_cases.csv 로 A/B 실행, 결과 CSV 저장"
 	@echo "make graph-dry-run - 그래프 스파이크 변환만 확인 (네트워크 없음)"
 
+setup:
+	@test -f .env || (cp .env.example .env && echo ".env 생성됨 — 키와 비밀번호를 채우세요")
+
 venv:
 	py -3.14 -m venv .venv || python3 -m venv .venv
 	$(PY) -m pip install --upgrade pip
 	$(PY) -m pip install -e "backend[dev]"
 
-up:
+up: setup
 	docker compose up -d --build
 
 down:
@@ -39,7 +43,7 @@ test:
 	cd backend && ../$(PY) -m pytest -q
 
 lint:
-	cd backend && ../$(PY) -m ruff check .
+	$(PY) -m ruff check . && $(PY) -m ruff format --check .
 
 eval:
 	$(PY) evals/run_eval.py --cases evals/eval_cases.csv --conditions A,B

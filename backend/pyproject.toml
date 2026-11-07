@@ -44,10 +44,4 @@ testpaths = ["tests"]
 pythonpath = ["."]
 filterwarnings = ["ignore::DeprecationWarning"]
 
-[tool.ruff]
-line-length = 110
-target-version = "py312"
-
-[tool.ruff.lint]
-select = ["E", "F", "I", "B", "UP", "N"]
-ignore = ["B008"]  # FastAPI Depends()를 기본 인자로 쓰는 관례
+# ruff 설정은 저장소 루트 ruff.toml 하나로 통일한다.

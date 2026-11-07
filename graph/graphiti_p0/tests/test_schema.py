@@ -5,8 +5,9 @@ from __future__ import annotations
 import pytest
 from graphiti_core.edges import EntityEdge
 from graphiti_core.nodes import EntityNode
-from p0.schema import EDGE_TYPE_MAP, EDGE_TYPES, ENTITY_TYPES, Event, Relationship
 from pydantic import ValidationError
+
+from p0.schema import EDGE_TYPE_MAP, EDGE_TYPES, ENTITY_TYPES, Event, Relationship
 
 
 def test_edge_type_map_refers_to_defined_types() -> None:

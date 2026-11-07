@@ -24,6 +24,7 @@
 | `docs/` | 전원 | |
 
 ## 파일 양식
+- 평가 사례·합성 대화를 쓰는 법(비전공자용, 열 설명·예시 포함): [docs/dataset-guide.md](docs/dataset-guide.md).
 - CSV는 **UTF-8**, 첫 줄은 열 이름. 열 이름을 바꾸면 코드가 깨지니 PR에 적는다. `python scripts/validate_data_files.py`가 CI에서 검사한다.
 - 합성 대화 JSON 형식: [data/synthetic/README.md](data/synthetic/README.md).
 - 프롬프트 `.md`는 `{placeholder}`를 지우지 않는다.

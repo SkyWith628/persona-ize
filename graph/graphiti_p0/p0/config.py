@@ -13,11 +13,14 @@ from typing import Literal
 from dotenv import load_dotenv
 
 DEFAULT_GROUP_ID = "p0-sample"
-DEFAULT_GRAPH_LLM_MODEL = "claude-haiku-5-5"
+# graphiti AnthropicClient는 강제 tool_choice로 구조화 출력을 받는데, 5.5 계열(Opus/Sonnet/Haiku)은
+# 강제 tool_choice를 400으로 거부한다 (docs/decisions.md 2026-11-04). 그래프 추출은 4.5 Haiku로 시작하고,
+# 다른 모델은 GRAPH_LLM_MODEL로 지정하기 전에 --limit 5로 검증한다.
+DEFAULT_GRAPH_LLM_MODEL = "claude-haiku-4-5"
 DEFAULT_EMBEDDING_PROVIDER = "local"
 DEFAULT_LOCAL_EMBEDDING_MODEL = "intfloat/multilingual-e5-small"
 DEFAULT_LOCAL_EMBEDDING_DIM = 384
-DEFAULT_VOYAGE_EMBEDDING_MODEL = "voyage-3"
+DEFAULT_VOYAGE_EMBEDDING_MODEL = "voyage-3.5"  # 미검증: 첫 호출에서 모델명 오류가 나면 Voyage 문서 확인
 DEFAULT_VOYAGE_EMBEDDING_DIM = 1024
 
 EmbeddingProvider = Literal["local", "voyage"]

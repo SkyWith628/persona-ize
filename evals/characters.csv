@@ -1,0 +1,5 @@
+name,relation,relationship_type,my_speech_style,aliases,note
+박지현,팀장,superior,존댓말·정중 (~드리겠습니다),지현 팀장님;팀장님;박지현 님,data/synthetic c1
+이서연,동기,colleague,반말 → 2026-10-17 파트장 발령 후 공식 자리에선 존댓말,서연;서연아;서연 파트장님,관계 변화 사례 (그래프 무효화 시험). c3
+김준호,동생,family,편한 반말·장난 (ㅋㅋ),준호;야,c2
+최유진,친구,friend,반말·친함,유진;유진아,대학 동아리 친구. c4

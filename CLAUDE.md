@@ -7,7 +7,7 @@ mode: work
 
 ## 명령어 (저장소 루트, Windows는 `.venv/Scripts/python.exe`, 맥은 `.venv/bin/python`)
 - 테스트: `cd backend && ../.venv/Scripts/python.exe -m pytest -q`
-- lint: `cd backend && ../.venv/Scripts/python.exe -m ruff check . && ruff format --check .`
+- lint(저장소 전체, 루트 `ruff.toml`): `.venv/Scripts/python.exe -m ruff check . && .venv/Scripts/python.exe -m ruff format --check .`
 - 접점 파일 검사: `.venv/Scripts/python.exe scripts/validate_data_files.py`
 - 평가: `.venv/Scripts/python.exe evals/run_eval.py --conditions A,B [--provider anthropic --repeat 3]`
 - 그래프 스파이크: `cd graph/graphiti_p0 && ../../.venv/Scripts/python.exe -m pytest -q` / `ingest.py --dry-run` / `--limit 5`
@@ -34,6 +34,8 @@ mode: work
 - `ruff format`을 돌린 뒤 테스트. line-length 110
 - 보존 항목 추출은 규칙 기반이라 오탐이 있다. 규칙을 바꾸면 `evals/preserve_rules.md`도 같이 고친다
 - fake 프로바이더는 원문을 그대로 돌려준다 → 검증은 항상 통과. 실제 품질은 `--provider anthropic`으로만 본다
-- graphiti-core 0.31.2 `AnthropicClient`의 모델별 max_tokens 표가 구버전. 새 모델은 기본값 사용
+- graphiti-core 0.31.2 `AnthropicClient`는 **강제 tool_choice**를 쓰고 5.5 계열이 이를 400으로 거부한다 → 그래프 추출 기본은 `claude-haiku-4-5`. 리랭커는 `PassthroughReranker`(기본 리랭커는 OpenAI 호출). 모델별 max_tokens 표도 구버전
+- 원격: `github.com/SkyWith628/persona-ize`(비공개). `main` 직접 푸시는 팀장만, 나머지는 PR. 11/04 이전 원격 뼈대(`spikes/`)는 `graph/graphiti_p0/`로 대체됨
+- 평가셋 열 이름은 `docs/dataset-guide.md`가 기준. `evals/run_eval.py`·`scripts/validate_data_files.py`가 그 열을 읽으므로 열을 바꾸면 셋을 같이 고친다
 - Docker·node·gh는 이 Windows 머신에 아직 없다. compose 파일은 미검증
 - API 비용은 구독과 별개. Console 사용량 한도 → `--limit 5` → 전체 순서

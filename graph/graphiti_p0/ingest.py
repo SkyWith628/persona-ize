@@ -84,7 +84,10 @@ async def ingest(episodes: list[EpisodeInput]) -> int:
                     custom_extraction_instructions=EXTRACTION_INSTRUCTIONS,
                 )
             except Exception as exc:  # 어떤 단계에서 실패했는지 보고서에 남기고 중단한다.
-                report["failed"] = {"episode": ep.name, "error": f"{type(exc).__name__}: {exc}"}
+                report["failed"] = {
+                    "episode": ep.name,
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
                 print(f"[{idx}/{len(episodes)}] 실패 {ep.name}: {exc}", file=sys.stderr)
                 exit_code = 1
                 break

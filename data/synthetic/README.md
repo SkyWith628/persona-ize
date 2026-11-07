@@ -28,9 +28,11 @@
 규칙
 - `speaker`는 `me`(사용자 본인) 또는 `contact`만. 본인 발화만 문체 예시로 쓰이므로 **사용자의 말투가 상대별로 다르게** 드러나야 한다.
 - `sent_at`은 시간대 포함 ISO 8601 (`+09:00`). 시간 순서가 그래프의 사실 무효화에 쓰인다.
-- `id`는 대화방 안에서 유일. 다른 대화방과는 겹쳐도 된다.
-- `relationship_type`은 `backend/app/domain/persona.py`의 값 중 하나 (superior/colleague/subordinate/friend/family/partner/acquaintance).
+- `id`는 대화방 안에서 유일. 다른 대화방과는 겹쳐도 된다. 다른 파일(`evals/eval_cases.csv`의 `relevant_msg_ids`, `graph/graph_queries.csv`)에서 메시지를 가리킬 때는 **`대화방id:메시지id`** (예 `c1:m03`)로 쓴다.
+- `contact`는 [evals/characters.csv](../../evals/characters.csv)의 이름과 같아야 한다. 호칭("지현 팀장님", "팀장님")은 본문에서 자유롭게 섞어도 되고, 오히려 섞는 것이 그래프 병합 시험 재료가 된다.
+- `relationship_type`은 `backend/app/domain/persona.py`의 값 중 하나 (superior/colleague/subordinate/friend/family/partner/acquaintance). 비우면 `characters.csv`의 값을 쓴다.
 
+비전공자용 작성 안내(등장인물 표, 사건을 여러 방에 나누는 법): [docs/dataset-guide.md](../../docs/dataset-guide.md).
 검증: `python scripts/validate_data_files.py` (CI에서도 돈다).
 
 ## 파일
@@ -38,4 +40,4 @@
 |---|---|
 | `sample_conversations.json` | 36개 메시지, 4개 대화방. 호칭 병합·관계 변화·사건 상태 변화·상대 시간 장치 포함 |
 
-1주차 목표: 사례 20개(평가셋용 원문·상황)와 그에 맞는 과거 대화 추가. 열 이름은 `evals/eval_cases.csv`를 따른다.
+1주차 목표: 평가 사례 20개에 맞는 과거 대화 추가. 그중 5개 이상은 **사건이 여러 대화방에 나뉘어** 있어야 한다(`needs_graph=Y` 재료).

@@ -15,8 +15,10 @@ jobs:
           python-version: "3.12"
       - name: Install
         run: pip install -e "backend[dev]"
-      - name: Lint
-        run: ruff check backend
+      - name: Lint (저장소 전체, ruff.toml)
+        run: |
+          ruff check .
+          ruff format --check .
       - name: Test
         working-directory: backend
         run: pytest -q

@@ -17,6 +17,18 @@
 | condition | 조건 | 수요일로 조정해 주시면, 가능하다면 | (현재 추출만, 검증 미적용) | — |
 | negation | 일반 부정 | 안, 못, 않, 없 | possibility와 함께 방향 판단 | — |
 
+## `eval_cases.csv`의 `preserve_items` 종류와 코드 kind 대응
+
+| 가이드 종류 (사람이 씀) | 코드 kind | 비고 |
+|---|---|---|
+| 날짜, 시간 | datetime | |
+| 수량, 금액 | quantity | |
+| 사람 | person | |
+| 가능여부 | possibility (+negation) | |
+| 약속 | promise | |
+| 조건 | condition | 추출만, 검증 미적용 |
+| 행동 | — | 아직 규칙 추출 없음. 사람 검토·LLM judge로만 확인 (2주차 과제) |
+
 ## 검증 순서 (하나라도 실패하면 재생성 1회 → 재실패 시 원문 유지)
 1. 보존 항목 누락 (`preserve_missing`)
 2. 원문에 없는 사실 추가 (`fact_added`)

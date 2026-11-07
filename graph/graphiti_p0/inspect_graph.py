@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from neo4j import GraphDatabase
+
 from p0.config import ConfigError, Settings, load_settings
 from p0.episodes import load_dataset
 
@@ -56,7 +57,12 @@ CUSTOM_EDGE_FIELDS = (
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """CLI 인자를 해석한다."""
     parser = argparse.ArgumentParser(description="Graphiti P0 그래프 점검")
-    parser.add_argument("--data", type=Path, default=DEFAULT_DATA, help="점검 기준(checks)이 든 데이터셋")
+    parser.add_argument(
+        "--data",
+        type=Path,
+        default=DEFAULT_DATA,
+        help="점검 기준(checks)이 든 데이터셋",
+    )
     parser.add_argument("--search", type=str, default=None, help="하이브리드 검색 질의")
     parser.add_argument("--reset", action="store_true", help="이 group_id의 노드·엣지를 모두 삭제")
     parser.add_argument("--yes", action="store_true", help="--reset 확인")
@@ -112,9 +118,8 @@ def run_checks(checks: dict[str, Any], entities: list[dict[str, Any]], facts: li
     typed = [f for f in facts if any(f["props"].get(k) is not None for k in CUSTOM_EDGE_FIELDS)]
     passed = bool(typed)
     ok &= passed
-    print(
-        f"  {'PASS' if passed else 'WARN'}  커스텀 속성(말투·호칭 등)이 채워진 엣지 → {len(typed)}/{len(facts)}개"
-    )
+    mark = "PASS" if passed else "WARN"
+    print(f"  {mark}  커스텀 속성(말투·호칭 등)이 채워진 엣지 → {len(typed)}/{len(facts)}개")
     return ok
 
 
@@ -148,7 +153,10 @@ def main(argv: list[str] | None = None) -> int:
         with driver.session() as session:
             if args.reset:
                 if not args.yes:
-                    print("--reset은 데이터를 삭제합니다. 확인하려면 --yes를 함께 주세요.", file=sys.stderr)
+                    print(
+                        "--reset은 데이터를 삭제합니다. 확인하려면 --yes를 함께 주세요.",
+                        file=sys.stderr,
+                    )
                     return 2
                 session.run(Q_DELETE_GROUP, group_id=settings.group_id).consume()
                 print(f"group_id={settings.group_id} 데이터를 삭제했습니다.")

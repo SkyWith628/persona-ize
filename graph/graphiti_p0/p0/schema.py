@@ -21,13 +21,26 @@ class Event(BaseModel):
     """시점이 있는 사건·약속·상태 변화 (예: 일정 조율, 사과, 발표 약속, 발령)."""
 
     event_type: (
-        Literal["request", "refusal", "apology", "schedule", "promise", "conflict", "status", "other"] | None
+        Literal[
+            "request",
+            "refusal",
+            "apology",
+            "schedule",
+            "promise",
+            "conflict",
+            "status",
+            "other",
+        ]
+        | None
     ) = Field(None, description="사건 유형")
     status: Literal["open", "resolved"] | None = Field(
         None, description="아직 진행 중이면 open, 마무리되었으면 resolved"
     )
     importance: int | None = Field(
-        None, ge=1, le=10, description="사용자 관계에 미치는 중요도 1~10 (일상 대화 1, 갈등·약속 7 이상)"
+        None,
+        ge=1,
+        le=10,
+        description="사용자 관계에 미치는 중요도 1~10 (일상 대화 1, 갈등·약속 7 이상)",
     )
 
 
@@ -35,8 +48,20 @@ class Relationship(BaseModel):
     """한 사람이 다른 사람을 대하는 관계. 방향이 있다 (A가 B를 어떻게 대하는가)."""
 
     relation_type: (
-        Literal["family", "friend", "colleague", "superior", "subordinate", "partner", "acquaintance"] | None
-    ) = Field(None, description="target이 source에게 어떤 사람인지 (superior = target이 source의 상사)")
+        Literal[
+            "family",
+            "friend",
+            "colleague",
+            "superior",
+            "subordinate",
+            "partner",
+            "acquaintance",
+        ]
+        | None
+    ) = Field(
+        None,
+        description="target이 source에게 어떤 사람인지 (superior = target이 source의 상사)",
+    )
     speech_style: Literal["반말", "존댓말", "혼용"] | None = Field(
         None, description="source가 target에게 쓰는 말투"
     )
@@ -52,7 +77,10 @@ class Involved(BaseModel):
 
 
 ENTITY_TYPES: dict[str, type[BaseModel]] = {"Person": Person, "Event": Event}
-EDGE_TYPES: dict[str, type[BaseModel]] = {"Relationship": Relationship, "Involved": Involved}
+EDGE_TYPES: dict[str, type[BaseModel]] = {
+    "Relationship": Relationship,
+    "Involved": Involved,
+}
 EDGE_TYPE_MAP: dict[tuple[str, str], list[str]] = {
     ("Person", "Person"): ["Relationship"],
     ("Person", "Event"): ["Involved"],

@@ -49,7 +49,7 @@ curl -s -X POST localhost:8000/v1/rewrites -H "X-User-Id: me" -H "Idempotency-Ke
 | `docs/` | 전원 | 설계·결정·일정 |
 | `apps/web/` | 팀장 (5주차) | React UI |
 
-협업 규칙(GitHub Desktop, PR, 폴더 소유): [CONTRIBUTING.md](CONTRIBUTING.md) · 역할·일정: [docs/team-roles-and-schedule.md](docs/team-roles-and-schedule.md)
+협업 규칙(GitHub Desktop, PR, 폴더 소유): [CONTRIBUTING.md](CONTRIBUTING.md) · 역할·일정: [docs/team-roles-and-schedule.md](docs/team-roles-and-schedule.md) · **평가 사례·합성 대화 쓰는 법: [docs/dataset-guide.md](docs/dataset-guide.md)**
 
 ## 명령어
 
@@ -64,6 +64,7 @@ curl -s -X POST localhost:8000/v1/rewrites -H "X-User-Id: me" -H "Idempotency-Ke
 Windows에 `make`가 없으면 Makefile의 명령을 그대로 실행한다.
 
 ## 상태 (2026-11-08)
+- 저장소: `github.com/SkyWith628/persona-ize` (비공개). 11/04까지의 초기 뼈대(`spikes/`)는 `graph/graphiti_p0/`로 대체.
 - 1주차 수직 기능: 상대·페르소나 CRUD, 첨삭 워크플로(의도·보존 추출 → 프롬프트 → 검증 → 재생성 → 원문 유지), 멱등성, 사용자 격리. 인메모리 저장소. **Claude 실제 호출은 키 설정 후 미검증.**
 - 2주차 예정: 대화 업로드·화자 지정·2~6턴 묶음·로컬 임베딩·pgvector 검색(C).
 - 3주차 예정: Graphiti 수집·검색(D), 피드백·삭제·사용량 제어.

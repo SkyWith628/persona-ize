@@ -10,8 +10,9 @@
 
 | 역할 | 선택 | 이유 |
 |---|---|---|
-| 추출 LLM | **Claude** (`GRAPH_LLM_MODEL`, 기본 `claude-haiku-5-5`) | 팀 API 키가 Anthropic. 에피소드당 호출이 많아 저렴한 모델로 시작 |
+| 추출 LLM | **Claude** (`GRAPH_LLM_MODEL`, 기본 `claude-haiku-4-5`) | 팀 API 키가 Anthropic. graphiti의 강제 `tool_choice`를 5.5 계열이 400으로 거부해 4.5 Haiku로 시작 |
 | 임베딩 | **로컬 sentence-transformers** (`intfloat/multilingual-e5-small`) 또는 Voyage AI | Anthropic에 임베딩 API가 없음. 로컬은 키·비용 없음, Voyage는 품질 비교용 |
+| 리랭커 | **패스스루** (`PassthroughReranker`) | graphiti 기본 리랭커는 OpenAI 호출. 필요해지면 로컬 cross-encoder로 교체 |
 | 그래프 DB | **로컬 Neo4j 컨테이너** (`docker compose up neo4j`) | 비용 없음, Neo4j Browser로 바로 확인. Aura는 선택 |
 
 ## 확인할 것
@@ -74,5 +75,6 @@ cd graph/graphiti_p0
 ## 알려진 사항
 
 - **실제 API 호출은 아직 검증하지 않았다.** 테스트·dry-run·import까지만 확인했다. `--limit 5`가 1주차 말 과제다.
-- graphiti-core 0.31.2의 `AnthropicClient`는 구조화 출력을 tool-use로 구현한다. 모델별 `max_tokens` 매핑이 구버전 기준이라 새 모델명은 기본값(8192)을 쓴다 — 추출 결과가 잘리면 확인한다.
+- graphiti-core 0.31.2의 `AnthropicClient`는 구조화 출력을 **강제 tool_choice**로 구현한다. Opus/Sonnet/Haiku 5.5는 이를 400으로 거부하므로 기본 모델은 `claude-haiku-4-5`다. 모델별 `max_tokens` 매핑도 구버전 기준이라 새 모델명은 기본값(8192)을 쓴다 — 추출 결과가 잘리면 확인한다.
+- Voyage를 쓰면 임베딩 차원이 1024로 바뀐다. 제공자를 바꾸면 `inspect_graph.py --reset --yes`로 지우고 다시 넣는다 (차원 혼합 금지).
 - Neo4j 전문검색(BM25)의 한국어 토큰화가 약할 수 있다. 검색이 나쁘면 임베딩 비중을 높인다.

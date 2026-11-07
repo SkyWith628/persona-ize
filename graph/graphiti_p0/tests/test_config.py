@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+
 from p0.config import (
     DEFAULT_GRAPH_LLM_MODEL,
     DEFAULT_GROUP_ID,

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+
 from p0.episodes import DatasetError, build_episodes, load_dataset
 
 SAMPLE = Path(__file__).resolve().parents[3] / "data" / "synthetic" / "sample_conversations.json"
@@ -20,7 +21,12 @@ def _dataset() -> dict[str, Any]:
                 "conversation_id": "c1",
                 "contact": "박지현",
                 "messages": [
-                    {"id": "m2", "speaker": "contact", "sent_at": "2026-10-05T10:00:00+09:00", "text": "네"},
+                    {
+                        "id": "m2",
+                        "speaker": "contact",
+                        "sent_at": "2026-10-05T10:00:00+09:00",
+                        "text": "네",
+                    },
                     {
                         "id": "m1",
                         "speaker": "me",
@@ -33,7 +39,12 @@ def _dataset() -> dict[str, Any]:
                 "conversation_id": "c2",
                 "contact": "김준호",
                 "messages": [
-                    {"id": "m1", "speaker": "contact", "sent_at": "2026-10-05T09:30:00+09:00", "text": "형"},
+                    {
+                        "id": "m1",
+                        "speaker": "contact",
+                        "sent_at": "2026-10-05T09:30:00+09:00",
+                        "text": "형",
+                    },
                 ],
             },
         ],
@@ -59,9 +70,18 @@ def test_same_message_id_allowed_in_different_conversations() -> None:
     ("mutate", "message"),
     [
         (lambda d: d["conversations"][0]["messages"][0].update(text="   "), "'text'"),
-        (lambda d: d["conversations"][0]["messages"][0].update(sent_at="2026-10-05T10:00:00"), "시간대"),
-        (lambda d: d["conversations"][0]["messages"][0].update(sent_at="어제"), "ISO 8601"),
-        (lambda d: d["conversations"][0]["messages"][0].update(speaker="boss"), "speaker"),
+        (
+            lambda d: d["conversations"][0]["messages"][0].update(sent_at="2026-10-05T10:00:00"),
+            "시간대",
+        ),
+        (
+            lambda d: d["conversations"][0]["messages"][0].update(sent_at="어제"),
+            "ISO 8601",
+        ),
+        (
+            lambda d: d["conversations"][0]["messages"][0].update(speaker="boss"),
+            "speaker",
+        ),
         (lambda d: d["conversations"][0]["messages"][0].update(id="m1"), "중복"),
         (lambda d: d["conversations"][0].update(messages=[]), "'messages'"),
         (lambda d: d.update(conversations=[]), "'conversations'"),

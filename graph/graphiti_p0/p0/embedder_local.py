@@ -32,7 +32,8 @@ class LocalEmbedder(EmbedderClient):
                 from sentence_transformers import SentenceTransformer
             except ImportError as exc:  # pragma: no cover - 설치 안내
                 raise RuntimeError(
-                    "sentence-transformers가 없습니다: pip install sentence-transformers (또는 EMBEDDING_PROVIDER=voyage)"
+                    "sentence-transformers가 없습니다: pip install sentence-transformers "
+                    "(또는 EMBEDDING_PROVIDER=voyage)"
                 ) from exc
             self._model = SentenceTransformer(self.config.embedding_model)
         return self._model
