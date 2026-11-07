@@ -49,6 +49,7 @@ cd graph/graphiti_p0
 ../../.venv/Scripts/python.exe ingest.py --limit 5     # 앞 5개만 수집 → 비용·시간 측정
 ../../.venv/Scripts/python.exe inspect_graph.py        # 요약 + 점검표
 ../../.venv/Scripts/python.exe inspect_graph.py --search "팀장님과 일정 조율"
+../../.venv/Scripts/python.exe eval_queries.py                   # graph_queries.csv 4개 질의 Recall@5
 ../../.venv/Scripts/python.exe inspect_graph.py --reset --yes   # 이 group_id 데이터 삭제
 ```
 
@@ -71,10 +72,11 @@ cd graph/graphiti_p0
 | `p0/embedder_local.py` | sentence-transformers 기반 `EmbedderClient` |
 | `ingest.py` | 수집 + `runs/` 보고서 |
 | `inspect_graph.py` | 점검표·검색·초기화 |
+| `p0/queries.py`, `eval_queries.py` | `../graph_queries.csv` 질의를 검색해 출처 메시지 기준 Recall@k (`runs/queries-*.json`) |
 
 ## 알려진 사항
 
-- **`--limit 5`는 2026-11-08 Aura에서 검증했다** (5/5 수집, 에피소드당 10.8~13.8초, 병합·무효화·한국어 검색 PASS). 결과와 남은 과제는 [../graph-spike-report.md](../graph-spike-report.md). 36개 전체 수집은 아직.
+- **36개 전체 수집을 2026-11-08 Aura에서 끝냈다** (36/36, 에피소드당 중앙값 11.1초, 병합 5/5·무효화 8건, `graph_queries.csv` Recall@5 평균 0.52). 결과·품질 과제·판정 제안은 [../graph-spike-report.md](../graph-spike-report.md). 다음은 추출 지시 보강 후 재수집.
 - graphiti-core 0.31.2의 `AnthropicClient`는 `messages.create`에 `temperature`를 넘기는데 anthropic SDK 2.x에는 그 인자가 없어 TypeError가 난다. `p0/graph.py`의 `GraphAnthropicClient`가 호출 직전에 `temperature`를 떼어낸다 (2026-11-08). graphiti를 올릴 때 이 래퍼가 여전히 필요한지 확인한다.
 - graphiti-core 0.31.2의 `AnthropicClient`는 구조화 출력을 **강제 tool_choice**로 구현한다. Opus/Sonnet/Haiku 5.5는 이를 400으로 거부하므로 기본 모델은 `claude-haiku-4-5`다. 모델별 `max_tokens` 매핑도 구버전 기준이라 새 모델명은 기본값(8192)을 쓴다 — 추출 결과가 잘리면 확인한다.
 - **Aura 접속 시 `self-signed certificate in certificate chain`**: Aura 인증서는 SSL.com 루트로 서명돼 있고, 새 Windows PC의 루트 저장소에는 그 루트가 아직 없을 수 있다(Windows는 처음 쓸 때 내려받는데 Python 드라이버는 로컬 저장소만 읽는다). `load_settings()`가 `SSL_CERT_FILE`이 비어 있으면 certifi 번들을 지정해 해결한다 (2026-11-08). 직접 지정한 `SSL_CERT_FILE`은 그대로 쓴다.

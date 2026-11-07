@@ -104,10 +104,15 @@ def run_checks(checks: dict[str, Any], entities: list[dict[str, Any]], facts: li
     print("\n== 점검표")
     for person in checks.get("people", []):
         matches = [e["name"] for e in entities if person["match"] in (e["name"] or "")]
-        passed = len(matches) == 1
+        # "김준호의 어머니"처럼 소유격으로 파생된 다른 인물은 분열이 아니다 (2026-11-08 36개 수집에서 확인).
+        derived = [m for m in matches if m.startswith(f"{person['canonical']}의 ")]
+        candidates = [m for m in matches if m not in derived]
+        passed = len(candidates) == 1
         ok &= passed
-        detail = matches or "없음"
-        print(f"  {'PASS' if passed else 'WARN'}  '{person['canonical']}' 엔티티가 하나로 병합됨 → {detail}")
+        detail = candidates or "없음"
+        extra = f" (파생 인물 제외: {derived})" if derived else ""
+        mark = "PASS" if passed else "WARN"
+        print(f"  {mark}  '{person['canonical']}' 엔티티가 하나로 병합됨 → {detail}{extra}")
 
     if checks.get("expect_invalidated_edges"):
         invalidated = [f for f in facts if f["invalid_at"] or f["expired_at"]]
