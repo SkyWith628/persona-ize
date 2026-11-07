@@ -1,0 +1,5 @@
+# 맥·Windows 혼용 팀: 저장소에는 LF로 통일한다.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.pdf binary
