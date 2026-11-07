@@ -1,0 +1,11 @@
+case_id,split,relation,condition,repeat,status,validation_passed,violations,intent,result_text,attempts,latency_ms,input_tokens,output_tokens,model_version,prompt_version
+E001,dev,팀장,A,1,recommended,True,,schedule,오늘 중으로 정리해서 내일 오전까지 보내드리겠습니다.,1,4376,250,268,claude-opus-5-5,rewrite-v1
+E001,dev,팀장,B,1,recommended,True,,schedule,"지현 팀장님, 일정이 늦어져 죄송합니다. 오늘 정리해서 내일 오전까지 보내드릴게요.",1,3480,309,263,claude-opus-5-5,rewrite-v1
+E002,dev,팀장,A,1,recommended,True,,refusal,"죄송하지만 이번 주 금요일은 어렵고, 다음 주 수요일까지는 가능합니다.",1,3641,306,261,claude-opus-5-5,rewrite-v1
+E002,dev,팀장,B,1,recommended,True,,refusal,"지현 팀장님, 이번 주 금요일까지는 어렵고, 다음 주 수요일까지는 가능합니다.",1,4738,365,376,claude-opus-5-5,rewrite-v1
+E003,dev,동생,A,1,recommended,True,,request,혹시 토요일 오전에 차 좀 빌려줄 수 있을까?,1,3705,220,229,claude-opus-5-5,rewrite-v1
+E003,dev,동생,B,1,recommended,True,,request,토요일 오전에 차 좀 빌려줄 수 있어? 돼?,1,3585,245,187,claude-opus-5-5,rewrite-v1
+E004,dev,동기,A,1,recommended,True,,apology,어제는 제가 좀 예민하게 굴었던 것 같아요. 정말 죄송합니다.,1,4955,214,265,claude-opus-5-5,rewrite-v1
+E004,dev,동기,B,1,recommended,True,,apology,어제는 제가 좀 예민하게 굴었던 것 같아요. 정말 미안해요.,2,7123,647,501,claude-opus-5-5,rewrite-v1
+E005,test,친구,A,1,recommended,True,,schedule,다음 달 둘째 주 토요일 저녁은 어떠세요?,1,3387,234,295,claude-opus-5-5,rewrite-v1
+E005,test,친구,B,1,recommended,True,,schedule,유진아 다음 달 둘째 주 토요일 저녁 어때? 😊,1,2631,260,178,claude-opus-5-5,rewrite-v1
