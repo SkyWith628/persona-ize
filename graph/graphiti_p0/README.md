@@ -76,9 +76,11 @@ cd graph/graphiti_p0
 
 ## 알려진 사항
 
-- **36개 전체 수집을 2026-11-08 Aura에서 끝냈다** (36/36, 에피소드당 중앙값 11.1초, 병합 5/5·무효화 8건, `graph_queries.csv` Recall@5 평균 0.52). 결과·품질 과제·판정 제안은 [../graph-spike-report.md](../graph-spike-report.md). 다음은 추출 지시 보강 후 재수집.
+- **36개 전체 수집을 2026-11-08 Aura에서 두 번 끝냈다** (보강 전 → 보강 후: 커스텀 속성 28/37 → 35/38, `graph_queries.csv` Recall@5 평균 0.52 → 0.68, 에피소드당 중앙값 ~11초). 비교표·남은 품질 문제·판정 제안은 [../graph-spike-report.md](../graph-spike-report.md).
 - graphiti-core 0.31.2의 `AnthropicClient`는 `messages.create`에 `temperature`를 넘기는데 anthropic SDK 2.x에는 그 인자가 없어 TypeError가 난다. `p0/graph.py`의 `GraphAnthropicClient`가 호출 직전에 `temperature`를 떼어낸다 (2026-11-08). graphiti를 올릴 때 이 래퍼가 여전히 필요한지 확인한다.
 - graphiti-core 0.31.2의 `AnthropicClient`는 구조화 출력을 **강제 tool_choice**로 구현한다. Opus/Sonnet/Haiku 5.5는 이를 400으로 거부하므로 기본 모델은 `claude-haiku-4-5`다. 모델별 `max_tokens` 매핑도 구버전 기준이라 새 모델명은 기본값(8192)을 쓴다 — 추출 결과가 잘리면 확인한다.
 - **Aura 접속 시 `self-signed certificate in certificate chain`**: Aura 인증서는 SSL.com 루트로 서명돼 있고, 새 Windows PC의 루트 저장소에는 그 루트가 아직 없을 수 있다(Windows는 처음 쓸 때 내려받는데 Python 드라이버는 로컬 저장소만 읽는다). `load_settings()`가 `SSL_CERT_FILE`이 비어 있으면 certifi 번들을 지정해 해결한다 (2026-11-08). 직접 지정한 `SSL_CERT_FILE`은 그대로 쓴다.
 - Voyage를 쓰면 임베딩 차원이 1024로 바뀐다. 제공자를 바꾸면 `inspect_graph.py --reset --yes`로 지우고 다시 넣는다 (차원 혼합 금지).
+- **시각은 UTC로 저장한다.** graphiti 프롬프트가 REFERENCE_TIME을 UTC로 전제하므로 `ingest.py`가 `reference_time`을 UTC로 바꿔 넘긴다(+09:00 그대로 넘기면 KST/UTC가 섞여 들어왔다, 11-08). `inspect_graph.py`는 보여 줄 때만 한국 시간(+09)으로 바꾼다.
+- 엣지 이름은 `Relationship`(사람↔사람)·`Involved`(사람↔사건)만 쓰라고 지시문에 넣었다. 자유 엣지명(`RELATES_TO`, `WORKS_FOR`…)으로 빠지면 커스텀 속성이 비기 때문이다(11-08 1차 9/37). graphiti 0.31.2의 `strict_edge_types`는 `add_episode_bulk`에만 있어 순차 수집에서는 못 쓴다. 사물(국밥·회의록)은 엔티티가 아니라 사건으로 만들라는 지시가 같이 들어 있다.
 - Neo4j 전문검색(BM25)의 한국어 토큰화가 약할 수 있다. 검색이 나쁘면 임베딩 비중을 높인다.

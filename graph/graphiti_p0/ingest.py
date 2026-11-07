@@ -76,11 +76,15 @@ async def ingest(episodes: list[EpisodeInput]) -> int:
                     name=ep.name,
                     episode_body=ep.body,
                     source_description=ep.source_description,
-                    reference_time=ep.reference_time,
+                    # graphiti 프롬프트는 REFERENCE_TIME을 UTC로 전제하고 valid_at도 UTC(Z)로 받는다.
+                    # +09:00 그대로 넘기면 모델이 벽시계 시각을 UTC로 옮겨 적는 경우가 섞인다 (11-08 1차).
+                    reference_time=ep.reference_time.astimezone(UTC),
                     group_id=settings.group_id,
                     entity_types=ENTITY_TYPES,
                     edge_types=EDGE_TYPES,
                     edge_type_map=EDGE_TYPE_MAP,
+                    # strict_edge_types는 add_episode_bulk에만 있다(0.31.2).
+                    # 자유 엣지명 억제는 지시문으로 한다.
                     custom_extraction_instructions=EXTRACTION_INSTRUCTIONS,
                 )
             except Exception as exc:  # 어떤 단계에서 실패했는지 보고서에 남기고 중단한다.

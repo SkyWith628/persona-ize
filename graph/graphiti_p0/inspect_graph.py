@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -69,8 +70,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+KST = timezone(timedelta(hours=9))
+
+
 def _short(value: Any) -> str:
-    return "-" if value is None else str(value)[:19]
+    """Neo4j DateTime(UTC 저장)을 한국 시간으로 보여 준다. 시간대가 없으면 문자열 앞 19자."""
+    if value is None:
+        return "-"
+    native = value.to_native() if hasattr(value, "to_native") else value
+    if isinstance(native, datetime) and native.tzinfo is not None:
+        return native.astimezone(KST).strftime("%Y-%m-%dT%H:%M+09")
+    return str(value)[:19]
 
 
 def print_summary(session: Any, group_id: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
