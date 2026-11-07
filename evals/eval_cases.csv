@@ -1,0 +1,6 @@
+case_id,relationship_type,contact_alias,intent,situation,draft_text,must_preserve,must_not_add,needs_history,author,note
+e001,superior,박지현,report,주간 업무 보고 후 일정 답변,오늘 정리해서 내일 오전까지 보내드릴게요.,오늘;내일 오전;보내드림,사유;다른 날짜,N,팀장,project-design §5.3 예시
+e002,superior,박지현,refusal,상사가 금요일까지 요청. 테스트 일정상 불가,이번 주 금요일은 어렵고 다음 주 수요일까지는 가능합니다.,금요일 불가;다음 주 수요일 가능,사유 추가,N,팀장,가능/불가 방향 보존
+e003,family,김준호,request,동생에게 주말 부탁,토요일 오전에 차 좀 빌려줄 수 있어?,토요일 오전;차;부탁,기간·사유,N,팀장,반말 유지가 자연스러운 사례
+e004,colleague,이서연,apology,어제 회의에서 말이 세게 나감,어제는 제가 좀 예민했던 것 같아요. 미안합니다.,어제;사과,구체적 사유 날조,Y,팀장,관계 변화(동기→파트장) 상대. D 사례 후보
+e005,friend,최유진,schedule,다음 달 식사 약속 날짜 제안,다음 달 둘째 주 토요일 저녁 어때?,다음 달 둘째 주 토요일 저녁,장소,N,팀장,

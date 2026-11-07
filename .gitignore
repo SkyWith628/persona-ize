@@ -1,0 +1,26 @@
+# 비밀정보
+.env
+.env.*
+!.env.example
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# 실험 결과 (CSV 요약만 커밋, 원시 로그는 제외)
+runs/
+evals/results/*.jsonl
+
+# Node (apps/web)
+node_modules/
+apps/web/dist/
+
+# OS / 편집기
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
