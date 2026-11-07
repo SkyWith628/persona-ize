@@ -55,6 +55,20 @@ def _parse_time(raw: str, where: str) -> datetime:
     return parsed
 
 
+WEEKDAYS_KO = ("월", "화", "수", "목", "금", "토", "일")
+
+
+def format_body(sent_at: datetime, speaker: str, listener: str, text: str) -> str:
+    """`[2026-10-05 월 09:31] 김민수 → 박지현: 내용`.
+
+    요일을 적어 주는 이유: 모델이 '다음 주 수요일' 같은 상대 날짜를 요일 없이 계산하면 틀린다(11-08 3차).
+    수신자를 적어 주는 이유: 짧은 답장에서 상대 엔티티를 세우지 못해 자기참조 엣지가 생겼다(11-08 3차).
+    시각은 데이터셋의 시간대(한국 시간) 그대로 보여 준다. graphiti에 넘기는 reference_time은 따로 UTC다.
+    """
+    stamp = f"{sent_at:%Y-%m-%d} {WEEKDAYS_KO[sent_at.weekday()]} {sent_at:%H:%M}"
+    return f"[{stamp}] {speaker} → {listener}: {text}"
+
+
 def build_episodes(dataset: dict[str, Any]) -> list[EpisodeInput]:
     """데이터셋의 모든 메시지를 발화 시각 순으로 정렬한 에피소드 목록으로 만든다.
 
@@ -97,11 +111,14 @@ def build_episodes(dataset: dict[str, Any]) -> list[EpisodeInput]:
             if speaker not in speaker_names:
                 raise DatasetError(f"{where}: speaker는 'me' 또는 'contact'여야 합니다: {speaker!r}")
 
+            sent_at = _parse_time(_require_str(msg, "sent_at", where), where)
+            listener = speaker_names[SPEAKER_CONTACT if speaker == SPEAKER_ME else SPEAKER_ME]
+            text = _require_str(msg, "text", where)
             episodes.append(
                 EpisodeInput(
                     name=f"{conv_id}:{msg_id}",
-                    body=f"{speaker_names[speaker]}: {_require_str(msg, 'text', where)}",
-                    reference_time=_parse_time(_require_str(msg, "sent_at", where), where),
+                    body=format_body(sent_at, speaker_names[speaker], listener, text),
+                    reference_time=sent_at,
                     source_description=f"과거 대화 ({title})",
                 )
             )

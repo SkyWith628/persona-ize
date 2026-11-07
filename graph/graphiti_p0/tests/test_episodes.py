@@ -57,9 +57,13 @@ def test_sorted_across_conversations_by_time() -> None:
 
 
 def test_speaker_mapping_and_strip() -> None:
-    first = build_episodes(_dataset())[0]
-    assert first.body == "김민수: 안녕하세요"
+    episodes = build_episodes(_dataset())
+    first = episodes[0]
+    # 2026-10-05은 월요일. 요일·수신자를 본문에 넣는다 (p0.episodes.format_body).
+    assert first.body == "[2026-10-05 월 09:00] 김민수 → 박지현: 안녕하세요"
     assert first.source_description == "과거 대화 (박지현와의 대화)"
+    # 상대가 말하면 수신자는 사용자다.
+    assert episodes[1].body == "[2026-10-05 월 09:30] 김준호 → 김민수: 형"
 
 
 def test_same_message_id_allowed_in_different_conversations() -> None:

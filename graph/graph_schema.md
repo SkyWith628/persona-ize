@@ -19,16 +19,19 @@
 
 | 타입 | source → target | 속성 | 예 |
 |---|---|---|---|
-| Relationship | Person → Person (방향: source가 target을 어떻게 대하나) | `relation_type` family/friend/colleague/superior/subordinate/partner/acquaintance · `speech_style` 반말/존댓말/혼용 · `address_term` 호칭 · `closeness` 1~5 | 김민수→박지현: superior, 존댓말, "팀장님" |
-| Involved | Person → Event | `participant_role` 당사자/상대/요청자/목격자 · `feeling` | 김민수→"일정 갈등": 당사자, 미안함 |
+| Relationship | Person → Person (방향: source가 target을 어떻게 대하나) | `relation_type` family/friend/colleague/partner/acquaintance(방향 없는 사이) · `hierarchy` target_higher/target_lower/equal(source에서 본 target의 위치) · `speech_style` 반말/존댓말/혼용 · `address_term` source가 target을 직접 부른 말 · `closeness` 1~5 | 김민수→박지현: colleague, target_higher, 존댓말, "팀장님" |
+| Involved | Person → Event | `participant_role` 당사자/상대/요청자/수행자/목격자/관련자(닫힌 값) · `feeling` | 김민수→"일정 갈등": 당사자, 미안함 |
+
+앱의 `relationship_type`(superior/subordinate/…)로 옮길 때는 `colleague + target_higher → superior`, `colleague + target_lower → subordinate`로 대응한다. 11-08 3차 수집에서 superior/subordinate를 relation_type에 두면 모델이 방향을 섞어 써서 분리했다 (`graph-spike-report.md`).
 
 ## 시간 처리 (bi-temporal)
 - 엣지는 `valid_at`(사실이 성립한 시각)과 `invalid_at`(더 이상 유효하지 않게 된 시각)을 가진다.
 - 관계가 바뀌면(동기 → 파트장) 옛 Relationship 엣지에 `invalid_at`이 찍히고 새 엣지가 생긴다. 첨삭은 **현재 유효한** 관계를 쓴다.
-- "어제", "다음 주 수요일"은 메시지 시각 기준 절대 시각으로 해석한다.
+- "어제", "다음 주 수요일"은 메시지 시각 기준 절대 시각으로 해석한다. 모델이 요일 없이 계산하면 틀리므로 에피소드 본문 앞에 `[2026-10-05 월 09:31] 김민수 → 박지현:`처럼 날짜·요일·수신자를 붙여 넣는다 (`p0/episodes.py`).
+- 저장은 UTC, 표시는 한국 시간. graphiti 프롬프트가 UTC를 전제한다.
 
 ## 검토할 질문 (담당자가 채운다)
-- [ ] `relation_type` 7종으로 충분한가? (예: 교수-학생, 거래처)
+- [ ] `relation_type` 5종 + `hierarchy`로 충분한가? (예: 교수-학생, 거래처)
 - [ ] Event에 `deadline` 같은 날짜 속성을 따로 둘까, 아니면 fact 문장에 맡길까?
 - [ ] 호칭만 등장하는 언급("팀장님")을 등록된 상대 별칭과 어떻게 연결할까? → `alias_cases.csv`
 - [ ] 그룹 대화방(3인 이상)은 범위에 넣나?

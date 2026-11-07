@@ -47,6 +47,7 @@ Q_DELETE_GROUP = "MATCH (n {group_id: $group_id}) DETACH DELETE n"
 
 CUSTOM_EDGE_FIELDS = (
     "relation_type",
+    "hierarchy",
     "speech_style",
     "address_term",
     "closeness",
