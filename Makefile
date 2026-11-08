@@ -6,12 +6,13 @@ ifeq (,$(wildcard $(PY)))
 PY := .venv/bin/python
 endif
 
-.PHONY: help setup venv up down logs dev migrate import-synthetic demo-prepare test lint eval graph-dry-run
+.PHONY: help setup venv up up-all down logs dev migrate import-synthetic demo-prepare test lint eval graph-dry-run
 
 help:
 	@echo "make setup     - .env.example → .env (최초 1회)"
 	@echo "make venv      - 가상환경 생성 + 백엔드 설치"
-	@echo "make up        - PostgreSQL(pgvector), Neo4j 컨테이너 기동 (backend 이미지는 빌드하지 않음)"
+	@echo "make up        - PostgreSQL(pgvector), Neo4j 컨테이너 기동"
+	@echo "make up-all    - 위 + backend 컨테이너(이미지 빌드, 마이그레이션 뒤 기동) → http://localhost:8000"
 	@echo "make migrate   - Alembic으로 DB 스키마를 최신으로"
 	@echo "make down      - 컨테이너 종료"
 	@echo "make dev       - 로컬에서 백엔드만 실행 (http://localhost:8000/docs)"
@@ -32,6 +33,9 @@ venv:
 
 up: setup
 	docker compose up -d postgres neo4j
+
+up-all: setup
+	docker compose up -d --build
 
 down:
 	docker compose down

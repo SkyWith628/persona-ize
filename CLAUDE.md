@@ -64,5 +64,5 @@ mode: work
 - 원격: `github.com/SkyWith628/persona-ize`(비공개). `main` 직접 푸시는 팀장만, 나머지는 PR. 11/04 이전 원격 뼈대(`spikes/`)는 `graph/graphiti_p0/`로 대체됨
 - 평가셋 열 이름은 `docs/dataset-guide.md`가 기준. `evals/run_eval.py`·`scripts/validate_data_files.py`가 그 열을 읽으므로 열을 바꾸면 셋을 같이 고친다
 - 이 Windows 머신: Docker Desktop 4.98 + WSL 3.0.3 동작 확인(2026-11-08). 새 PC에서는 BIOS 가상화(SVM/VT-x) → `VirtualMachinePlatform`·WSL 기능 → `wsl --install --no-distribution` → 재부팅 순서가 필요했다(`docker/README.md`). node·gh는 없다
-- DB는 `docker compose up -d postgres neo4j`로만 띄운다. backend 서비스까지 `up`하면 torch 포함 이미지를 수 GB 빌드한다 → 백엔드는 `make dev`로. `.env`의 `NEO4J_URI`는 아직 Aura(스파이크 데이터 보관). 로컬 Neo4j를 쓸 때는 `bolt://localhost:7687`로 바꾸고 `--reset` 여부를 확인한다
+- 개발은 `make up`(DB 두 개) + `make dev`(호스트 venv). 전체 컨테이너는 `make up-all` — backend 이미지 2.26GB, 빌드 2.5분, CPU torch, 시작 때 alembic upgrade (2026-11-09 검증, `docker/README.md`). `.env`의 `NEO4J_URI`는 아직 Aura(스파이크 데이터 보관). 로컬 Neo4j를 쓸 때는 `bolt://localhost:7687`로 바꾸고 `--reset` 여부를 확인한다
 - API 비용은 구독과 별개. Console 사용량 한도 → `--limit 5` → 전체 순서

@@ -46,13 +46,15 @@ services:
       - "8000:8000"
     volumes:
       - ./backend:/app
+      - hf-cache:/root/.cache/huggingface   # e5 모델(~470MB)을 컨테이너 재생성 뒤에도 재사용
     depends_on:
       postgres:
         condition: service_healthy
       neo4j:
         condition: service_healthy
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
 
 volumes:
   postgres-data:
   neo4j-data:
+  hf-cache:

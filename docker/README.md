@@ -14,7 +14,12 @@ Neo4j 자격증명은 `.env`의 `NEO4J_USERNAME`/`NEO4J_PASSWORD`. 기본 비밀
 | postgres | PostgreSQL 16.15, `vector` 0.8.7, `pgcrypto` 1.3 | `docker compose exec -T postgres psql -U persona -d persona_ize -c "select extname, extversion from pg_extension"` |
 | neo4j | Neo4j 5.26.32, APOC 5.26.32 | 컨테이너 안 `cypher-shell`, 호스트에서 neo4j 드라이버로 `bolt://localhost:7687` 접속 |
 
-**평소에는 두 DB만 띄운다.** backend 서비스는 `db` extra의 sentence-transformers가 torch를 끌어와 이미지가 수 GB라 아직 빌드하지 않았다(미검증). 백엔드는 호스트 venv에서 `make dev`로 실행한다.
+**개발은 두 DB만 띄우고 백엔드는 호스트 venv(`make dev`)** 가 빠르다. 전체 컨테이너는 `make up-all`.
+
+### backend 이미지 (2026-11-09 검증)
+- `docker compose build backend` 2분 32초, 이미지 **2.26GB**. torch는 CPU 휠(`--index-url https://download.pytorch.org/whl/cpu`)로 깐다 — 기본 인덱스면 CUDA 휠로 수 GB가 더 붙는다. `db`+`graph` extra 모두 설치(그래프 D 경로 동작).
+- 컨테이너 시작 때 `alembic upgrade head` → uvicorn. e5 모델(~470MB)은 첫 기동 때 내려받고 `hf-cache` 볼륨에 남는다(워밍업 완료 로그 `embedder warmed up`까지 약 30초).
+- 확인한 것: `/healthz`(storage=postgres, graph=True), 화면 `/`, 가져오기 3건 → 백그라운드 그래프 수집 25초 → D 첨삭 201 → 삭제(그래프 에피소드 3 포함). 컨테이너 안에서 Neo4j는 `bolt://neo4j:7687`, Postgres는 `postgres:5432`(compose environment가 .env 값을 덮어쓴다).
 
 ## Windows 선행 조건 (새 PC에서 Docker Desktop이 안 뜰 때)
 
