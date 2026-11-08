@@ -165,3 +165,7 @@ class ConversationRepo(Protocol):
     async def reset_graph_ingested(self, user_id: str, conversation_id: UUID | None = None) -> int:
         """graph_ingested_at을 비워 다시 수집 대상으로 만든다 (그래프 재구축). 바꾼 메시지 수."""
         ...
+
+    async def purge_jobs(self, before: datetime) -> int:
+        """before 이전에 만든 가져오기 작업을 지운다 (그래프 수집 중인 pending/running은 남김). 지운 수."""
+        ...

@@ -585,3 +585,51 @@ def test_reset_graph_ingested_on_postgres(pg_url: str) -> None:
             await engine.dispose()
 
     assert asyncio.run(_run()) == (2, 1, 0, [True])
+
+
+def test_housekeeping_on_postgres(pg_url: str) -> None:
+    """세션(만료·폐기)·작업·카운터 삭제 SQL이 Postgres에서 맞게 돈다."""
+    from datetime import UTC, datetime, timedelta
+
+    from app.repositories.auth import PostgresAuthRepo
+    from app.repositories.usage import PostgresUsageRepo
+    from app.services.housekeeping import Housekeeping
+
+    async def _run():  # noqa: ANN202
+        engine = create_engine(pg_url)
+        sessions = create_session_factory(engine)
+        try:
+            auth, convs, usage = (
+                PostgresAuthRepo(sessions),
+                PostgresConversationRepo(sessions),
+                PostgresUsageRepo(sessions),
+            )
+            now = datetime.now(UTC)
+            user = await auth.create_user(f"hk_{_user().replace('-', '_')}"[:32], "x")
+            from app.domain.auth import Session
+
+            def mk(key: str, created: datetime, expires: datetime) -> Session:
+                return Session(
+                    token_hash=key, user_id=user.id, csrf_token="c", created_at=created, expires_at=expires
+                )
+
+            kept = await auth.create_session(mk("keep", now, now + timedelta(days=1)))
+            old = await auth.create_session(mk("old", now - timedelta(days=30), now - timedelta(days=20)))
+            rev = await auth.create_session(mk("rev", now - timedelta(days=30), now + timedelta(days=1)))
+            await auth.revoke_session("rev", now - timedelta(days=9))
+            uid = str(user.id)
+            await usage.reserve_rewrite(uid, (now - timedelta(days=200)).date(), 10)
+            await usage.reserve_rewrite(uid, now.date(), 10)
+            r = await Housekeeping(auth, convs, usage).run(now)
+            still = (
+                await auth.get_session("keep"),
+                await auth.get_session("old"),
+                await auth.get_session("rev"),
+            )
+            return r, kept, old, rev, [s is not None for s in still]
+        finally:
+            await engine.dispose()
+
+    r, _, _, _, still = asyncio.run(_run())
+    assert (r.sessions, r.usage_rows) == (2, 1) and r.import_jobs >= 0
+    assert still == [True, False, False]

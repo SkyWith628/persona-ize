@@ -25,6 +25,10 @@ class UsageRepo(Protocol):
 
     async def delete_user(self, user_id: str) -> None: ...
 
+    async def purge_before(self, day: date) -> int:
+        """day 이전(미포함) 날짜의 카운터를 지운다. 지운 수."""
+        ...
+
 
 class InMemoryUsageRepo:
     def __init__(self) -> None:
@@ -54,6 +58,12 @@ class InMemoryUsageRepo:
     async def delete_user(self, user_id: str) -> None:
         for key in [k for k in self._rows if k[0] == user_id]:
             del self._rows[key]
+
+    async def purge_before(self, day: date) -> int:
+        gone = [k for k in self._rows if k[1] < day]
+        for k in gone:
+            del self._rows[k]
+        return len(gone)
 
 
 class PostgresUsageRepo:
@@ -145,3 +155,12 @@ class PostgresUsageRepo:
 
         async with self._sessions.begin() as s:
             await s.execute(delete(UsageCounterRow).where(UsageCounterRow.user_id == user_id))
+
+    async def purge_before(self, day: date) -> int:
+        from sqlalchemy import delete
+
+        from app.db.models import UsageCounterRow
+
+        async with self._sessions.begin() as s:
+            result = await s.execute(delete(UsageCounterRow).where(UsageCounterRow.day < day))
+        return int(result.rowcount or 0)

@@ -37,6 +37,10 @@ class AuthRepo(Protocol):
         """사용자와 세션을 지운다."""
         ...
 
+    async def purge_sessions(self, before: datetime) -> int:
+        """before 이전에 만료되거나 폐기된 세션 행을 지운다 (정리). 지운 수."""
+        ...
+
 
 class InMemoryAuthRepo:
     def __init__(self) -> None:
@@ -90,6 +94,16 @@ class InMemoryAuthRepo:
         self._users.pop(user_id, None)
         for key in [k for k, s in self._sessions.items() if s.user_id == user_id]:
             del self._sessions[key]
+
+    async def purge_sessions(self, before: datetime) -> int:
+        gone = [
+            k
+            for k, s in self._sessions.items()
+            if s.expires_at < before or (s.revoked_at is not None and s.revoked_at < before)
+        ]
+        for k in gone:
+            del self._sessions[k]
+        return len(gone)
 
 
 class PostgresAuthRepo:
@@ -211,3 +225,19 @@ class PostgresAuthRepo:
 
         async with self._sessions.begin() as s:
             await s.execute(delete(UserRow).where(UserRow.id == user_id))  # sessions는 CASCADE
+
+    async def purge_sessions(self, before: datetime) -> int:
+        from sqlalchemy import delete, or_
+
+        from app.db.models import SessionRow
+
+        async with self._sessions.begin() as s:
+            result = await s.execute(
+                delete(SessionRow).where(
+                    or_(
+                        SessionRow.expires_at < before,
+                        SessionRow.revoked_at.is_not(None) & (SessionRow.revoked_at < before),
+                    )
+                )
+            )
+        return int(result.rowcount or 0)

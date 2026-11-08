@@ -36,6 +36,9 @@ class ForbiddenError(DomainError):
     code = "forbidden"
 
 
+PRUNE_THRESHOLD = 1000  # 이 수를 넘으면 실패 기록 때마다 빈 키를 정리한다
+
+
 class LoginThrottle:
     """이름·IP별 최근 실패 시각을 기억한다. 한도에 닿으면 가장 오래된 실패가 창을 벗어날 때까지 막는다.
 
@@ -63,6 +66,15 @@ class LoginThrottle:
 
     def record_failure(self, key: str, now: datetime) -> None:
         self._prune(key, now).append(now)
+        if len(self._failures) > PRUNE_THRESHOLD:  # 이름·IP를 바꿔 가며 때리면 키가 쌓인다
+            self.prune_all(now)
+
+    def prune_all(self, now: datetime) -> int:
+        """창을 벗어난 기록만 남은 키를 모두 비운다. 비운 키 수."""
+        empty = [k for k in list(self._failures) if not self._prune(k, now)]
+        for k in empty:
+            del self._failures[k]
+        return len(empty)
 
     def reset(self, key: str) -> None:
         self._failures.pop(key, None)

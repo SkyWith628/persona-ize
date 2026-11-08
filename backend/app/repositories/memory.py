@@ -378,3 +378,13 @@ class InMemoryConversationRepo:
             n += sum(1 for m in msgs if m.graph_ingested_at is not None)
             self._messages[conv_id] = [m.model_copy(update={"graph_ingested_at": None}) for m in msgs]
         return n
+
+    async def purge_jobs(self, before: datetime) -> int:
+        gone = [
+            jid
+            for jid, j in self._jobs.items()
+            if j.created_at < before and j.graph_status not in ("pending", "running")
+        ]
+        for jid in gone:
+            del self._jobs[jid]
+        return len(gone)

@@ -378,3 +378,12 @@ class PostgresConversationRepo:
         async with self._sessions.begin() as s:
             result = await s.execute(stmt)
         return int(result.rowcount or 0)
+
+    async def purge_jobs(self, before: datetime) -> int:
+        async with self._sessions.begin() as s:
+            result = await s.execute(
+                delete(ImportJobRow).where(
+                    ImportJobRow.created_at < before, ImportJobRow.graph_status.not_in(("pending", "running"))
+                )
+            )
+        return int(result.rowcount or 0)

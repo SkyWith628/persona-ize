@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.core.config import Settings
@@ -195,3 +196,74 @@ def test_delete_account_requires_password_and_csrf_then_wipes() -> None:
     assert client.get("/v1/auth/me").status_code == 401
     assert client.post("/v1/auth/login", json=CRED).status_code == 401  # 사용자 없음 → 같은 401
     assert client.post("/v1/auth/register", json=CRED).status_code == 201  # 이름 재사용 가능
+
+
+def test_login_throttle_prunes_stale_keys() -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from app.services.auth_service import LoginThrottle
+
+    t = LoginThrottle(max_failures=2, lockout=timedelta(minutes=15))
+    t0 = datetime(2026, 11, 9, 12, 0, tzinfo=UTC)
+    for i in range(5):
+        t.record_failure(f"user{i}|1.2.3.4", t0)
+    t.record_failure("fresh|1.2.3.4", t0 + timedelta(minutes=14))
+    assert t.prune_all(t0 + timedelta(minutes=15)) == 5  # 15분 지난 다섯 키만 비움
+    assert t.retry_after("fresh|1.2.3.4", t0 + timedelta(minutes=15)) is None  # 1회 실패라 안 막힘
+    assert len(t._failures) == 1
+
+
+@pytest.mark.anyio
+async def test_housekeeping_purges_sessions_jobs_and_usage_in_memory() -> None:
+    from datetime import UTC, date, datetime, timedelta
+    from uuid import uuid4
+
+    from app.domain.auth import Session
+    from app.domain.conversation import ImportJob
+    from app.repositories.auth import InMemoryAuthRepo
+    from app.repositories.memory import InMemoryConversationRepo
+    from app.repositories.usage import InMemoryUsageRepo
+    from app.services.housekeeping import Housekeeping
+
+    now = datetime(2026, 11, 9, 12, 0, tzinfo=UTC)
+    auth, convs, usage = InMemoryAuthRepo(), InMemoryConversationRepo(), InMemoryUsageRepo()
+    uid = uuid4()
+
+    def sess(key: str, expires: datetime, revoked: datetime | None = None) -> None:
+        auth._sessions[key] = Session(
+            token_hash=key,
+            user_id=uid,
+            csrf_token="c",
+            created_at=now - timedelta(days=30),
+            expires_at=expires,
+            revoked_at=revoked,
+        )
+
+    sess("active", now + timedelta(days=5))
+    sess("expired-recent", now - timedelta(days=2))  # 유예 7일 안 → 남김
+    sess("expired-old", now - timedelta(days=10))
+    sess("revoked-old", now + timedelta(days=5), revoked=now - timedelta(days=8))
+
+    def job(age_days: int, graph_status: str = "completed") -> None:
+        j = ImportJob(
+            id=uuid4(),
+            user_id="u",
+            conversation_id=uuid4(),
+            source_hash="h",
+            status="completed",
+            graph_status=graph_status,
+            created_at=now - timedelta(days=age_days),
+        )
+        convs._jobs[j.id] = j
+
+    job(1)
+    job(40)
+    job(45, graph_status="pending")  # 수집 중 → 남김
+    for d in (date(2026, 8, 1), date(2026, 11, 8)):
+        await usage.reserve_rewrite("u", d, 10)
+
+    r = await Housekeeping(auth, convs, usage).run(now)
+    assert (r.sessions, r.import_jobs, r.usage_rows) == (2, 1, 1)
+    assert set(auth._sessions) == {"active", "expired-recent"}
+    assert sorted(j.graph_status for j in convs._jobs.values()) == ["completed", "pending"]
+    assert list(usage._rows) == [("u", date(2026, 11, 8))]
