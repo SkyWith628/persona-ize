@@ -54,7 +54,7 @@ curl -s -X POST localhost:8000/v1/rewrites -H "X-User-Id: me" -H "Idempotency-Ke
 | `docs/` | 전원 | 설계·결정·일정 |
 | `backend/app/web/` | 팀장 | 데모 화면 (빌드 없는 정적 HTML/JS, 서버 `/`에서 서빙). `apps/web/`(React)는 보류 |
 
-협업 규칙(GitHub Desktop, PR, 폴더 소유): [CONTRIBUTING.md](CONTRIBUTING.md) · 역할·일정: [docs/team-roles-and-schedule.md](docs/team-roles-and-schedule.md) · **평가 사례·합성 대화 쓰는 법: [docs/dataset-guide.md](docs/dataset-guide.md)**
+협업 규칙(GitHub Desktop, PR, 폴더 소유): [CONTRIBUTING.md](CONTRIBUTING.md) · 역할·일정: [docs/team-roles-and-schedule.md](docs/team-roles-and-schedule.md) · **역할별 플레이북**: [시나리오](docs/roles/scenario.md) · [평가·품질](docs/roles/evaluation.md) · [지식그래프](docs/roles/graph.md) · **평가 사례·합성 대화 쓰는 법: [docs/dataset-guide.md](docs/dataset-guide.md)**
 
 ## 명령어
 
