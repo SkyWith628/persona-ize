@@ -30,6 +30,10 @@ def test_healthz(client: TestClient) -> None:
     r = client.get("/healthz")
     assert r.status_code == 200
     assert r.json()["llm_provider"] == "fake"
+    assert r.json()["graph"] is False
+    deep = client.get("/healthz?deep=true")
+    assert deep.status_code == 200
+    assert deep.json()["checks"] == {"postgres": "skipped", "neo4j": "skipped"}  # 인메모리·그래프 없음
 
 
 def test_requires_user_header(client: TestClient) -> None:

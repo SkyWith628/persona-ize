@@ -145,3 +145,11 @@ class ConversationRepo(Protocol):
         (지운 메시지 수, 지운 묶음 수). 없으면 NotFoundError.
         """
         ...
+
+    async def users_with_pending_graph(self) -> list[str]:
+        """그래프 미수집 메시지가 있는 사용자 id들 (서버 시작 시 이어받기)."""
+        ...
+
+    async def close_stale_graph_jobs(self, user_id: str) -> int:
+        """미수집 메시지가 남지 않은 대화방의 pending/running 작업을 completed로. 바꾼 수."""
+        ...

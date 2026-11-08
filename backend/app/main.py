@@ -38,12 +38,25 @@ async def _warm_up_embedder(container) -> None:  # noqa: ANN001
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     container = app.state.container
     log.info("storage=%s graph=%s", container.storage, container.graph_enabled)
-    warm = asyncio.create_task(_warm_up_embedder(container))
+    tasks = [asyncio.create_task(_warm_up_embedder(container))]
+    if container.graph_enabled and container.settings.graph_resume_on_start:
+        tasks.append(asyncio.create_task(_resume_graph(container)))
     try:
         yield
     finally:
-        warm.cancel()
+        for t in tasks:
+            t.cancel()
         await container.close()
+
+
+async def _resume_graph(container) -> None:  # noqa: ANN001
+    """이전 프로세스가 끝내지 못한 그래프 수집을 이어받는다 (백그라운드, 실패해도 서비스는 뜬다)."""
+    try:
+        done = await container.graph_ingest.resume_all()
+        if done:
+            log.info("graph resume: %s", done)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("graph resume failed: %s", exc)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:

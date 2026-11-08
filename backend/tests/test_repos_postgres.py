@@ -400,3 +400,11 @@ def test_auth_register_login_on_postgres(pg_url: str) -> None:
         again = client.post("/v1/auth/login", json={"username": name, "password": "long-enough-pw"})
         assert again.status_code == 200 and again.json()["user_id"] == r.json()["user_id"]
         assert client.get("/v1/contacts").json()[0]["alias"] == "박지현"
+
+
+def test_deep_healthz_on_postgres(pg_url: str) -> None:
+    settings = Settings(_env_file=None, llm_provider="fake", database_url=pg_url, embedding_provider="fake")  # type: ignore[call-arg]
+    with TestClient(create_app(settings)) as client:
+        r = client.get("/healthz?deep=true")
+        assert r.status_code == 200, r.text
+        assert r.json()["checks"] == {"postgres": "ok", "neo4j": "skipped"}

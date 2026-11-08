@@ -61,6 +61,9 @@ class Settings(BaseSettings):
     neo4j_password: str = ""
     graph_llm_model: str = "claude-haiku-4-5"  # 5.5 계열은 graphiti 강제 tool_choice에 400 (decisions 11-04)
     graph_search_top_k: int = Field(4, ge=1, le=20)
+    graph_resume_on_start: bool = Field(
+        True, description="서버 시작 때 미수집 메시지를 이어서 그래프에 넣는다"
+    )
 
     @model_validator(mode="after")
     def _check_provider(self) -> Settings:

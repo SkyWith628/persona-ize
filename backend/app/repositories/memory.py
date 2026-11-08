@@ -333,3 +333,22 @@ class InMemoryConversationRepo:
         self._jobs = {k: j for k, j in self._jobs.items() if j.conversation_id != conv.id}
         del self._conversations[conv.id]
         return messages, episodes
+
+    async def users_with_pending_graph(self) -> list[str]:
+        users = {
+            self._conversations[cid].user_id
+            for cid, msgs in self._messages.items()
+            if cid in self._conversations and any(m.graph_ingested_at is None for m in msgs)
+        }
+        return sorted(users)
+
+    async def close_stale_graph_jobs(self, user_id: str) -> int:
+        n = 0
+        for jid, job in list(self._jobs.items()):
+            if job.user_id != user_id or job.graph_status not in ("pending", "running"):
+                continue
+            msgs = self._messages.get(job.conversation_id, [])
+            if all(m.graph_ingested_at is not None for m in msgs):
+                self._jobs[jid] = job.model_copy(update={"graph_status": "completed"})
+                n += 1
+        return n

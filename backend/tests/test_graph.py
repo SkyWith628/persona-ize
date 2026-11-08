@@ -67,6 +67,9 @@ class FakeGraphStore:
         self.added = [a for a in self.added if not (a["group_id"] == group_id and a["name"] in names)]
         return before - len(self.added)
 
+    async def ping(self) -> None:
+        pass
+
     async def close(self) -> None:
         pass
 
@@ -188,6 +191,25 @@ async def test_background_ingest_is_serialized_per_user_and_time_ordered_across_
     j2 = await conversations.get_job("u", job2.id)
     assert j1.graph_status == "completed" and j2.graph_status == "completed"
     assert j1.graph_episodes + j2.graph_episodes == 3  # 어느 작업이 몇 개를 넣었든 합은 전체
+
+
+async def test_resume_all_ingests_pending_users_and_closes_stale_jobs() -> None:
+    """서버가 죽어 pending인 채 남은 작업: 시작 때 이어받아 넣고 completed로 정리한다."""
+    _, conversations, store, ingest, svc, _, _, c1, c2 = await _setup(graph_mode="off")
+    job1 = await svc.import_messages("u", c1.id, ImportPayload(messages=MESSAGES_C1))
+    job2 = await svc.import_messages("u", c2.id, ImportPayload(messages=MESSAGES_C2))
+    # 죽기 전 상태를 흉내: 작업은 pending, 메시지는 미수집
+    await conversations.update_job_graph("u", job1.id, "pending", 0, None)
+    await conversations.update_job_graph("u", job2.id, "running", 1, None)
+    assert await conversations.users_with_pending_graph() == ["u"]
+
+    done = await ingest.resume_all()
+    assert done == {"u": 3}
+    assert [a["name"] for a in store.added] == ["c1:m01", "c2:m01", "c1:m02"]  # 전체 시각 순
+    assert (await conversations.get_job("u", job1.id)).graph_status == "completed"
+    assert (await conversations.get_job("u", job2.id)).graph_status == "completed"
+    assert await conversations.users_with_pending_graph() == []
+    assert await ingest.resume_all() == {}  # 다시 돌리면 할 일 없음
 
 
 async def test_import_background_graph_mode_marks_pending_then_completes() -> None:

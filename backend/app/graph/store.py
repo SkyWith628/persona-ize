@@ -79,6 +79,10 @@ class GraphStore(Protocol):
         """
         ...
 
+    async def ping(self) -> None:
+        """연결 확인. 실패하면 예외."""
+        ...
+
     async def close(self) -> None: ...
 
 
@@ -187,6 +191,9 @@ class GraphitiStore:
             # 다른 에피소드도 근거인 사실은 남는다.
             await self._g.remove_episode(uuid)
         return len(uuids)
+
+    async def ping(self) -> None:
+        await self._g.driver.execute_query("RETURN 1 AS ok")
 
     async def close(self) -> None:
         await self._g.close()

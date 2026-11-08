@@ -107,3 +107,18 @@ class GraphIngestService:
     async def remove_episodes(self, user_id: str, names: list[str]) -> int:
         """대화방 삭제 때 그 메시지들의 에피소드를 그래프에서 지운다."""
         return await self._store.remove_episodes(user_id, names)
+
+    async def resume_all(self) -> dict[str, int]:
+        """서버 시작 시: 미수집 메시지가 남은 사용자마다 이어서 넣고, 끝난 작업의 상태를 정리한다.
+
+        프로세스가 죽어 pending/running인 채 남은 작업을 살린다. 사용자 단위로 순서대로(잠금 안에서) 돈다.
+        """
+        done: dict[str, int] = {}
+        for user_id in await self._conversations.users_with_pending_graph():
+            try:
+                done[user_id] = await self.ingest_user(user_id)
+            except Exception as exc:  # noqa: BLE001 - 한 사용자 실패가 다른 사용자를 막지 않는다
+                log.warning("graph resume failed user=%s: %s", user_id, exc)
+                continue
+            await self._conversations.close_stale_graph_jobs(user_id)
+        return done

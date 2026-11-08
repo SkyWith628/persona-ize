@@ -339,3 +339,30 @@ class PostgresConversationRepo:
             # messages·episodes·episode_messages·import_jobs는 FK ON DELETE CASCADE
             await s.delete(conv)
         return messages, episodes
+
+    async def users_with_pending_graph(self) -> list[str]:
+        async with self._sessions() as s:
+            rows = (
+                await s.scalars(
+                    select(MessageRow.user_id).where(MessageRow.graph_ingested_at.is_(None)).distinct()
+                )
+            ).all()
+        return sorted(rows)
+
+    async def close_stale_graph_jobs(self, user_id: str) -> int:
+        pending_convs = (
+            select(MessageRow.conversation_id)
+            .where(MessageRow.user_id == user_id, MessageRow.graph_ingested_at.is_(None))
+            .distinct()
+        )
+        async with self._sessions.begin() as s:
+            result = await s.execute(
+                update(ImportJobRow)
+                .where(
+                    ImportJobRow.user_id == user_id,
+                    ImportJobRow.graph_status.in_(("pending", "running")),
+                    ImportJobRow.conversation_id.not_in(pending_convs),
+                )
+                .values(graph_status="completed")
+            )
+        return int(result.rowcount or 0)
