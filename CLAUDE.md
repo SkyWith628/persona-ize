@@ -36,6 +36,7 @@ mode: work
 - 사실 보존 실패는 다른 점수로 상쇄하지 않는다. 검증 실패 → 원문 유지, 자동 전송 없음
 - 합성 데이터만 외부(Claude API, Neo4j)에 보낸다
 - 결정 변경은 `docs/decisions.md`에 5줄 이내로
+- 남은 일은 `docs/backlog.md`(A 바로 가능 / B 팀원 대기 / C 보류). 끝낸 줄은 지우고 decisions에 결과를 남긴다
 
 ## 함정
 - `ruff format`을 돌린 뒤 테스트. line-length 110
