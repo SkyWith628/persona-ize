@@ -5,9 +5,15 @@
 
 from __future__ import annotations
 
+import re
+
 from app.ai.preserve import extract_preserved_items, facts_only, polarity
 from app.domain.persona import PersonaSettings
 from app.domain.rewrite import ModelOutput, PreservedItem, RetrievedExample, ValidationReport, Violation
+
+# 친족 호칭(부르는 말). 이름 없는 호칭은 말투 요소지만, 친족 호칭은 방향이 틀리기 쉬워 설정과 대조한다
+# (11-09 repeat3: 동생에게 '형'을 붙임 — 그래프 사실 "형 또 그랬냐"를 호칭 힌트로 오해).
+_KINSHIP_VOCATIVE = re.compile(r"(?<![가-힣])(형님|누님|형|누나|오빠|언니|엄마|아빠)(?=[,\s!?~]|$)")
 
 
 def validate_output(
@@ -55,6 +61,20 @@ def validate_output(
         label = next(i.text for i in result_items if (i.kind, i.normalized) == (kind, norm))
         violations.append(
             Violation(check="fact_added", detail=f"원문에 없는 {kind} '{label}' 이(가) 추가되었습니다.")
+        )
+
+    # 2-b) 친족 호칭: 원문에 없던 형·누나·오빠·언니… 는 설정된 호칭과 같을 때만 허용한다.
+    src_kin = set(_KINSHIP_VOCATIVE.findall(draft_text))
+    out_kin = set(_KINSHIP_VOCATIVE.findall(result))
+    allowed_kin = (
+        set(_KINSHIP_VOCATIVE.findall(persona.address_term)) if persona and persona.address_term else set()
+    )
+    for term in sorted(out_kin - src_kin - allowed_kin):
+        violations.append(
+            Violation(
+                check="fact_added",
+                detail=f"원문에 없는 호칭 '{term}'이(가) 추가되었습니다 (설정된 호칭이 아님).",
+            )
         )
 
     # 3) 가능/불가/부정 방향.

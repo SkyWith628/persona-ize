@@ -30,7 +30,8 @@ SIMILARITY_WEIGHT = 0.75
 RECENCY_WEIGHT = 0.15
 RANK_WEIGHT = 0.10
 RECENCY_HALF_LIFE_DAYS = 30.0
-RELATIVE_CUTOFF = 0.12  # 1위 점수보다 이만큼 낮으면 버린다 (무관한 사실 억제)
+RELATIVE_CUTOFF = 0.12  # 1위(가중 전) 점수보다 이만큼 낮으면 버린다 (무관한 사실 억제)
+MIN_KEEP = 2  # 임계와 무관하게 남기는 최소 사실 수
 # 사건 유형 가중 (schema.Event.event_type). 일상 상태 공유(주간보고·회의록)는 어조 판단에 덜 중요하다.
 EVENT_TYPE_WEIGHT = {
     "conflict": 1.0,
@@ -51,7 +52,8 @@ class _Candidate:
     when: datetime | None
     source_ids: list[str]
     rank: int  # Graphiti 순위 (0부터)
-    score: float = 0.0
+    score: float = 0.0  # 가중 점수 (정렬용)
+    base: float = 0.0  # 가중 전 점수 (임계용)
 
 
 class GraphContextRetriever:
@@ -152,10 +154,15 @@ class GraphContextRetriever:
             rank_prior = 1.0 - (c.rank / n if n > 1 else 0.0)
             base = SIMILARITY_WEIGHT * sim + RECENCY_WEIGHT * recency + RANK_WEIGHT * rank_prior
             event = events.get(c.hit.source_node_uuid) or events.get(c.hit.target_node_uuid)
+            c.base = base
             c.score = base * _event_weight(event)
-        candidates.sort(key=lambda c: -c.score)
-        best = candidates[0].score
-        return [c for c in candidates if best - c.score <= RELATIVE_CUTOFF]
+        # 임계는 가중 전 점수(질의 관련성)로 자른다. 가중 점수로 자르면 중요도 낮은 사건이 관련성과 무관하게
+        # 잘려 나간다 (11-09 repeat3: 최유진 '밥 약속' 사실이 빠져 recall 1.0→0.5). 최소 2건은 남긴다.
+        candidates.sort(key=lambda c: -c.base)
+        best_base = candidates[0].base
+        kept = [c for i, c in enumerate(candidates) if i < MIN_KEEP or best_base - c.base <= RELATIVE_CUTOFF]
+        kept.sort(key=lambda c: -c.score)
+        return kept
 
 
 def _event_weight(event: EventInfo | None) -> float:
