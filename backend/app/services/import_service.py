@@ -7,6 +7,7 @@
 - 같은 내용(해시)을 다시 올리면 기존 작업을 돌려준다. 다른 내용인데 메시지 id가 겹치면 겹친 것만 건너뛰고
   수를 보고한다.
 - 묶음은 대화방 단위로 다시 만든다 (새 메시지가 앞 맥락이 될 수 있어서). 36개 수준에서는 재임베딩 비용이 작다.
+- 그래프 수집은 사용자 단위 직렬(`GraphIngestService.ingest_user`) — 방 사이 시간 순서를 지키기 위해.
 - 지금은 요청 안에서 동기로 끝낸다. 응답 모양(202 + job)은 설계대로 두어 뒤에 비동기 작업으로 바꿀 수
   있게 한다.
 """
@@ -173,7 +174,7 @@ class ImportService:
         assert self._graph_ingest is not None
         if self.graph_mode == "sync":
             try:
-                await self._graph_ingest.ingest_conversation(user_id, conversation_id, job.id)
+                await self._graph_ingest.ingest_user(user_id, job.id)
             except Exception as exc:  # noqa: BLE001 - 작업 상태에 failed로 남아 있다
                 log.warning("sync graph ingest failed: %s", exc)
             return await self._conversations.get_job(user_id, job.id)
@@ -185,7 +186,7 @@ class ImportService:
     async def _graph_ingest_background(self, user_id: str, conversation_id: UUID, job_id: UUID) -> None:
         assert self._graph_ingest is not None
         try:
-            await self._graph_ingest.ingest_conversation(user_id, conversation_id, job_id)
+            await self._graph_ingest.ingest_user(user_id, job_id)
         except Exception as exc:  # noqa: BLE001 - 상태는 ingest가 failed로 기록했다
             log.warning("background graph ingest failed job=%s: %s", job_id, exc)
 

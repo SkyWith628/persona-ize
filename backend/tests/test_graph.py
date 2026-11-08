@@ -166,6 +166,30 @@ async def test_import_sync_graph_mode_fills_job_graph_fields() -> None:
     assert again.id == job.id and len(store.added) == 2
 
 
+async def test_background_ingest_is_serialized_per_user_and_time_ordered_across_rooms() -> None:
+    """두 방을 잇달아 가져오면 뒤 작업이 잠금을 기다리고, 그래프에는 전체 시각 순으로 들어간다."""
+    import asyncio as _asyncio
+
+    _, conversations, store, _, svc, _, _, c1, c2 = await _setup(graph_mode="background")
+
+    orig = store.add_episode
+
+    async def slow_add(**kw):  # noqa: ANN003, ANN202
+        await _asyncio.sleep(0.02)  # 겹치게 만들기
+        await orig(**kw)
+
+    store.add_episode = slow_add  # type: ignore[method-assign]
+    job1 = await svc.import_messages("u", c1.id, ImportPayload(messages=MESSAGES_C1))  # 09:25, 09:31
+    job2 = await svc.import_messages("u", c2.id, ImportPayload(messages=MESSAGES_C2))  # 09:28
+    await svc.wait_graph_tasks()
+    assert [a["name"] for a in store.added] == ["c1:m01", "c2:m01", "c1:m02"]  # 방을 가로질러 시각 순
+    assert len(store.added) == 3  # 중복 없음
+    j1 = await conversations.get_job("u", job1.id)
+    j2 = await conversations.get_job("u", job2.id)
+    assert j1.graph_status == "completed" and j2.graph_status == "completed"
+    assert j1.graph_episodes + j2.graph_episodes == 3  # 어느 작업이 몇 개를 넣었든 합은 전체
+
+
 async def test_import_background_graph_mode_marks_pending_then_completes() -> None:
     _, conversations, store, _, svc, _, _, c1, _ = await _setup(graph_mode="background")
     job = await svc.import_messages("u", c1.id, ImportPayload(messages=MESSAGES_C1))

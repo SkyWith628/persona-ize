@@ -1,14 +1,17 @@
 """그래프 수집: 아직 안 들어간 메시지를 발화 시각 순으로 `add_episode` 한다.
 
 - group_id = user_id. 사용자 그래프는 서로 섞이지 않는다.
-- Graphiti는 넣는 순서대로 이전 사실을 무효화하므로 시간 순이 필수다. 대화방 여러 개를 한 번에 넣을 때는
-  전체를 시각 순으로 섞어 넣는다 (`ingest_pending`). 가져오기 직후 백그라운드 수집은 그 대화방만 넣는다.
+- Graphiti는 넣는 순서대로 이전 사실을 무효화하므로 시간 순이 필수다. 그래서 수집은 **사용자 단위로 직렬**이다
+  (`ingest_user`: 사용자별 asyncio.Lock, 미수집 메시지를 대화방 가리지 않고 전체 시각 순으로). 가져오기 직후
+  백그라운드 수집도 이 경로를 탄다 — 다른 방의 가져오기가 겹치면 뒤 작업이 잠금을 기다렸다가 남은 것을 넣는다
+  (11-09 백로그 A3; 그 전엔 대화방별 태스크라 방 사이 순서가 어긋날 수 있었다).
 - 메시지마다 `graph_ingested_at`을 찍어 재실행이 멱등하다. 에피소드 하나가 haiku로 10~15초 걸린다.
 - 실패하면 그 메시지부터 다시 시도할 수 있게 앞선 메시지의 표시는 남긴다.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC, datetime
 from uuid import UUID
@@ -27,6 +30,20 @@ class GraphIngestService:
         self._conversations = conversations
         self._contacts = contacts
         self._prepared = False
+        self._locks: dict[str, asyncio.Lock] = {}  # user_id → 수집 잠금 (프로세스 안에서만 유효)
+
+    async def ingest_user(self, user_id: str, job_id: UUID | None = None) -> int:
+        """이 사용자의 미수집 메시지를 전체 시각 순으로 넣는다. 같은 사용자의 수집은 한 번에 하나만.
+
+        잠금을 기다리는 동안 다른 작업이 먼저 넣은 메시지는 pending에서 빠지므로 중복 수집은 없다.
+        job_id를 주면 그 작업의 graph_* 상태를 이번 실행 결과로 갱신한다
+        (다른 방의 메시지가 섞여 들어갈 수 있다).
+        """
+        lock = self._locks.setdefault(user_id, asyncio.Lock())
+        if lock.locked() and job_id is not None:
+            await self._conversations.update_job_graph(user_id, job_id, "pending", 0, None)
+        async with lock:
+            return await self.ingest_pending(user_id, None, job_id)
 
     async def ingest_conversation(
         self, user_id: str, conversation_id: UUID, job_id: UUID | None = None
