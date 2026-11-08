@@ -57,6 +57,7 @@ def _record(row: RewriteRequestRow) -> RewriteRecord:
         contact_id=row.contact_id,
         persona_version_id=row.persona_version_id,
         draft_version=row.draft_version,
+        condition=row.condition,  # type: ignore[arg-type]
         input_hash=row.input_hash,
         idempotency_key=row.idempotency_key,
         created_at=row.created_at,
@@ -175,6 +176,7 @@ class PostgresRewriteRepo:
         input_hash: str,
         idempotency_key: str | None,
         result: RewriteResult,
+        condition: str = "B",
     ) -> RewriteRecord:
         req = RewriteRequestRow(
             id=uuid4(),
@@ -182,6 +184,7 @@ class PostgresRewriteRepo:
             contact_id=contact_id,
             persona_version_id=persona_version_id,
             draft_version=draft_version,
+            condition=condition,
             input_hash=input_hash,
             idempotency_key=idempotency_key,
             status=result.status,

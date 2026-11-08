@@ -107,6 +107,7 @@ class InMemoryRewriteRepo:
         input_hash: str,
         idempotency_key: str | None,
         result: RewriteResult,
+        condition: str = "B",
     ) -> RewriteRecord:
         rec = RewriteRecord(
             id=uuid4(),
@@ -114,6 +115,7 @@ class InMemoryRewriteRepo:
             contact_id=contact_id,
             persona_version_id=persona_version_id,
             draft_version=draft_version,
+            condition=condition,  # type: ignore[arg-type]
             input_hash=input_hash,
             idempotency_key=idempotency_key,
             created_at=_now(),

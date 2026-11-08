@@ -67,6 +67,7 @@ class RewriteRequestRow(Base):
         PG_UUID(as_uuid=True), ForeignKey("persona_versions.id", ondelete="SET NULL"), nullable=True
     )
     draft_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    condition: Mapped[str] = mapped_column(String(1), nullable=False, default="B")  # A/B/C/D (0007)
     input_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     idempotency_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False)

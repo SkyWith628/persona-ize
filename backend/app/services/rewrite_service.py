@@ -97,6 +97,7 @@ class RewriteService:
             input_hash=input_hash,
             idempotency_key=idempotency_key,
             result=result,
+            condition=inp.condition,
         )
 
     async def get(self, user_id: str, request_id: UUID) -> RewriteRecord:

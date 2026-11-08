@@ -74,8 +74,14 @@ def test_rewrite_history(client: TestClient, user_a: dict[str, str], user_b: dic
         "네 알겠습니다.",
         DRAFT,
     ]  # 최근 순
+    assert all(r["condition"] == "B" for r in all_rows)
+    a_row = client.post(
+        "/v1/rewrites", json={"contact_id": cid, "draft_text": DRAFT, "condition": "A"}, headers=user_a
+    )
+    assert a_row.json()["condition"] == "A"
+    assert client.get("/v1/rewrites?limit=1", headers=user_a).json()[0]["condition"] == "A"
     only = client.get(f"/v1/rewrites?contact_id={cid}&limit=1", headers=user_a).json()
-    assert len(only) == 1 and only[0]["result"]["result_text"] == "네 알겠습니다."
+    assert len(only) == 1 and only[0]["result"]["result_text"] == DRAFT and only[0]["condition"] == "A"
     assert client.get("/v1/rewrites", headers=user_b).json() == []
     assert client.get("/v1/rewrites?limit=0", headers=user_a).status_code == 422
 

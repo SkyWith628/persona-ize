@@ -19,6 +19,7 @@ def _to_out(rec: RewriteRecord) -> RewriteOut:
         id=rec.id,
         contact_id=rec.contact_id,
         draft_version=rec.draft_version,
+        condition=rec.condition,
         created_at=rec.created_at,
         result=rec.result,
     )

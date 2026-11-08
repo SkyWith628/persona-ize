@@ -55,6 +55,7 @@ class RewriteRepo(Protocol):
         input_hash: str,
         idempotency_key: str | None,
         result: RewriteResult,
+        condition: str = "B",
     ) -> RewriteRecord: ...
 
     async def get(self, user_id: str, request_id: UUID) -> RewriteRecord: ...

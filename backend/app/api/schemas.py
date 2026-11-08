@@ -52,6 +52,7 @@ class RewriteOut(BaseModel):
     id: UUID
     contact_id: UUID
     draft_version: int
+    condition: Condition
     created_at: datetime
     result: RewriteResult
 

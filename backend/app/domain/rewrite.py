@@ -119,6 +119,7 @@ class RewriteRecord(BaseModel):
     contact_id: UUID
     persona_version_id: UUID | None
     draft_version: int
+    condition: Condition = "B"  # 요청한 실험 조건 (0007 이전 행은 B로 채워짐)
     input_hash: str
     idempotency_key: str | None
     created_at: datetime

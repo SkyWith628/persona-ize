@@ -126,7 +126,7 @@ async function loadHistory() {
     const li = document.createElement("li");
     const r = rec.result;
     const when = new Date(rec.created_at).toLocaleString("ko-KR", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
-    const cond = (r.retrieval_version === "none") ? "A/B" : (r.retrieval_version.includes("graph") ? "D" : "C");
+    const cond = rec.condition || "?";
     li.innerHTML = `<span class="hist"><span class="muted"><span class="when">${when}</span><span class="tag">${cond}</span> <span class="${r.status === "recommended" ? "status-ok" : "status-fallback"}">${r.status === "recommended" ? "추천" : "원문 유지"}</span></span><span class="text">${esc(r.result_text)}</span></span>`;
     li.className = state.rewrite?.id === rec.id ? "selected" : "";
     li.addEventListener("click", () => { state.rewrite = rec; renderResult(rec); loadHistory(); $("#result").scrollIntoView({ behavior: "smooth", block: "nearest" }); });
