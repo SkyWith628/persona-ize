@@ -39,5 +39,6 @@ mode: work
 - Aura(`neo4j+s://`) 접속 시 `self-signed certificate` 오류는 Windows 루트 저장소에 SSL.com 루트가 없어서다 → `load_settings()`가 certifi 번들을 `SSL_CERT_FILE`로 지정한다. `--limit 5` 실측(2026-11-08)은 `graph/graph-spike-report.md`
 - 원격: `github.com/SkyWith628/persona-ize`(비공개). `main` 직접 푸시는 팀장만, 나머지는 PR. 11/04 이전 원격 뼈대(`spikes/`)는 `graph/graphiti_p0/`로 대체됨
 - 평가셋 열 이름은 `docs/dataset-guide.md`가 기준. `evals/run_eval.py`·`scripts/validate_data_files.py`가 그 열을 읽으므로 열을 바꾸면 셋을 같이 고친다
-- 이 Windows 머신: Docker Desktop 4.98은 2026-11-08 설치했으나 **BIOS의 SVM Mode가 꺼져 있어 엔진이 못 뜬다**(ASUS TUF B550M-PLUS: Advanced → CPU Configuration → SVM Mode). 재부팅+SVM 활성화 전까지 compose는 `config`(문법)만 통과한 상태. node·gh는 없다. docker는 새 셸에서만 PATH에 잡힌다
+- 이 Windows 머신: Docker Desktop 4.98 + WSL 3.0.3 동작 확인(2026-11-08). 새 PC에서는 BIOS 가상화(SVM/VT-x) → `VirtualMachinePlatform`·WSL 기능 → `wsl --install --no-distribution` → 재부팅 순서가 필요했다(`docker/README.md`). node·gh는 없다
+- DB는 `docker compose up -d postgres neo4j`로만 띄운다. backend 서비스까지 `up`하면 torch 포함 이미지를 수 GB 빌드한다 → 백엔드는 `make dev`로. `.env`의 `NEO4J_URI`는 아직 Aura(스파이크 데이터 보관). 로컬 Neo4j를 쓸 때는 `bolt://localhost:7687`로 바꾸고 `--reset` 여부를 확인한다
 - API 비용은 구독과 별개. Console 사용량 한도 → `--limit 5` → 전체 순서

@@ -67,3 +67,8 @@
 - 결정: **1주차 그래프 스파이크는 여기서 종료**한다. 기전 검증(병합·무효화·속성·날짜·한국어 검색)은 끝났고, 남은 품질 문제(말투·관계 유형 일관성, q01 갈등 당일 메시지 미검색)는 후처리와 D 검색기 설계로 넘긴다.
 - 결정: `p0/dates.py`는 그래프 전용이 아니다. 2주차에 `backend/app/ai/preserve.py`(보존 항목 날짜 정규화)에서 재사용을 검토한다.
 - 유지: D 채택 판정은 2주차 C 비교로. 비교 전 같은 설정 2~3회 반복으로 분산 측정.
+
+## 2026-11-08 Docker compose 검증 완료: 2주차 DB는 로컬 컨테이너로
+- 결과: Docker Desktop 4.98 + WSL 3.0.3로 `docker compose up -d postgres neo4j` 성공. PostgreSQL 16.15 + pgvector 0.8.7, Neo4j 5.26.32 + APOC, 호스트에서 bolt·5432 접속 확인. 선행 조건은 BIOS 가상화(SVM)·VirtualMachinePlatform·WSL 설치였다(`docker/README.md`).
+- 결정: 2주차 C 경로(pgvector)와 3주차 D 연동은 로컬 컨테이너를 쓴다. Aura Free는 1주차 스파이크 결과 보관용으로 남기고 `.env`의 `NEO4J_URI`는 당장 바꾸지 않는다(스파이크 반복 측정 때 로컬로 전환).
+- 결정: backend 컨테이너 이미지는 당분간 빌드하지 않는다. `db` extra의 sentence-transformers가 torch를 끌어와 이미지가 수 GB라, 팀원 온보딩 전까지는 `make dev`(호스트 venv)로 백엔드를 띄운다.
