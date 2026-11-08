@@ -105,3 +105,14 @@ def test_sample_dataset_is_valid() -> None:
     assert all(ep.reference_time.tzinfo is not None for ep in episodes)
     times = [ep.reference_time for ep in episodes]
     assert times == sorted(times)
+
+
+def test_sample_dataset_discourse_dates() -> None:
+    # 같은 대화방 안에서 앞 메시지의 '다음 주 수요일(10-14)'을 뒤의 '수요일'이 이어받는다.
+    bodies = {ep.name: ep.body for ep in build_episodes(load_dataset(SAMPLE))}
+    assert "다음 주 수요일(=2026-10-14)" in bodies["c1:m03"]
+    assert "수요일(=2026-10-14)로 조정" in bodies["c1:m05"]
+    assert "수요일(=2026-10-14)로 갑시다" in bodies["c1:m08"]
+    assert "토요일(=2026-10-10) 저녁" in bodies["c2:m02"]
+    # 앵커가 없는 요일은 두 후보 그대로
+    assert "금요일(=2026-10-16 또는 2026-10-23)까지만" in bodies["c4:m03"]

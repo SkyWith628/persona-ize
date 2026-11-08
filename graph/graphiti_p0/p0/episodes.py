@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from p0.dates import annotate_relative_dates
+from p0.dates import DiscourseContext, annotate_relative_dates
 
 SPEAKER_ME = "me"
 SPEAKER_CONTACT = "contact"
@@ -60,7 +60,9 @@ def _parse_time(raw: str, where: str) -> datetime:
 WEEKDAYS_KO = ("월", "화", "수", "목", "금", "토", "일")
 
 
-def format_body(sent_at: datetime, speaker: str, listener: str, text: str) -> str:
+def format_body(
+    sent_at: datetime, speaker: str, listener: str, text: str, context: DiscourseContext | None = None
+) -> str:
     """`[2026-10-05 월 09:31] 김민수 → 박지현: 내용`.
 
     요일을 적어 주는 이유: 모델이 '다음 주 수요일' 같은 상대 날짜를 요일 없이 계산하면 틀린다(11-08 3차).
@@ -70,7 +72,7 @@ def format_body(sent_at: datetime, speaker: str, listener: str, text: str) -> st
     시각은 데이터셋의 시간대(한국 시간) 그대로 보여 준다. graphiti에 넘기는 reference_time은 따로 UTC다.
     """
     stamp = f"{sent_at:%Y-%m-%d} {WEEKDAYS_KO[sent_at.weekday()]} {sent_at:%H:%M}"
-    return f"[{stamp}] {speaker} → {listener}: {annotate_relative_dates(text, sent_at)}"
+    return f"[{stamp}] {speaker} → {listener}: {annotate_relative_dates(text, sent_at, context)}"
 
 
 def build_episodes(dataset: dict[str, Any]) -> list[EpisodeInput]:
@@ -102,6 +104,7 @@ def build_episodes(dataset: dict[str, Any]) -> list[EpisodeInput]:
             raise DatasetError(f"{where_conv}: 'messages'가 비어 있습니다.")
 
         seen_ids: set[str] = set()
+        parsed: list[tuple[datetime, str, str, str, str]] = []  # (sent_at, msg_id, speaker, listener, text)
         for m_idx, msg in enumerate(messages):
             where = f"{where_conv}.messages[{m_idx}]"
             if not isinstance(msg, dict):
@@ -117,11 +120,17 @@ def build_episodes(dataset: dict[str, Any]) -> list[EpisodeInput]:
 
             sent_at = _parse_time(_require_str(msg, "sent_at", where), where)
             listener = speaker_names[SPEAKER_CONTACT if speaker == SPEAKER_ME else SPEAKER_ME]
-            text = _require_str(msg, "text", where)
+            parsed.append(
+                (sent_at, msg_id, speaker_names[speaker], listener, _require_str(msg, "text", where))
+            )
+
+        # 담화 문맥(앞 메시지가 특정한 날짜)은 대화방 안에서 시간 순으로만 이어지므로 먼저 정렬한다.
+        context = DiscourseContext()
+        for sent_at, msg_id, speaker_name, listener, text in sorted(parsed, key=lambda item: item[0]):
             episodes.append(
                 EpisodeInput(
                     name=f"{conv_id}:{msg_id}",
-                    body=format_body(sent_at, speaker_names[speaker], listener, text),
+                    body=format_body(sent_at, speaker_name, listener, text, context),
                     reference_time=sent_at,
                     source_description=f"과거 대화 ({title})",
                 )

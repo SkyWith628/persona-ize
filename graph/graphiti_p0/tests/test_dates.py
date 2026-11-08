@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from p0.dates import annotate_relative_dates, resolve_relative_dates
+from p0.dates import DiscourseContext, annotate_relative_dates, resolve_relative_dates
 
 KST = timezone(timedelta(hours=9))
 
@@ -79,3 +79,42 @@ def test_annotate_is_idempotent() -> None:
 
 def test_invalid_absolute_date_left_alone() -> None:
     assert resolve_relative_dates("2월 30일에 보자", _at("2026-10-05")) == []
+
+
+def test_discourse_anchor_resolves_bare_weekday() -> None:
+    # c1:m03 → m05 → m08: '다음 주 수요일(10-14)' 뒤의 '수요일'은 10-14다 (5차에서 모델이 10-07로 틀림).
+    ctx = DiscourseContext()
+    annotate_relative_dates(
+        "이번 주 금요일은 어렵고, 다음 주 수요일까지는 가능합니다.", _at("2026-10-05"), ctx
+    )
+    assert resolve_relative_dates("수요일로 조정 부탁드립니다.", _at("2026-10-05"), ctx) == [
+        ("수요일", "2026-10-14")
+    ]
+    assert resolve_relative_dates("수요일로 갑시다.", _at("2026-10-06"), ctx) == [("수요일", "2026-10-14")]
+    # 금요일도 '이번 주 금요일(10-09)'을 이어받는다. 목요일은 앵커가 없어 두 후보
+    assert resolve_relative_dates("금요일에 미팅. 목요일까지는?", _at("2026-10-05"), ctx) == [
+        ("금요일", "2026-10-09"),
+        ("목요일", "2026-10-08 또는 2026-10-15"),
+    ]
+
+
+def test_discourse_anchor_expires_after_date() -> None:
+    ctx = DiscourseContext()
+    annotate_relative_dates("다음 주 수요일까지 가능합니다.", _at("2026-10-05"), ctx)
+    # 10-15에는 10-14 앵커가 지났으므로 두 후보로 돌아간다
+    assert resolve_relative_dates("수요일에 보자", _at("2026-10-15"), ctx) == [
+        ("수요일", "2026-10-21 또는 2026-10-28")
+    ]
+
+
+def test_weekend_anchors_saturday() -> None:
+    # c2:m01 '이번 주말' → m02 '토요일 저녁'
+    ctx = DiscourseContext()
+    annotate_relative_dates("형 이번 주말에 엄마 생신인 거 알지?", _at("2026-10-05"), ctx)
+    assert resolve_relative_dates("토요일 저녁 맞지?", _at("2026-10-05"), ctx) == [("토요일", "2026-10-10")]
+
+
+def test_without_context_still_two_candidates() -> None:
+    assert resolve_relative_dates("수요일로 조정", _at("2026-10-05")) == [
+        ("수요일", "2026-10-07 또는 2026-10-14")
+    ]
