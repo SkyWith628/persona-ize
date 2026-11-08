@@ -6,8 +6,7 @@
 
 | # | 작업 | 왜 | 크기 |
 |---|---|---|---|
-| A1 | **Console 비용 확인·기록** — 11/08~09 Opus ~90회, haiku 에피소드 ~260건의 실제 금액을 `evals/results/*.md` 비용 절에 적는다 | 사례 120개 × 4조건 × repeat 3 = 1,440회 예산을 잡으려면 1회 단가가 필요 | 10분 (사용자가 Console 열어야 함) |
-| A7 | **시연 데이터 준비** — `demo` 사용자에 합성 36건 + 그래프 수집, 시연 시나리오 3개(팀장 거절·동생 부탁·친구 약속) 대본 | 11/22 체크포인트 | 2시간 |
+| A1 | **API 크레딧 충전 + Console 비용 확인·기록** — 2026-11-09 01:30 그래프 수집 중 `credit balance is too low`(400)로 중단. 충전 전까지 Claude 호출(첨삭 anthropic·그래프 수집·run_eval --provider anthropic)은 전부 실패한다. 충전 뒤 `make demo-prepare`를 다시 돌리면 demo 그래프의 남은 21건이 들어간다 — 11/08~09 Opus ~90회, haiku 에피소드 ~260건의 실제 금액을 `evals/results/*.md` 비용 절에 적는다 | 사례 120개 × 4조건 × repeat 3 = 1,440회 예산을 잡으려면 1회 단가가 필요 | 10분 (사용자가 Console 열어야 함) |
 | A8 | **Docker 이미지 검증** — backend 서비스 빌드(torch 포함 수 GB)와 `docker compose up` 전체 기동. 팀원 온보딩용 | 아직 미검증 | 1시간 + 빌드 대기 |
 
 ## B. 팀원 산출물이 오면 (대기 중)

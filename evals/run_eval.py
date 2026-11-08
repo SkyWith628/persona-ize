@@ -35,7 +35,7 @@ from app.core.config import Settings  # noqa: E402
 from app.domain.contact import Contact  # noqa: E402
 from app.domain.persona import PersonaSettings  # noqa: E402
 from app.domain.rewrite import RewriteInput  # noqa: E402
-from app.services.synthetic_loader import load_synthetic  # noqa: E402
+from app.services.synthetic_loader import DEFAULT_PERSONAS, load_synthetic  # noqa: E402
 
 DEFAULT_CASES = ROOT / "evals" / "eval_cases.csv"
 DEFAULT_CHARACTERS = ROOT / "evals" / "characters.csv"
@@ -44,16 +44,7 @@ RESULTS_DIR = ROOT / "evals" / "results"
 KST = timezone(timedelta(hours=9))
 RETRIEVAL_CONDITIONS = ("C", "D")
 
-# 관계 유형별 기본 페르소나. 실제 실험에서는 사례별 설정 열을 추가해 덮어쓴다.
-DEFAULT_PERSONAS: dict[str, PersonaSettings] = {
-    "superior": PersonaSettings(formality=5, friendliness=2, directness=3, forbidden_phrases=["ㅋㅋ", "ㅠ"]),
-    "colleague": PersonaSettings(formality=3, friendliness=4, directness=4),
-    "subordinate": PersonaSettings(formality=3, friendliness=3, directness=4),
-    "friend": PersonaSettings(formality=1, friendliness=5, directness=5, emoji="rare"),
-    "family": PersonaSettings(formality=1, friendliness=5, directness=5),
-    "partner": PersonaSettings(formality=1, friendliness=5, directness=3, emoji="often"),
-    "acquaintance": PersonaSettings(formality=4, friendliness=2, directness=3),
-}
+# 관계 유형별 기본 페르소나는 app.services.synthetic_loader.DEFAULT_PERSONAS (시연 준비와 공유).
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

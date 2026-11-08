@@ -14,11 +14,43 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from app.domain.persona import RelationshipType
+from app.domain.persona import PersonaSettings, RelationshipType
 from app.services.import_service import ImportMessage, ImportPayload
 
 if TYPE_CHECKING:
     from app.api.deps import AppState
+
+
+# 관계 유형별 기본 페르소나. 평가 하니스(run_eval)와 시연 준비(prepare_demo)가 같이 쓴다.
+DEFAULT_PERSONAS: dict[str, PersonaSettings] = {
+    "superior": PersonaSettings(formality=5, friendliness=2, directness=3, forbidden_phrases=["ㅋㅋ", "ㅠ"]),
+    "colleague": PersonaSettings(formality=3, friendliness=4, directness=4),
+    "subordinate": PersonaSettings(formality=3, friendliness=3, directness=4),
+    "friend": PersonaSettings(formality=1, friendliness=5, directness=5, emoji="rare"),
+    "family": PersonaSettings(formality=1, friendliness=5, directness=5),
+    "partner": PersonaSettings(formality=1, friendliness=5, directness=3, emoji="often"),
+    "acquaintance": PersonaSettings(formality=4, friendliness=2, directness=3),
+}
+
+
+def load_aliases(characters_csv: Path | None) -> dict[str, list[str]]:
+    """이름 → 호칭 목록 (`aliases` 열, `;` 구분)."""
+    if characters_csv is None or not characters_csv.is_file():
+        return {}
+    with characters_csv.open(encoding="utf-8-sig", newline="") as fp:
+        return {
+            row["name"].strip(): [a.strip() for a in row.get("aliases", "").split(";") if a.strip()]
+            for row in csv.DictReader(fp)
+        }
+
+
+def persona_for(relationship_type: str, alias: str, characters_csv: Path | None = None) -> PersonaSettings:
+    """기본값 + (상사·지인이면) characters.csv의 첫 호칭. run_eval.build_persona와 같은 규칙."""
+    base = DEFAULT_PERSONAS.get(relationship_type, PersonaSettings())
+    aliases = load_aliases(characters_csv).get(alias, [])
+    if base.formality >= 4 and aliases:
+        return base.model_copy(update={"address_term": aliases[0]})
+    return base
 
 
 @dataclass

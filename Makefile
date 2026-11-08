@@ -6,7 +6,7 @@ ifeq (,$(wildcard $(PY)))
 PY := .venv/bin/python
 endif
 
-.PHONY: help setup venv up down logs dev migrate import-synthetic test lint eval graph-dry-run
+.PHONY: help setup venv up down logs dev migrate import-synthetic demo-prepare test lint eval graph-dry-run
 
 help:
 	@echo "make setup     - .env.example → .env (최초 1회)"
@@ -17,7 +17,8 @@ help:
 	@echo "make dev       - 로컬에서 백엔드만 실행 (http://localhost:8000/docs)"
 	@echo "make test      - 백엔드 테스트"
 	@echo "make lint      - ruff"
-	@echo "make import-synthetic - data/synthetic 합성 대화를 DB에 적재 (user=demo)"
+	@echo "make import-synthetic - data/synthetic 합성 대화를 DB에 적재 (헤더 스텁 user=demo)"
+	@echo "make demo-prepare - 시연 계정(demo)·페르소나·합성 대화·그래프 준비 (docs/demo-script.md)"
 	@echo "make eval      - evals/eval_cases.csv 로 A/B/C 실행, 결과 CSV 저장"
 	@echo "make graph-dry-run - 그래프 스파이크 변환만 확인 (네트워크 없음)"
 
@@ -46,6 +47,9 @@ migrate:
 
 import-synthetic:
 	$(PY) scripts/import_synthetic.py --user demo
+
+demo-prepare:
+	$(PY) scripts/prepare_demo.py --graph
 
 test:
 	cd backend && ../$(PY) -m pytest -q

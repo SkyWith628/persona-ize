@@ -72,4 +72,5 @@ Windows에 `make`가 없으면 Makefile의 명령을 그대로 실행한다.
 - 저장소: `github.com/SkyWith628/persona-ize` (비공개).
 - 백엔드: 상대·페르소나, 첨삭 워크플로(의도·보존 추출 → 검색 → 프롬프트 → 검증 → 재생성 1회 → 원문 유지), PostgreSQL(Alembic), 대화 업로드·화자 지정, C(pgvector 문체 kNN)·D(Graphiti 그래프 맥락) 검색, 삭제, 사용량 제어(429), 세션 쿠키 인증, 데모 화면.
 - 실측: Opus 5.5로 5사례 × A/B/C/D ([2주차 메모](evals/results/2026-11-08-week2-abc-run.md), [3주차 메모](evals/results/2026-11-08-week3-abcd-run.md)). 1주차 그래프 스파이크: [graph/graph-spike-report.md](graph/graph-spike-report.md).
+- 시연: `make demo-prepare` 뒤 [docs/demo-script.md](docs/demo-script.md) (demo 계정, 3장면, 보험).
 - 다음: [docs/backlog.md](docs/backlog.md) — 팀장 단독 항목(A), 팀원 산출물 대기(B), 보류(C), 월요일 안건.
