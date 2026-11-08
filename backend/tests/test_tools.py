@@ -197,3 +197,51 @@ def test_persona_from_aliases_sets_address_for_close_and_formal_relations_only()
         persona_from_aliases("colleague", ["서연", "서연아", "서연 파트장님"]).address_term is None
     )  # 동료는 비운다
     assert persona_from_aliases("family", []).address_term is None
+
+
+def test_usage_report_groups_by_kst_day_and_condition_and_formats() -> None:
+    from datetime import UTC, date, datetime
+
+    from app.tools.usage_report import (
+        ConditionLine,
+        CounterLine,
+        UsageReport,
+        format_report,
+        group_conditions,
+        to_rows,
+    )
+
+    rows = [
+        ("u1", datetime(2026, 11, 8, 14, 0, tzinfo=UTC), "B", 100, 20, 900, "passed"),  # KST 11-08 23:00
+        ("u1", datetime(2026, 11, 8, 15, 30, tzinfo=UTC), "B", 120, 30, 1100, "failed"),  # KST 11-09 00:30
+        ("u1", datetime(2026, 11, 8, 16, 0, tzinfo=UTC), "D", 300, 40, 2000, "passed"),
+        ("u2", datetime(2026, 11, 8, 16, 0, tzinfo=UTC), "B", 0, 0, 0, "none"),  # 결과 없음(실패 요청)
+    ]
+    lines = group_conditions(rows, day_offset_hours=9)
+    assert lines == [
+        ConditionLine("u1", date(2026, 11, 8), "B", 1, 100, 20, 900, 0),
+        ConditionLine("u1", date(2026, 11, 9), "B", 1, 120, 30, 1100, 1),
+        ConditionLine("u1", date(2026, 11, 9), "D", 1, 300, 40, 2000, 0),
+        ConditionLine("u2", date(2026, 11, 9), "B", 1, 0, 0, 0, 0),
+    ]
+    report = UsageReport(
+        since=date(2026, 11, 8),
+        until=date(2026, 11, 9),
+        counters=[CounterLine("u1-very-long-user-id", date(2026, 11, 9), 2, 420, 70)],
+        conditions=lines,
+    )
+    text = format_report(report)
+    assert "합계: 첨삭 2회, 입력 420 / 출력 70 토큰" in text
+    assert "| 2026-11-09 | u1-very-… | 2 | 420 | 70 |" in text
+    assert "| 2026-11-09 | u1 | D | 1 | 300 | 40 | 2000 | 0 |" in text
+    assert format_report(report, full_ids=True).count("u1-very-long-user-id") == 1
+    assert to_rows(report)[1] == {
+        "day": "2026-11-09",
+        "user_id": "u1",
+        "condition": "B",
+        "requests": 1,
+        "input_tokens": 120,
+        "output_tokens": 30,
+        "avg_latency_ms": 1100,
+        "failed": 1,
+    }

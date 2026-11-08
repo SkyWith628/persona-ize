@@ -496,3 +496,55 @@ def test_delete_contact_and_account_cascade_on_postgres(pg_url: str) -> None:
     assert asyncio.run(_count_rows()) == dict.fromkeys(
         ("users", "sessions", "usage_counters", "contacts", "conversations", "messages", "episodes"), 0
     )
+
+
+def test_usage_report_reads_counters_and_results_on_postgres(pg_url: str) -> None:
+    """usage_counters와 rewrite_requests/results를 함께 읽어 조건별로 묶는다."""
+    from datetime import date, timedelta
+
+    from app.domain.usage import usage_day
+    from app.tools.usage_report import load_report
+
+    settings = Settings(_env_file=None, llm_provider="fake", database_url=pg_url, embedding_provider="fake")  # type: ignore[call-arg]
+    user = _user()
+    with TestClient(create_app(settings)) as client:
+        h = {"X-User-Id": user}
+        c = client.post(
+            "/v1/contacts", json={"alias": "박지현", "relationship_type": "superior"}, headers=h
+        ).json()
+        client.put(
+            f"/v1/contacts/{c['id']}/persona",
+            json={"settings": {"formality": 5, "address_term": "팀장님"}, "expected_version": 0},
+            headers=h,
+        )
+        for cond in ("B", "B", "A"):
+            r = client.post(
+                "/v1/rewrites",
+                json={
+                    "contact_id": c["id"],
+                    "draft_text": "오늘 정리해서 내일 오전까지 보내드릴게요.",
+                    "condition": cond,
+                },
+                headers=h,
+            )
+            assert r.status_code == 201, r.text
+
+    today = usage_day(offset_hours=settings.usage_day_offset_hours)
+
+    async def _load():  # noqa: ANN202
+        engine = create_engine(pg_url)
+        try:
+            full = await load_report(engine, today - timedelta(days=1), today, 9, user_id=user)
+            none = await load_report(engine, date(2020, 1, 1), date(2020, 1, 2), 9, user_id=user)
+        finally:
+            await engine.dispose()
+        return full, none
+
+    report, empty = asyncio.run(_load())
+    assert [(c.user_id, c.day, c.rewrites) for c in report.counters] == [(user, today, 3)]
+    assert [(c.condition, c.requests, c.failed) for c in report.conditions] == [("A", 1, 0), ("B", 2, 0)]
+    assert (
+        report.conditions[1].input_tokens
+        == report.counters[0].input_tokens - report.conditions[0].input_tokens
+    )
+    assert (empty.counters, empty.conditions) == ([], [])
