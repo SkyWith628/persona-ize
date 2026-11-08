@@ -125,7 +125,7 @@ def _build_graph(settings: Settings, embedder: Any, contacts: ContactRepo, conve
     return (
         store,
         GraphIngestService(store, conversations, contacts),
-        GraphContextRetriever(store, contacts, top_k=settings.graph_search_top_k),
+        GraphContextRetriever(store, contacts, top_k=settings.graph_search_top_k, embedder=embedder),
     )
 
 

@@ -30,6 +30,15 @@ class GraphEdgeHit:
 
 
 @dataclass(frozen=True)
+class EventInfo:
+    """Event 노드의 추출 속성 (schema.Event). 재정렬 가중치에 쓴다."""
+
+    uuid: str
+    event_type: str | None  # request·refusal·apology·schedule·promise·conflict·status·other
+    importance: int | None  # 1~10, 모델이 안 채우면 None
+
+
+@dataclass(frozen=True)
 class EpisodeRef:
     uuid: str
     name: str  # `c1:m03` — 수집 때 넣은 이름
@@ -55,6 +64,10 @@ class GraphStore(Protocol):
 
     async def event_neighbors(self, group_id: str, node_uuid: str) -> set[str]:
         """이 노드와 엣지로 이어진 Event 노드들의 uuid (상대가 관여한 사건)."""
+        ...
+
+    async def event_info(self, group_id: str, uuids: set[str]) -> dict[str, EventInfo]:
+        """uuid 중 Event 노드인 것들의 event_type·importance. Person 노드는 결과에 없다."""
         ...
 
     async def episode_refs(self, uuids: set[str]) -> dict[str, EpisodeRef]: ...
@@ -132,6 +145,24 @@ class GraphitiStore:
         )
         records = result[0] if isinstance(result, tuple) else result.records
         return {r["uuid"] for r in records}
+
+    async def event_info(self, group_id: str, uuids: set[str]) -> dict[str, EventInfo]:
+        if not uuids:
+            return {}
+        result = await self._g.driver.execute_query(
+            "MATCH (e:Event {group_id: $group_id}) WHERE e.uuid IN $uuids "
+            "RETURN e.uuid AS uuid, e.event_type AS event_type, e.importance AS importance",
+            group_id=group_id,
+            uuids=sorted(uuids),
+        )
+        records = result[0] if isinstance(result, tuple) else result.records
+        out: dict[str, EventInfo] = {}
+        for r in records:
+            imp = r["importance"]
+            out[r["uuid"]] = EventInfo(
+                uuid=r["uuid"], event_type=r["event_type"], importance=int(imp) if imp is not None else None
+            )
+        return out
 
     async def episode_refs(self, uuids: set[str]) -> dict[str, EpisodeRef]:
         if not uuids:

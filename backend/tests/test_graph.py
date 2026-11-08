@@ -17,7 +17,7 @@ from app.ai.retrieval.composite import CompositeRetriever
 from app.ai.retrieval.vector import VectorStyleRetriever
 from app.graph.ingest import GraphIngestService
 from app.graph.retriever import GraphContextRetriever
-from app.graph.store import EpisodeRef, GraphEdgeHit
+from app.graph.store import EpisodeRef, EventInfo, GraphEdgeHit
 from app.repositories.memory import InMemoryContactRepo, InMemoryConversationRepo
 from app.services.import_service import ImportMessage, ImportPayload, ImportService
 
@@ -32,6 +32,7 @@ class FakeGraphStore:
     refs: dict[str, EpisodeRef] = field(default_factory=dict)
     entities: dict[str, str] = field(default_factory=dict)  # name → uuid
     events: dict[str, set[str]] = field(default_factory=dict)  # node uuid → 이웃 Event uuid
+    event_meta: dict[str, EventInfo] = field(default_factory=dict)  # Event uuid → 유형·중요도
     searches: list[tuple[str, str, str | None, int]] = field(default_factory=list)
     fail_on: str | None = None  # 이 이름의 에피소드에서 예외
 
@@ -54,6 +55,9 @@ class FakeGraphStore:
 
     async def event_neighbors(self, group_id, node_uuid) -> set[str]:  # noqa: ANN001
         return set(self.events.get(node_uuid, set()))
+
+    async def event_info(self, group_id, uuids) -> dict[str, EventInfo]:  # noqa: ANN001
+        return {u: info for u, info in self.event_meta.items() if u in uuids}
 
     async def episode_refs(self, uuids) -> dict[str, EpisodeRef]:  # noqa: ANN001
         return {u: self.refs[u] for u in uuids if u in self.refs}
@@ -287,6 +291,67 @@ async def test_graph_retriever_dedupes_facts_from_same_source() -> None:
         user_id="u", contact_id=boss.id, draft_text="보고", situation=""
     )
     assert [e.id for e in got] == ["a", "c"]
+
+
+async def test_graph_retriever_reranks_by_query_similarity_and_recency() -> None:
+    """임베더가 있으면 Graphiti 순위 대신 질의 유사도+최근성으로 다시 매기고, 동떨어진 사실은 버린다."""
+    contacts = InMemoryContactRepo()
+    boss = await contacts.create("u", "박지현", "superior")
+    t = lambda d: datetime(2026, 10, d, 9, tzinfo=UTC)  # noqa: E731
+    store = FakeGraphStore(
+        refs={
+            "e1": EpisodeRef("e1", "c1:m01", t(5)),
+            "e2": EpisodeRef("e2", "c1:m05", t(5)),
+            "e3": EpisodeRef("e3", "c1:m08", t(6)),
+        },
+        edges=[  # Graphiti 순위: 무관한 주간보고 사실이 1위
+            _edge(
+                "generic",
+                "박지현이 김민수로부터 주간보고 초안을 받았다",
+                ["e1"],
+                valid_at=t(5),
+                dst="ev-report",
+            ),
+            _edge(
+                "sched-old",
+                "김민수가 수요일로 대시보드 개편 일정 조정을 부탁했다",
+                ["e2"],
+                valid_at=t(5),
+                dst="ev-sched",
+            ),
+            _edge(
+                "sched-new",
+                "박지현이 수요일로 일정을 조정하기로 합의했다",
+                ["e3"],
+                valid_at=t(6),
+                dst="ev-sched",
+            ),
+        ],
+        event_meta={
+            "ev-report": EventInfo("ev-report", "status", None),  # 일상 상태 공유, 중요도 미기재
+            "ev-sched": EventInfo("ev-sched", "schedule", 7),
+        },
+    )
+    r = GraphContextRetriever(store, contacts, top_k=4, embedder=FakeEmbedder(dim=128))
+    got = await r.retrieve(
+        user_id="u",
+        contact_id=boss.id,
+        draft_text="수요일까지 일정 조정 가능합니다",
+        situation="일정 확인",
+        as_of=t(10),
+    )
+    ids = [e.id for e in got]
+    assert ids[0] in ("sched-new", "sched-old") and ids[:2] != ["generic", "sched-old"]
+    assert "generic" not in ids or ids.index("generic") == len(ids) - 1  # 무관한 사실은 꼴찌이거나 버려진다
+    assert all(e.score is not None for e in got) and got[0].score >= got[-1].score
+    assert r.version == "graph-context-v2"
+
+    # 임베더 없으면 v1 동작: Graphiti 순위 그대로, 점수 없음
+    plain = GraphContextRetriever(store, contacts, top_k=4)
+    got_plain = await plain.retrieve(
+        user_id="u", contact_id=boss.id, draft_text="일정", situation="", as_of=t(10)
+    )
+    assert [e.id for e in got_plain] == ["generic", "sched-old", "sched-new"] and got_plain[0].score is None
 
 
 async def test_composite_merges_and_degrades() -> None:

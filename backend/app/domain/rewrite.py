@@ -38,6 +38,7 @@ class RetrievedExample(BaseModel):
     speaker_role: Literal["me", "contact", "graph"]  # graph: 그래프에서 뽑은 사실 문장 (D)
     sent_at: datetime | None = None
     source_message_ids: list[str] = Field(default_factory=list)
+    score: float | None = Field(None, description="검색기 내부 점수 (분석용, 프롬프트에는 안 들어간다)")
 
 
 class ModelOutput(BaseModel):
