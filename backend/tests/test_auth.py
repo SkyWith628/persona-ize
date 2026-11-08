@@ -96,3 +96,74 @@ def test_register_validation() -> None:
         client.post("/v1/auth/register", json={"username": "fine_name", "password": "short"}).status_code
         == 422
     )
+
+
+def test_login_throttle_by_username_then_recovers_on_success() -> None:
+    client = _client(auth_max_failures=3, auth_lockout_minutes=15)
+    client.post("/v1/auth/register", json=CRED)
+    client.post("/v1/auth/logout")
+    bad = {**CRED, "password": "wrong-password-1"}
+    for _ in range(3):
+        assert client.post("/v1/auth/login", json=bad).status_code == 401
+    blocked = client.post("/v1/auth/login", json=CRED)  # 맞는 비밀번호여도 잠금
+    assert blocked.status_code == 429 and blocked.json()["code"] == "too_many_attempts"
+    assert "초 뒤" in blocked.json()["message"]
+    # 다른 이름은 영향 없음 (IP는 TestClient가 같지만 이름 키가 먼저 걸린 상태라 IP 키도 3회 → 함께 잠긴다)
+    other = client.post("/v1/auth/login", json={"username": "someone_else", "password": "whatever-1"})
+    assert other.status_code in (401, 429)
+
+
+def test_login_throttle_unit_and_reset() -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from app.services.auth_service import LoginThrottle
+
+    t = LoginThrottle(2, timedelta(minutes=10))
+    now = datetime(2026, 11, 9, 9, 0, tzinfo=UTC)
+    assert t.retry_after("k", now) is None
+    t.record_failure("k", now)
+    t.record_failure("k", now + timedelta(minutes=1))
+    assert t.retry_after("k", now + timedelta(minutes=2)) == 8 * 60  # 첫 실패가 창을 벗어나는 시각까지
+    assert t.retry_after("k", now + timedelta(minutes=10, seconds=1)) is None  # 창 지나면 풀림
+    t.record_failure("k", now)
+    t.record_failure("k", now)
+    t.reset("k")
+    assert t.retry_after("k", now) is None
+
+
+def test_change_password_revokes_other_sessions() -> None:
+    client = _client()
+    reg = client.post("/v1/auth/register", json=CRED)
+    csrf = reg.json()["csrf_token"]
+    # 두 번째 기기(세션)
+    second = TestClient(client.app)
+    second.post("/v1/auth/login", json=CRED)
+    assert second.get("/v1/auth/me").status_code == 200
+
+    # CSRF 없으면 403, 현재 비밀번호 틀리면 401, 짧으면 422, 같으면 422
+    body = {"current_password": CRED["password"], "new_password": "brand-new-password-9"}
+    assert client.post("/v1/auth/password", json=body).status_code == 403
+    h = {"X-CSRF-Token": csrf}
+    assert (
+        client.post(
+            "/v1/auth/password", json={**body, "current_password": "nope-nope-1"}, headers=h
+        ).status_code
+        == 401
+    )
+    assert (
+        client.post("/v1/auth/password", json={**body, "new_password": "short"}, headers=h).status_code == 422
+    )
+    assert (
+        client.post(
+            "/v1/auth/password", json={**body, "new_password": CRED["password"]}, headers=h
+        ).status_code
+        == 422
+    )
+    ok = client.post("/v1/auth/password", json=body, headers=h)
+    assert ok.status_code == 200 and ok.json()["revoked_sessions"] == 1
+
+    # 현재 세션은 유지, 다른 세션은 로그아웃, 옛 비밀번호는 거부, 새 비밀번호로 로그인 OK
+    assert client.get("/v1/auth/me").status_code == 200
+    assert second.get("/v1/auth/me").status_code == 401
+    assert client.post("/v1/auth/login", json=CRED).status_code == 401
+    assert client.post("/v1/auth/login", json={**CRED, "password": body["new_password"]}).status_code == 200

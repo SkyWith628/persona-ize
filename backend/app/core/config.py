@@ -52,6 +52,9 @@ class Settings(BaseSettings):
     session_cookie_secure: bool = Field(False, description="https에서만 쿠키 전송. 로컬 http 개발은 False")
     auth_allow_header_stub: bool = Field(True, description="X-User-Id 헤더로 인증 대체 허용 (개발용)")
     auth_allow_register: bool = True
+    # 로그인 시도 제한: 이름·IP별 실패 횟수가 한도에 닿으면 잠금 시간 동안 429 (프로세스 안 메모리)
+    auth_max_failures: int = Field(5, ge=1)
+    auth_lockout_minutes: int = Field(15, ge=1)
     # D 경로(그래프). NEO4J_URI가 비어 있으면 그래프를 쓰지 않고 D = C로 동작한다.
     neo4j_uri: str = ""
     neo4j_username: str = "neo4j"

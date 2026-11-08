@@ -55,6 +55,16 @@ async function loadUsage() {
 
 $("#auth-form").addEventListener("submit", (e) => { e.preventDefault(); auth("login"); });
 $("#auth-form button[data-action=register]").addEventListener("click", () => auth("register"));
+$("#pw-change").addEventListener("click", async () => {
+  const current = prompt("현재 비밀번호");
+  if (!current) return;
+  const next = prompt("새 비밀번호 (8자 이상)");
+  if (!next) return;
+  try {
+    const r = await api("POST", "/v1/auth/password", { current_password: current, new_password: next });
+    flash(`비밀번호를 바꿨습니다. 다른 기기의 세션 ${r.revoked_sessions}개를 로그아웃했습니다.`);
+  } catch (err) { flash(err.message, true); }
+});
 $("#logout").addEventListener("click", async () => { await api("POST", "/v1/auth/logout"); state.me = null; state.csrf = null; renderAuth(); });
 
 async function auth(kind) {

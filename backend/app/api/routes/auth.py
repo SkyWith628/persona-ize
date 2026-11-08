@@ -9,8 +9,9 @@ from __future__ import annotations
 from fastapi import APIRouter, Request, Response, status
 
 from app.api.deps import SESSION_COOKIE, State, current_session
-from app.api.schemas import AuthOut, Credentials, MeOut
+from app.api.schemas import AuthOut, Credentials, MeOut, PasswordChange, PasswordChangeOut
 from app.domain.auth import AuthResult
+from app.services.auth_service import ForbiddenError
 
 router = APIRouter(prefix="/v1/auth", tags=["auth"])
 
@@ -44,10 +45,21 @@ async def register(body: Credentials, response: Response, state: State) -> AuthO
 
 
 @router.post("/login", response_model=AuthOut)
-async def login(body: Credentials, response: Response, state: State) -> AuthOut:
-    result = await state.auth_service.login(body.username, body.password)
+async def login(body: Credentials, request: Request, response: Response, state: State) -> AuthOut:
+    client_ip = request.client.host if request.client else None
+    result = await state.auth_service.login(body.username, body.password, client_ip)
     _set_cookie(response, result, state)
     return _out(result)
+
+
+@router.post("/password", response_model=PasswordChangeOut)
+async def change_password(body: PasswordChange, request: Request, state: State) -> PasswordChangeOut:
+    """현재 비밀번호 확인 뒤 변경. 이 세션만 남기고 다른 세션은 모두 로그아웃된다. CSRF 필수."""
+    session = await current_session(request, state)
+    if not state.auth_service.csrf_ok(session, request.headers.get("X-CSRF-Token")):
+        raise ForbiddenError("CSRF 토큰이 없거나 맞지 않습니다 (X-CSRF-Token).")
+    revoked = await state.auth_service.change_password(session, body.current_password, body.new_password)
+    return PasswordChangeOut(revoked_sessions=revoked)
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)

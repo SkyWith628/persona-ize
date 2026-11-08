@@ -27,6 +27,12 @@ class AuthRepo(Protocol):
 
     async def revoke_session(self, token_hash: str, at: datetime) -> None: ...
 
+    async def update_password(self, user_id: UUID, password_hash: str) -> None: ...
+
+    async def revoke_other_sessions(self, user_id: UUID, keep_token_hash: str, at: datetime) -> int:
+        """이 사용자의 다른 활성 세션을 모두 폐기한다 (비밀번호 변경 뒤). 폐기한 수."""
+        ...
+
 
 class InMemoryAuthRepo:
     def __init__(self) -> None:
@@ -63,6 +69,18 @@ class InMemoryAuthRepo:
         s = self._sessions.get(token_hash)
         if s is not None:
             self._sessions[token_hash] = s.model_copy(update={"revoked_at": at})
+
+    async def update_password(self, user_id: UUID, password_hash: str) -> None:
+        user, _ = self._users[user_id]
+        self._users[user_id] = (user, password_hash)
+
+    async def revoke_other_sessions(self, user_id: UUID, keep_token_hash: str, at: datetime) -> int:
+        n = 0
+        for key, s in list(self._sessions.items()):
+            if s.user_id == user_id and key != keep_token_hash and s.revoked_at is None:
+                self._sessions[key] = s.model_copy(update={"revoked_at": at})
+                n += 1
+        return n
 
 
 class PostgresAuthRepo:
@@ -151,3 +169,28 @@ class PostgresAuthRepo:
                 .where(SessionRow.token_hash == token_hash, SessionRow.revoked_at.is_(None))
                 .values(revoked_at=at)
             )
+
+    async def update_password(self, user_id: UUID, password_hash: str) -> None:
+        from sqlalchemy import update
+
+        from app.db.models import UserRow
+
+        async with self._sessions.begin() as s:
+            await s.execute(update(UserRow).where(UserRow.id == user_id).values(password_hash=password_hash))
+
+    async def revoke_other_sessions(self, user_id: UUID, keep_token_hash: str, at: datetime) -> int:
+        from sqlalchemy import update
+
+        from app.db.models import SessionRow
+
+        async with self._sessions.begin() as s:
+            result = await s.execute(
+                update(SessionRow)
+                .where(
+                    SessionRow.user_id == user_id,
+                    SessionRow.token_hash != keep_token_hash,
+                    SessionRow.revoked_at.is_(None),
+                )
+                .values(revoked_at=at)
+            )
+        return int(result.rowcount or 0)

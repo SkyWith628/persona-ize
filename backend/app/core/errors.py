@@ -53,3 +53,10 @@ class UsageLimitError(DomainError):
 
     status_code = 429
     code = "usage_exceeded"
+
+
+class TooManyAttemptsError(DomainError):
+    """로그인 실패가 잦아 잠시 막혔다."""
+
+    status_code = 429
+    code = "too_many_attempts"

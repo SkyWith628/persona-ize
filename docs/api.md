@@ -14,6 +14,7 @@
 curl -s -c cookie.txt -X POST localhost:8000/v1/auth/register -H "Content-Type: application/json" -d '{"username":"minsu","password":"long-enough-pw"}'
 ```
 응답의 `csrf_token`을 쓰기 요청에 `-H "X-CSRF-Token: ..."`로 보낸다. `POST /v1/auth/login`, `POST /v1/auth/logout`, `GET /v1/auth/me`(CSRF 토큰 재조회).
+`POST /v1/auth/password` `{current_password, new_password}`(CSRF 필수) — 바꾸면 다른 세션은 모두 로그아웃. 로그인 실패가 이름·IP별 5회(15분)에 닿으면 429 `too_many_attempts`.
 
 ## 상대·페르소나
 

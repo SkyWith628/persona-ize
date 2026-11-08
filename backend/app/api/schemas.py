@@ -85,6 +85,15 @@ class AuthOut(BaseModel):
     expires_at: datetime
 
 
+class PasswordChange(BaseModel):
+    current_password: str = Field(min_length=1, max_length=128)
+    new_password: str = Field(min_length=1, max_length=128)
+
+
+class PasswordChangeOut(BaseModel):
+    revoked_sessions: int = Field(description="함께 로그아웃된 다른 세션 수")
+
+
 class MeOut(BaseModel):
     user_id: str
     username: str
