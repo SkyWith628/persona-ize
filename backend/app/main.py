@@ -48,6 +48,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(health.router)
     app.include_router(contacts.router)
     app.include_router(rewrites.router)
+    app.include_router(rewrites.usage_router)
     app.include_router(conversations.router)
     return app
 

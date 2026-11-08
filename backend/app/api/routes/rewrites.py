@@ -6,10 +6,12 @@ from uuid import UUID
 from fastapi import APIRouter, Header, status
 
 from app.api.deps import State, UserId
-from app.api.schemas import FeedbackIn, RewriteCreate, RewriteOut
+from app.api.schemas import FeedbackIn, RewriteCreate, RewriteOut, UsageOut
 from app.domain.rewrite import Feedback, RewriteInput, RewriteRecord
 
 router = APIRouter(prefix="/v1/rewrites", tags=["rewrites"])
+# /v1/rewrites/usage는 /{request_id}와 겹치므로 별도 경로
+usage_router = APIRouter(prefix="/v1/usage", tags=["usage"])
 
 
 def _to_out(rec: RewriteRecord) -> RewriteOut:
@@ -42,3 +44,17 @@ async def get_rewrite(request_id: UUID, user_id: UserId, state: State) -> Rewrit
 @router.post("/{request_id}/feedback", status_code=status.HTTP_204_NO_CONTENT)
 async def post_feedback(request_id: UUID, body: FeedbackIn, user_id: UserId, state: State) -> None:
     await state.rewrite_service.feedback(user_id, Feedback(request_id=request_id, **body.model_dump()))
+
+
+@usage_router.get("", response_model=UsageOut, summary="오늘(KST) 사용량과 한도")
+async def get_usage(user_id: UserId, state: State) -> UsageOut:
+    u = await state.rewrite_service.usage(user_id)
+    return UsageOut(
+        day=u.day,
+        rewrites=u.rewrites,
+        rewrite_limit=u.rewrite_limit,
+        remaining_rewrites=u.remaining_rewrites,
+        input_tokens=u.input_tokens,
+        output_tokens=u.output_tokens,
+        token_limit=u.token_limit,
+    )

@@ -43,6 +43,10 @@ class Settings(BaseSettings):
     embedding_dim: int = Field(384, gt=0)
     max_import_messages: int = Field(5000, gt=0)
     retrieval_top_k: int = Field(4, ge=1, le=20)
+    # 사용량 제어 (사용자·하루, 한국 시간 날짜). 넘으면 429. 0이면 전부 막는다.
+    usage_daily_rewrite_limit: int = Field(200, ge=0)
+    usage_daily_token_limit: int = Field(400_000, ge=0, description="입력+출력 토큰 합, 캐시 읽기 제외")
+    usage_day_offset_hours: int = Field(9, ge=-12, le=14)
     # D 경로(그래프). NEO4J_URI가 비어 있으면 그래프를 쓰지 않고 D = C로 동작한다.
     neo4j_uri: str = ""
     neo4j_username: str = "neo4j"

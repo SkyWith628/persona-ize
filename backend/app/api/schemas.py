@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -61,6 +61,16 @@ class FeedbackIn(BaseModel):
     edited_text: str | None = None
     reason: str | None = Field(None, max_length=500)
     consent_to_reuse: bool = False
+
+
+class UsageOut(BaseModel):
+    day: date
+    rewrites: int
+    rewrite_limit: int
+    remaining_rewrites: int
+    input_tokens: int
+    output_tokens: int
+    token_limit: int
 
 
 class ErrorOut(BaseModel):

@@ -115,3 +115,57 @@ def test_condition_b_requires_persona(client: TestClient, user_a: dict[str, str]
         "/v1/rewrites", json={"contact_id": c["id"], "draft_text": DRAFT, "condition": "A"}, headers=user_a
     )
     assert ok.status_code == 201
+
+
+def test_usage_limits_and_status(settings, user_a: dict[str, str], user_b: dict[str, str]) -> None:  # noqa: ANN001
+    """하루 요청 한도 2회 → 3번째 429. 멱등 재요청은 세지 않는다. 다른 사용자는 별도 집계."""
+    from app.core.config import Settings
+    from app.main import create_app
+
+    small = Settings(
+        _env_file=None, llm_provider="fake", embedding_provider="fake", usage_daily_rewrite_limit=2
+    )  # type: ignore[call-arg]
+    client = TestClient(create_app(small))
+    cid = _setup_contact(client, user_a)
+    payload = {"contact_id": cid, "draft_text": DRAFT}
+    assert client.get("/v1/usage", headers=user_a).json()["remaining_rewrites"] == 2
+    first = client.post("/v1/rewrites", json=payload, headers={**user_a, "Idempotency-Key": "u1"})
+    assert first.status_code == 201
+    # 같은 키 재요청: 모델을 안 부르니 세지 않음
+    assert (
+        client.post("/v1/rewrites", json=payload, headers={**user_a, "Idempotency-Key": "u1"}).status_code
+        == 201
+    )
+    assert client.get("/v1/usage", headers=user_a).json()["rewrites"] == 1
+    assert client.post("/v1/rewrites", json=payload, headers=user_a).status_code == 201
+    third = client.post("/v1/rewrites", json=payload, headers=user_a)
+    assert third.status_code == 429, third.text
+    assert third.json()["code"] == "usage_exceeded"
+    status = client.get("/v1/usage", headers=user_a).json()
+    assert (status["rewrites"], status["remaining_rewrites"], status["rewrite_limit"]) == (2, 0, 2)
+    assert status["input_tokens"] >= 0
+    # 다른 사용자는 영향 없음
+    cid_b = _setup_contact(client, user_b)
+    assert (
+        client.post(
+            "/v1/rewrites", json={"contact_id": cid_b, "draft_text": DRAFT}, headers=user_b
+        ).status_code
+        == 201
+    )
+
+
+def test_usage_token_limit_blocks_next_request(user_a: dict[str, str]) -> None:
+    """토큰 한도는 다음 요청부터 막는다 (한 번의 초과는 허용)."""
+    from app.core.config import Settings
+    from app.main import create_app
+
+    tiny = Settings(_env_file=None, llm_provider="fake", embedding_provider="fake", usage_daily_token_limit=1)  # type: ignore[call-arg]
+    client = TestClient(create_app(tiny))
+    cid = _setup_contact(client, user_a)
+    assert (
+        client.post("/v1/rewrites", json={"contact_id": cid, "draft_text": DRAFT}, headers=user_a).status_code
+        == 201
+    )
+    blocked = client.post("/v1/rewrites", json={"contact_id": cid, "draft_text": DRAFT}, headers=user_a)
+    assert blocked.status_code == 429
+    assert "토큰" in blocked.json()["message"]

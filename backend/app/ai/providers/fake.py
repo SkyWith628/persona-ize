@@ -40,7 +40,11 @@ class FakeProvider:
                 warnings=[],
             ),
             model_version=self.model_version,
-            usage={"input_tokens": 0, "output_tokens": 0},
+            # 사용량 제어가 토큰을 세므로 글자 수 기반 추정값을 보고한다 (한글 ~2자/토큰)
+            usage={
+                "input_tokens": max(len(system) + len(user), 1) // 2,
+                "output_tokens": max(len(draft), 1) // 2,
+            },
         )
 
 

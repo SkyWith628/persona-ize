@@ -8,9 +8,11 @@ from uuid import UUID
 
 from app.ai.workflow import RewriteWorkflow
 from app.core.config import Settings
-from app.core.errors import InvalidInputError, VersionConflictError
+from app.core.errors import InvalidInputError, UsageLimitError, VersionConflictError
 from app.domain.rewrite import Feedback, RewriteInput, RewriteRecord
+from app.domain.usage import UsageStatus, usage_day
 from app.repositories.base import ContactRepo, RewriteRepo
+from app.repositories.usage import UsageRepo
 
 
 def _input_hash(inp: RewriteInput) -> str:
@@ -25,11 +27,13 @@ class RewriteService:
         contacts: ContactRepo,
         rewrites: RewriteRepo,
         workflow: RewriteWorkflow,
+        usage: UsageRepo,
     ) -> None:
         self._settings = settings
         self._contacts = contacts
         self._rewrites = rewrites
         self._workflow = workflow
+        self._usage = usage
 
     def _validate(self, inp: RewriteInput) -> None:
         draft = inp.draft_text.strip()
@@ -61,7 +65,30 @@ class RewriteService:
                 "이 상대에게 저장된 페르소나가 없습니다. 먼저 설정을 저장하세요 (A 조건은 예외)."
             )
 
+        # 사용량: 모델을 부르기 전에 요청 수를 예약하고, 토큰 한도는 지금까지 쓴 양으로 본다.
+        day = usage_day(offset_hours=self._settings.usage_day_offset_hours)
+        used = await self._usage.get(inp.user_id, day)
+        if used.total_tokens >= self._settings.usage_daily_token_limit:
+            raise UsageLimitError(
+                f"오늘 토큰 한도({self._settings.usage_daily_token_limit:,})를 모두 썼습니다. "
+                "내일 다시 시도하세요."
+            )
+        reserved = await self._usage.reserve_rewrite(
+            inp.user_id, day, self._settings.usage_daily_rewrite_limit
+        )
+        if reserved is None:
+            raise UsageLimitError(
+                f"오늘 첨삭 요청 한도({self._settings.usage_daily_rewrite_limit}회)를 모두 썼습니다. "
+                "내일 다시 시도하세요."
+            )
+
         result = await self._workflow.run(inp, contact, pv.settings if pv else None)
+        await self._usage.add_tokens(
+            inp.user_id,
+            day,
+            result.token_usage.get("input_tokens", 0),
+            result.token_usage.get("output_tokens", 0),
+        )
         return await self._rewrites.save(
             user_id=inp.user_id,
             contact_id=inp.contact_id,
@@ -77,3 +104,15 @@ class RewriteService:
 
     async def feedback(self, user_id: str, fb: Feedback) -> Feedback:
         return await self._rewrites.save_feedback(user_id, fb)
+
+    async def usage(self, user_id: str) -> UsageStatus:
+        day = usage_day(offset_hours=self._settings.usage_day_offset_hours)
+        used = await self._usage.get(user_id, day)
+        return UsageStatus(
+            day=day,
+            rewrites=used.rewrites,
+            rewrite_limit=self._settings.usage_daily_rewrite_limit,
+            input_tokens=used.input_tokens,
+            output_tokens=used.output_tokens,
+            token_limit=self._settings.usage_daily_token_limit,
+        )

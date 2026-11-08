@@ -24,6 +24,7 @@ from app.ai.workflow import RewriteWorkflow
 from app.core.config import Settings, get_settings
 from app.repositories.base import ContactRepo, ConversationRepo, RewriteRepo
 from app.repositories.memory import InMemoryContactRepo, InMemoryConversationRepo, InMemoryRewriteRepo
+from app.repositories.usage import InMemoryUsageRepo, UsageRepo
 from app.services.import_service import ImportService
 from app.services.rewrite_service import RewriteService
 
@@ -37,6 +38,7 @@ class AppState:
     rewrites: RewriteRepo
     conversations: ConversationRepo
     embedder: Embedder
+    usage: UsageRepo
     rewrite_service: RewriteService
     import_service: ImportService
     workflow: RewriteWorkflow  # 평가 하니스가 서비스 계층 없이 직접 돌린다
@@ -57,12 +59,22 @@ class AppState:
             await self.engine.dispose()
 
 
-def _build_repos(settings: Settings) -> tuple[ContactRepo, RewriteRepo, ConversationRepo, Storage, Any]:
+def _build_repos(
+    settings: Settings,
+) -> tuple[ContactRepo, RewriteRepo, ConversationRepo, UsageRepo, Storage, Any]:
     if not settings.database_url:
-        return InMemoryContactRepo(), InMemoryRewriteRepo(), InMemoryConversationRepo(), "memory", None
+        return (
+            InMemoryContactRepo(),
+            InMemoryRewriteRepo(),
+            InMemoryConversationRepo(),
+            InMemoryUsageRepo(),
+            "memory",
+            None,
+        )
     # db extra(sqlalchemy, asyncpg)가 없는 설치에서도 인메모리 경로는 돌아가야 하므로 여기서만 import.
     from app.db.session import create_engine, create_session_factory
     from app.repositories.postgres import PostgresContactRepo, PostgresConversationRepo, PostgresRewriteRepo
+    from app.repositories.usage import PostgresUsageRepo
 
     engine = create_engine(settings.database_url)
     sessions = create_session_factory(engine)
@@ -70,6 +82,7 @@ def _build_repos(settings: Settings) -> tuple[ContactRepo, RewriteRepo, Conversa
         PostgresContactRepo(sessions),
         PostgresRewriteRepo(sessions),
         PostgresConversationRepo(sessions),
+        PostgresUsageRepo(sessions),
         "postgres",
         engine,
     )
@@ -104,7 +117,7 @@ def _build_graph(settings: Settings, embedder: Any, contacts: ContactRepo, conve
 
 def build_state(settings: Settings) -> AppState:
     """앱 시작 시 한 번 만든다. 테스트는 이 함수를 직접 호출해 격리된 상태를 만든다."""
-    contacts, rewrites, conversations, storage, engine = _build_repos(settings)
+    contacts, rewrites, conversations, usage, storage, engine = _build_repos(settings)
     embedder = build_embedder(settings)
     graph_store, graph_ingest, graph_retriever = _build_graph(settings, embedder, contacts, conversations)
     null = NullRetriever()
@@ -122,7 +135,8 @@ def build_state(settings: Settings) -> AppState:
         rewrites=rewrites,
         conversations=conversations,
         embedder=embedder,
-        rewrite_service=RewriteService(settings, contacts, rewrites, workflow),
+        usage=usage,
+        rewrite_service=RewriteService(settings, contacts, rewrites, workflow, usage),
         import_service=ImportService(
             contacts,
             conversations,

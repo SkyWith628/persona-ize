@@ -46,3 +46,10 @@ class ModelRefusalError(ModelUnavailableError):
     """모델(안전 분류기)이 생성을 거절했다. 장애가 아니므로 워크플로가 재생성 1회를 시도한다 (11-08 E003)."""
 
     code = "model_refusal"
+
+
+class UsageLimitError(DomainError):
+    """하루 사용량 한도 초과. 자정(KST) 이후 다시 가능."""
+
+    status_code = 429
+    code = "usage_exceeded"

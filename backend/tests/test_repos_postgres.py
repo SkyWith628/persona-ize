@@ -218,6 +218,32 @@ async def test_rewrite_save_get_idempotency_feedback(repos) -> None:  # noqa: AN
         await rewrites.save_feedback(b, fb)
 
 
+async def test_usage_reserve_is_atomic_and_counts_tokens(pg_url: str) -> None:
+    import asyncio as _asyncio
+    from datetime import date
+
+    from app.repositories.usage import PostgresUsageRepo
+
+    engine = create_engine(pg_url)
+    repo = PostgresUsageRepo(create_session_factory(engine))
+    try:
+        user, day = _user(), date(2026, 11, 9)
+        assert (await repo.get(user, day)).rewrites == 0
+        # 동시 10개 예약, 한도 3 → 정확히 3개만 성공
+        results = await _asyncio.gather(*(repo.reserve_rewrite(user, day, 3) for _ in range(10)))
+        assert sum(r is not None for r in results) == 3
+        assert (await repo.get(user, day)).rewrites == 3
+        assert await repo.reserve_rewrite(user, day, 3) is None
+        assert await repo.reserve_rewrite(user, day, 0) is None  # 한도 0은 전부 차단
+        after = await repo.add_tokens(user, day, 120, 45)
+        after = await repo.add_tokens(user, day, 10, 5)
+        assert (after.input_tokens, after.output_tokens, after.total_tokens) == (130, 50, 180)
+        # 다른 날은 별도
+        assert (await repo.get(user, date(2026, 11, 10))).rewrites == 0
+    finally:
+        await engine.dispose()
+
+
 def test_api_vertical_flow_on_postgres(pg_url: str) -> None:
     """HTTP → 서비스 → PostgreSQL 저장소 배선 확인. 로직은 인메모리 테스트(test_api.py)와 같다."""
     settings = Settings(_env_file=None, llm_provider="fake", database_url=pg_url)  # type: ignore[call-arg]
