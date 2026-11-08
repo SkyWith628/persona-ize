@@ -159,3 +159,8 @@
 - 결과: `docker compose build backend` 2분 32초, 2.26GB. 컨테이너에서 healthz·화면·가져오기·백그라운드 그래프(25초)·D 첨삭·삭제까지 전부 동작. 팀원은 `make up-all` 한 번으로 전체를 띄울 수 있다.
 - 결정: Dockerfile은 torch를 CPU 인덱스로 먼저 깐 뒤 `.[db,graph]`를 설치한다(기본 인덱스는 CUDA 휠). 컨테이너 시작 명령은 `alembic upgrade head && uvicorn` — 팀원이 마이그레이션을 따로 기억하지 않게. e5 모델은 `hf-cache` 볼륨으로 재사용.
 - 결정: 개발 기본은 여전히 `make up` + 호스트 `make dev`(코드 변경 즉시 반영, 이미지 재빌드 없음). 컨테이너 전체 기동은 온보딩·시연 PC용.
+
+## 2026-11-09 팀원 접점 도구: 시트 CSV→합성 JSON 변환기, 블라인드 평가 시트 생성·병합
+- 결과: `scripts/csv_to_synthetic.py`(한글/영문 열, 이름→me/contact, 시간대 보정, 기존 JSON에 합칠 때 같은 id는 건너뜀, 문제는 전부 모아 보고하고 아무것도 안 씀) · `scripts/make_blind_sheet.py build|merge`(조건 숨김·셔플·같은 문장 합침·원문 기준선·무작위 item_id, 키는 git 제외; merge가 조건별 평균). 로직은 `backend/app/tools/`, 테스트 6개(총 103).
+- 결정: 기존 메시지는 변환기가 **절대 덮어쓰지 않는다** — 다른 파일이 `c1:m03`으로 가리킨다. 고치려면 새 id로 추가하거나 팀장이 수동으로.
+- 결정: 블라인드 시트에 **원문 자체를 한 줄** 넣는다. 채점자가 "안 바꾼 것"에 몇 점을 주는지가 기준선이 되고, 원문 유지(fallback) 결과와 자연스럽게 합쳐진다. 정답 키(`*-key.csv`)는 채점이 끝날 때까지 공유하지 않는다.

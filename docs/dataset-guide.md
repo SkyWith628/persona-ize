@@ -57,7 +57,7 @@ PR을 올리면 자동 검사(`scripts/validate_data_files.py`)가 열 이름·�
 
 ### 어디에 어떻게 쓰나
 - 구글 시트나 엑셀에 **대화방 / 번호 / 날짜시간 / 말한 사람 / 내용** 다섯 열로 씁니다. 말한 사람은 `me`(나) 또는 `contact`(상대) 둘 중 하나입니다.
-- 저장 형식(JSON)은 [data/synthetic/README.md](../data/synthetic/README.md)에 있습니다. 변환은 팀장이 해 주니, 시트 링크나 CSV를 PR에 붙이면 됩니다.
+- 저장 형식(JSON)은 [data/synthetic/README.md](../data/synthetic/README.md)에 있습니다. 변환은 팀장이 `scripts/csv_to_synthetic.py`로 합니다 — 시트를 **CSV UTF-8**로 내려받아 PR에 붙이면 됩니다. 열 이름은 그대로(대화방·번호·날짜시간·말한 사람·내용), '상대' 열을 하나 더 두면 대화방마다 누구와의 대화인지 적을 수 있습니다. 말한 사람은 `me`/`contact` 또는 이름.
 - 지금 들어 있는 대화: `data/synthetic/sample_conversations.json` (대화방 4개, 36줄). 먼저 읽어 보고 같은 느낌으로 이어 쓰세요.
 
 ### 메시지마다 번호가 있습니다

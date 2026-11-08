@@ -6,7 +6,7 @@ ifeq (,$(wildcard $(PY)))
 PY := .venv/bin/python
 endif
 
-.PHONY: help setup venv up up-all down logs dev migrate import-synthetic demo-prepare test lint eval graph-dry-run
+.PHONY: help setup venv up up-all down logs dev migrate import-synthetic demo-prepare test lint eval blind graph-dry-run
 
 help:
 	@echo "make setup     - .env.example → .env (최초 1회)"
@@ -21,6 +21,7 @@ help:
 	@echo "make import-synthetic - data/synthetic 합성 대화를 DB에 적재 (헤더 스텁 user=demo)"
 	@echo "make demo-prepare - 시연 계정(demo)·페르소나·합성 대화·그래프 준비 (docs/demo-script.md)"
 	@echo "make eval      - evals/eval_cases.csv 로 A/B/C 실행, 결과 CSV 저장"
+	@echo "make blind RESULTS=evals/results/<결과>.csv - 블라인드 채점 시트 생성 (evals/blind/)"
 	@echo "make graph-dry-run - 그래프 스파이크 변환만 확인 (네트워크 없음)"
 
 setup:
@@ -63,6 +64,9 @@ lint:
 
 eval:
 	$(PY) evals/run_eval.py --cases evals/eval_cases.csv --conditions A,B,C
+
+blind:
+	$(PY) scripts/make_blind_sheet.py build $(RESULTS)
 
 graph-dry-run:
 	cd graph/graphiti_p0 && ../../$(PY) ingest.py --dry-run

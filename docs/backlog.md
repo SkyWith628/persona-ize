@@ -13,8 +13,8 @@
 | # | 작업 | 기다리는 것 | 담당 |
 |---|---|---|---|
 | B1 | A/B/C/D `--repeat 3` 실행 + 분산 보고 | `evals/eval_cases.csv` 20개 (평가 담당), 그중 needs_graph=Y 5개 이상 | 팀장 |
-| B2 | 블라인드 평가 시트 — 조건 숨긴 결과 CSV 생성 스크립트 + 루브릭 열 | `style_rubric.md` v1 (평가 담당) | 팀장 → 평가 |
-| B3 | 합성 대화 60개 적재·그래프 재수집 — 흩어진 사건 장면 포함 | `data/synthetic/*.json` 추가 (시나리오 담당) | 팀장 |
+| B2 | 블라인드 평가 진행 — 시트 생성기는 완료(`make_blind_sheet.py build/merge`, 11/09). 루브릭 확정 뒤 `--columns`만 맞춘다 | `style_rubric.md` v1 (평가 담당) | 팀장 → 평가 |
+| B3 | 합성 대화 60개 적재·그래프 재수집 — 변환기는 완료(`csv_to_synthetic.py`, 11/09) | 시트 CSV (시나리오 담당) | 팀장 |
 | B4 | `graph_queries.csv` 질의 확대 후 스파이크 `eval_queries.py`를 백엔드 D 검색기 기준으로 다시 작성 | 질의 추가 (그래프 담당) | 팀장·그래프 |
 | B5 | `preserve_rules.md` ↔ `ai/preserve.py` 대조, "예시에서 전이된 문장 추가(ㅋㅋ)" 허용 규칙 | 보존 규칙 초안 (평가 담당) | 팀장·평가 |
 | B6 | `expected_notes` 기준으로 자동 채점 가능한 항목 분리(날짜·가능/불가 보존은 규칙, 어조는 사람) | 사례 20개 | 평가 |
