@@ -1,4 +1,6 @@
-# apps/web — React + TypeScript UI (5주차)
+# apps/web — React + TypeScript UI (보류)
+
+2026-11-09: 시연용 화면은 `backend/app/web/`(빌드 없는 정적 HTML/JS, 서버 `/`)로 먼저 만들었다. React는 포트폴리오 정리 단계에서 필요하면 여기서 시작한다.
 
 아직 비어 있다. 백엔드 `/docs`(Swagger)로 1~4주차 실험을 진행하고, UI는 5주차에 만든다.
 

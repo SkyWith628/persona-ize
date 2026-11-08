@@ -169,3 +169,11 @@ def test_usage_token_limit_blocks_next_request(user_a: dict[str, str]) -> None:
     blocked = client.post("/v1/rewrites", json={"contact_id": cid, "draft_text": DRAFT}, headers=user_a)
     assert blocked.status_code == 429
     assert "토큰" in blocked.json()["message"]
+
+
+def test_web_index_and_static(client: TestClient) -> None:
+    """데모 화면이 서빙된다 (인증 없이 HTML·JS·CSS는 열리고, API는 로그인 뒤)."""
+    r = client.get("/")
+    assert r.status_code == 200 and "Persona_ize" in r.text and "/static/app.js" in r.text
+    assert client.get("/static/app.js").status_code == 200
+    assert "text/css" in client.get("/static/app.css").headers["content-type"]

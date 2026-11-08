@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Persona_ize</title>
+  <link rel="stylesheet" href="/static/app.css" />
+</head>
+<body>
+  <header class="top">
+    <div>
+      <h1>Persona_ize</h1>
+      <p class="sub">상대·상황에 맞는 내 말투로 다듬되, 원문의 사실과 의도는 그대로.</p>
+    </div>
+    <div id="auth-box" class="auth">
+      <form id="auth-form" class="row">
+        <input id="auth-user" placeholder="이름 (영문·숫자 3~32자)" autocomplete="username" required />
+        <input id="auth-pass" type="password" placeholder="비밀번호 (8자 이상)" autocomplete="current-password" required />
+        <button type="submit" data-action="login">로그인</button>
+        <button type="button" data-action="register" class="ghost">가입</button>
+      </form>
+      <div id="auth-me" class="hidden">
+        <span id="me-name"></span>
+        <span id="usage" class="muted"></span>
+        <button id="logout" class="ghost">로그아웃</button>
+      </div>
+    </div>
+  </header>
+
+  <p id="flash" class="flash hidden"></p>
+
+  <main id="app" class="grid hidden">
+    <section class="col">
+      <h2>1. 상대</h2>
+      <ul id="contact-list" class="list"></ul>
+      <form id="contact-form" class="row">
+        <input id="contact-alias" placeholder="별칭 (예: 박지현)" maxlength="50" required />
+        <select id="contact-rel">
+          <option value="superior">상사</option>
+          <option value="colleague">동료·동기</option>
+          <option value="subordinate">후배</option>
+          <option value="friend">친구</option>
+          <option value="family">가족</option>
+          <option value="partner">연인</option>
+          <option value="acquaintance">지인·거래처</option>
+        </select>
+        <button type="submit">추가</button>
+      </form>
+
+      <div id="persona-box" class="hidden">
+        <h2>2. 페르소나 <span id="persona-version" class="muted"></span></h2>
+        <form id="persona-form" class="persona">
+          <label>격식 <output id="o-formality">3</output><input type="range" name="formality" min="1" max="5" value="3" /></label>
+          <label>친근함 <output id="o-friendliness">3</output><input type="range" name="friendliness" min="1" max="5" value="3" /></label>
+          <label>직접성 <output id="o-directness">3</output><input type="range" name="directness" min="1" max="5" value="3" /></label>
+          <label>길이
+            <select name="length_pref"><option value="shorter">짧게</option><option value="same" selected>원문만큼</option><option value="longer">길게</option></select>
+          </label>
+          <label>이모지
+            <select name="emoji"><option value="none" selected>없음</option><option value="rare">가끔</option><option value="often">자주</option></select>
+          </label>
+          <label>호칭 <input name="address_term" placeholder="예: 팀장님, 형" maxlength="30" /></label>
+          <label>선호 표현 <input name="preferred_phrases" placeholder="쉼표로 구분" /></label>
+          <label>금지 표현 <input name="forbidden_phrases" placeholder="예: ㅋㅋ, ㅠ" /></label>
+          <label>메모 <input name="notes" placeholder="예: 업무 얘기는 결론부터" maxlength="500" /></label>
+          <button type="submit">저장 (새 버전)</button>
+        </form>
+
+        <h2>3. 과거 대화</h2>
+        <ul id="conv-list" class="list"></ul>
+        <form id="conv-form" class="row">
+          <input id="conv-title" placeholder="대화방 이름" maxlength="200" />
+          <input id="conv-me" placeholder="내 이름 (그래프용, 예: 김민수)" maxlength="50" />
+          <button type="submit">대화방 추가</button>
+        </form>
+        <form id="import-form" class="hidden">
+          <p class="muted">한 줄에 한 메시지: <code>2026-10-05 09:25 | 박지현 | 내용</code> (이름 대신 <code>me</code>/<code>contact</code>도 됨). 또는 JSON 배열.</p>
+          <textarea id="import-text" rows="6" placeholder="2026-10-05 09:25 | 박지현 | 민수씨, 개편은 언제까지 가능해요?&#10;2026-10-05 09:31 | 김민수 | 팀장님, 다음 주 수요일까지는 가능합니다."></textarea>
+          <div class="row">
+            <input id="import-me-name" placeholder="내 이름으로 쓸 화자 (예: 김민수)" />
+            <button type="submit">가져오기</button>
+          </div>
+          <p id="import-status" class="muted"></p>
+        </form>
+      </div>
+    </section>
+
+    <section class="col">
+      <h2>4. 첨삭</h2>
+      <form id="rewrite-form" class="persona">
+        <label>상황 <input name="situation" placeholder="예: 일정 지연 양해" maxlength="500" /></label>
+        <label>조건
+          <select name="condition">
+            <option value="B" selected>B 페르소나</option>
+            <option value="C">C +내 과거 표현</option>
+            <option value="D">D +그래프 맥락</option>
+            <option value="A">A 기준선(페르소나 없음)</option>
+          </select>
+        </label>
+        <label>원문 <textarea name="draft_text" rows="4" maxlength="2000" required placeholder="오늘 정리해서 내일 오전까지 보내드릴게요."></textarea></label>
+        <button type="submit" id="rewrite-submit">추천 받기</button>
+      </form>
+
+      <article id="result" class="result hidden">
+        <div class="row between">
+          <strong id="result-status"></strong>
+          <span id="result-meta" class="muted"></span>
+        </div>
+        <textarea id="result-text" rows="4"></textarea>
+        <div class="row">
+          <button id="fb-accept">적용 (복사)</button>
+          <button id="fb-edit" class="ghost">수정해서 적용</button>
+          <button id="fb-reject" class="ghost">거절</button>
+        </div>
+        <details open><summary>바꾼 이유</summary><ul id="result-reasons"></ul></details>
+        <details open><summary>주의</summary><ul id="result-warnings"></ul></details>
+        <details><summary>보존 항목·검증</summary><ul id="result-preserved"></ul><p id="result-validation" class="muted"></p></details>
+        <details><summary>참고한 과거 표현</summary><ul id="result-evidence"></ul></details>
+      </article>
+    </section>
+  </main>
+
+  <script type="module" src="/static/app.js"></script>
+</body>
+</html>

@@ -18,9 +18,14 @@
 cp .env.example .env            # LLM_PROVIDER=fake면 키 없이 동작
 py -3.14 -m venv .venv          # 맥: python3 -m venv .venv
 .venv/Scripts/python.exe -m pip install -e "backend[dev]"
-make test                        # 백엔드 테스트
-make dev                         # http://localhost:8000/docs
+make up                          # PostgreSQL(pgvector)·Neo4j 컨테이너 (Docker Desktop 필요)
+make migrate                     # DB 스키마 최신으로
+make import-synthetic            # 합성 대화 적재 (user=demo). 그래프까지: scripts/import_synthetic.py --graph
+make test                        # 백엔드 테스트 (Postgres 없으면 통합 테스트는 skip)
+make dev                         # 화면 http://localhost:8000 · Swagger /docs
 ```
+
+인메모리로만 빠르게 보려면 `.env`의 `DATABASE_URL`을 비운다 (C/D 검색은 가져온 대화를 메모리에 둔다). API 상세: [docs/api.md](docs/api.md).
 
 실제 Claude를 쓰려면 `.env`에 `LLM_PROVIDER=anthropic`, `ANTHROPIC_API_KEY`, `LLM_MODEL`을 채운다. Console에서 사용량 한도를 먼저 건다.
 
@@ -47,7 +52,7 @@ curl -s -X POST localhost:8000/v1/rewrites -H "X-User-Id: me" -H "Idempotency-Ke
 | `data/synthetic/` | 사용자·시나리오 | 합성 과거 대화 JSON |
 | `graph/` | 지식그래프 | 스키마, 호칭 병합·질의 정답, Graphiti 스파이크 |
 | `docs/` | 전원 | 설계·결정·일정 |
-| `apps/web/` | 팀장 (5주차) | React UI |
+| `backend/app/web/` | 팀장 | 데모 화면 (빌드 없는 정적 HTML/JS, 서버 `/`에서 서빙). `apps/web/`(React)는 보류 |
 
 협업 규칙(GitHub Desktop, PR, 폴더 소유): [CONTRIBUTING.md](CONTRIBUTING.md) · 역할·일정: [docs/team-roles-and-schedule.md](docs/team-roles-and-schedule.md) · **평가 사례·합성 대화 쓰는 법: [docs/dataset-guide.md](docs/dataset-guide.md)**
 
@@ -63,8 +68,8 @@ curl -s -X POST localhost:8000/v1/rewrites -H "X-User-Id: me" -H "Idempotency-Ke
 
 Windows에 `make`가 없으면 Makefile의 명령을 그대로 실행한다.
 
-## 상태 (2026-11-08)
-- 저장소: `github.com/SkyWith628/persona-ize` (비공개). 11/04까지의 초기 뼈대(`spikes/`)는 `graph/graphiti_p0/`로 대체.
-- 1주차 수직 기능: 상대·페르소나 CRUD, 첨삭 워크플로(의도·보존 추출 → 프롬프트 → 검증 → 재생성 → 원문 유지), 멱등성, 사용자 격리. 인메모리 저장소. **Claude 실제 호출 검증 완료** (Opus 5.5·Sonnet 5.5, 5사례×A/B, [첫 실측 메모](evals/results/2026-11-08-first-real-run.md)).
-- 2주차 예정: 대화 업로드·화자 지정·2~6턴 묶음·로컬 임베딩·pgvector 검색(C).
-- 3주차 예정: Graphiti 수집·검색(D), 피드백·삭제·사용량 제어.
+## 상태 (2026-11-09)
+- 저장소: `github.com/SkyWith628/persona-ize` (비공개).
+- 백엔드: 상대·페르소나, 첨삭 워크플로(의도·보존 추출 → 검색 → 프롬프트 → 검증 → 재생성 1회 → 원문 유지), PostgreSQL(Alembic), 대화 업로드·화자 지정, C(pgvector 문체 kNN)·D(Graphiti 그래프 맥락) 검색, 삭제, 사용량 제어(429), 세션 쿠키 인증, 데모 화면.
+- 실측: Opus 5.5로 5사례 × A/B/C/D ([2주차 메모](evals/results/2026-11-08-week2-abc-run.md), [3주차 메모](evals/results/2026-11-08-week3-abcd-run.md)). 1주차 그래프 스파이크: [graph/graph-spike-report.md](graph/graph-spike-report.md).
+- 다음: 사례 20개·루브릭(팀원) → `--repeat 3` A/B/C/D와 블라인드 평가, 11/22 시연.

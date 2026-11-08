@@ -27,6 +27,7 @@ mode: work
 - `api/deps.py build_state`가 DATABASE_URL 유무로 저장소를 고른다. `/healthz`의 `storage`로 확인
 - 사용량 제어: `repositories/usage.py`(사용자·일 KST 카운터, Postgres는 원자적 UPSERT) → `RewriteService`가 모델 호출 전 요청 수를 예약하고 호출 뒤 토큰을 더한다. 한도는 `USAGE_DAILY_*`, 초과는 429 `usage_exceeded`, 조회는 `GET /v1/usage`(멱등 재요청은 세지 않음)
 - 인증(`api/deps.py current_user_id`): 세션 쿠키 `pi_session`(HttpOnly, SameSite=Lax) 우선, 쓰기 요청은 `X-CSRF-Token`(세션별 토큰, 로그인 응답·`/v1/auth/me`) 필수(403). 쿠키가 없으면 `AUTH_ALLOW_HEADER_STUB`일 때만 `X-User-Id` 헤더 — 개발·테스트·평가용, 배포에서는 false. 본문의 user_id는 절대 신뢰하지 않는다. 비밀번호는 stdlib scrypt(`core/security.py`), 세션 토큰은 해시만 저장(`users`·`sessions`, 0006)
+- `backend/app/web/` 데모 화면(빌드 없는 정적 HTML/CSS/JS, 서버 `/`와 `/static`). 같은 출처에서 JSON API를 호출하고 세션 쿠키+CSRF를 쓴다. `apps/web/`(React)는 보류
 - `graph/graphiti_p0/` 스파이크. `data/synthetic/`의 JSON을 읽는다
 
 ## 컨벤션
@@ -38,6 +39,8 @@ mode: work
 
 ## 함정
 - `ruff format`을 돌린 뒤 테스트. line-length 110
+- 화면 JS에서 `form.elements.length`는 컨트롤 개수다 → 페르소나 `length` 필드는 `name="length_pref"`. 클립보드 복사는 포커스 없으면 실패하므로 피드백 저장과 분리
+- 서버 시작 때 e5 임베더를 백그라운드로 워밍업한다(`_warm_up_embedder`). 로그 `embedder warmed up`이 뜨기 전 첫 C/D 요청은 10초쯤 걸릴 수 있다
 - `/v1/rewrites/usage`처럼 `/{request_id}` 뒤에 고정 경로를 붙이면 UUID 파싱 422가 난다 → 고정 경로는 별도 라우터(`/v1/usage`)
 - fake 프로바이더도 글자 수 기반 토큰 수를 보고한다(사용량 테스트용). 실제 토큰과 다르니 비용 계산엔 anthropic 결과만 쓴다
 - 저장소 메서드는 전부 `async`다(Postgres가 기준). 라우트·서비스에서 `await`를 빼먹으면 코루틴 객체가 그대로 응답에 들어간다
