@@ -86,6 +86,10 @@ async def load_synthetic(
                 user_id, contact.id, conv.get("title"), f"synthetic:{dataset_path.name}", key, me_name
             )
             by_key[key] = conversation
+        elif me_name and not conversation.me_name:
+            # me_name 열이 없던 때 만든 대화방. 이미 그래프에 들어간 에피소드의 '사용자' 표기는 그대로다.
+            conversation = await state.conversations.set_me_name(user_id, conversation.id, me_name)
+            by_key[key] = conversation
         report.conversations[key] = conversation.id
 
         payload = ImportPayload(

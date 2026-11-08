@@ -314,3 +314,9 @@ class PostgresConversationRepo:
             row.graph_episodes = episodes
             row.graph_error = error
         return _job(row)
+
+    async def set_me_name(self, user_id: str, conversation_id: UUID, me_name: str | None) -> Conversation:
+        async with self._sessions.begin() as s:
+            row = await self._owned(s, user_id, conversation_id)
+            row.me_name = me_name
+        return _conversation(row)

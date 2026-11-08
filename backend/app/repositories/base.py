@@ -127,3 +127,7 @@ class ConversationRepo(Protocol):
     async def update_job_graph(
         self, user_id: str, job_id: UUID, status: GraphStatus, episodes: int, error: str | None
     ) -> ImportJob: ...
+
+    async def set_me_name(self, user_id: str, conversation_id: UUID, me_name: str | None) -> Conversation:
+        """그래프 에피소드용 사용자 표시 이름을 바꾼다. 이미 수집된 에피소드는 바뀌지 않는다."""
+        ...

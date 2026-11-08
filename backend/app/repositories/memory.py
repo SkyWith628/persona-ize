@@ -306,3 +306,9 @@ class InMemoryConversationRepo:
         )
         self._jobs[job_id] = job
         return job
+
+    async def set_me_name(self, user_id: str, conversation_id: UUID, me_name: str | None) -> Conversation:
+        conv = await self.get(user_id, conversation_id)
+        conv = conv.model_copy(update={"me_name": me_name})
+        self._conversations[conv.id] = conv
+        return conv

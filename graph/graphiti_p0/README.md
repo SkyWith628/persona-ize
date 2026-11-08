@@ -77,6 +77,8 @@ cd graph/graphiti_p0
 
 ## 알려진 사항
 
+- **2026-11-08 밤부터 이 스파이크는 동결.** `p0/schema.py`·`p0/dates.py`·에피소드 본문 규칙은 `backend/app/graph/`로 옮겨졌고 그쪽이 정본이다. 앱의 그래프 수집·검색(D)은 `backend/app/graph/ingest.py`·`retriever.py`, 실행은 `scripts/import_synthetic.py --graph`와 `evals/run_eval.py --conditions D`. 여기 스크립트는 1주차 결과 재현용으로만 남긴다(`.env`의 NEO4J_URI를 Aura로 되돌려야 그 데이터가 보인다).
+
 - **36개 전체 수집을 2026-11-08 Aura에서 다섯 번 끝냈다** (2차→6차: 커스텀 속성 28/37 → 44/49, 엣지 0개 에피소드 6 → 0, 사실 속 날짜 정확도 ≈0 → 24/25, Recall@5 평균 0.52 → 0.77은 1회 측정). 날짜는 `p0/dates.py`가 담화 규칙까지 코드로 풀고, 말투·관계 유형 일관성은 후처리로 넘긴다. 비교표·판정 제안은 [../graph-spike-report.md](../graph-spike-report.md).
 - graphiti-core 0.31.2의 `AnthropicClient`는 `messages.create`에 `temperature`를 넘기는데 anthropic SDK 2.x에는 그 인자가 없어 TypeError가 난다. `p0/graph.py`의 `GraphAnthropicClient`가 호출 직전에 `temperature`를 떼어낸다 (2026-11-08). graphiti를 올릴 때 이 래퍼가 여전히 필요한지 확인한다.
 - graphiti-core 0.31.2의 `AnthropicClient`는 구조화 출력을 **강제 tool_choice**로 구현한다. Opus/Sonnet/Haiku 5.5는 이를 400으로 거부하므로 기본 모델은 `claude-haiku-4-5`다. 모델별 `max_tokens` 매핑도 구버전 기준이라 새 모델명은 기본값(8192)을 쓴다 — 추출 결과가 잘리면 확인한다.

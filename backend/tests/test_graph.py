@@ -116,6 +116,18 @@ async def test_ingest_pending_is_time_ordered_idempotent_and_formats_body() -> N
     assert len(store.added) == 3
 
 
+async def test_set_me_name_changes_future_episode_bodies() -> None:
+    _, conversations, store, ingest, svc, boss, _, _, _ = await _setup()
+    c3 = await svc.create_conversation("u", boss.id, None, "json", "c3")  # me_name 없음 → '사용자'
+    await svc.import_messages("u", c3.id, ImportPayload(messages=MESSAGES_C1[:1]))
+    await ingest.ingest_conversation("u", c3.id)
+    assert store.added[-1]["body"].endswith("박지현 → 사용자: 언제까지 가능해요?")
+    assert (await conversations.set_me_name("u", c3.id, "김민수")).me_name == "김민수"
+    await svc.import_messages("u", c3.id, ImportPayload(messages=MESSAGES_C1))  # m02 추가
+    await ingest.ingest_conversation("u", c3.id)
+    assert store.added[-1]["body"].startswith("[2026-10-05 월 09:31] 김민수 → 박지현:")
+
+
 async def test_ingest_failure_keeps_progress_and_marks_job() -> None:
     _, conversations, store, ingest, svc, _, _, c1, _ = await _setup()
     job = await svc.import_messages("u", c1.id, ImportPayload(messages=MESSAGES_C1))
