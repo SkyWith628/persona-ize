@@ -10,7 +10,7 @@ import pytest
 from app.ai.providers.fake import ScriptedProvider
 from app.ai.retrieval.base import NullRetriever
 from app.ai.workflow import RewriteWorkflow
-from app.core.errors import ModelUnavailableError
+from app.core.errors import ModelRefusalError, ModelUnavailableError
 from app.domain.contact import Contact
 from app.domain.persona import PersonaSettings
 from app.domain.rewrite import ModelOutput, RewriteInput
@@ -82,6 +82,29 @@ async def test_model_unavailable_keeps_original() -> None:
     assert r.status == "fallback_original"
     assert r.result_text == DRAFT
     assert "429" in " ".join(r.warnings)
+
+
+@pytest.mark.anyio
+async def test_refusal_is_regenerated_once() -> None:
+    wf, inp, contact, persona = make(ScriptedProvider([ModelRefusalError("거절"), GOOD]))
+    r = await wf.run(inp, contact, persona)
+    assert r.status == "recommended"
+    assert r.attempts == 2
+    assert [
+        (a.attempt, a.passed, a.violations[0].check if a.violations else None) for a in r.attempt_log
+    ] == [
+        (1, False, "refusal"),
+        (2, True, None),
+    ]
+
+
+@pytest.mark.anyio
+async def test_refusal_twice_keeps_original() -> None:
+    wf, inp, contact, persona = make(ScriptedProvider([ModelRefusalError("거절"), ModelRefusalError("거절")]))
+    r = await wf.run(inp, contact, persona)
+    assert r.status == "fallback_original"
+    assert r.attempts == 2
+    assert all(a.violations[0].check == "refusal" for a in r.attempt_log)
 
 
 @pytest.mark.anyio

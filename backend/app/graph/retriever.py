@@ -1,8 +1,11 @@
 """D 경로 사실 맥락 검색기 (design.md §3-2 `purpose=context`).
 
 - 질의 = 상황 + 초안. Graphiti 하이브리드 검색(BM25 + 임베딩, RRF)으로 엣지(사실 문장)를 받는다.
-- 범위: 사용자 그래프(group_id=user_id) 안에서 상대 노드를 중심으로 거리 재정렬한다 (상대 이름이 정확히
-  일치하는 엔티티가 있을 때). 이름이 다르게 병합돼 있으면 중심 없이 검색한다.
+- 범위: 사용자 그래프(group_id=user_id) 안에서 상대 노드를 중심으로 거리 재정렬하고, **양 끝 중 하나가 상대
+  노드이거나 상대와 연결된 Event 노드인 엣지만** 남긴다. 거리 재정렬만으로는 다른 방의 사실이 섞였다(11-08
+  첫 실측: 팀장 질의에 친구 방 홈커밍, 동기 질의에 동생 방 케이크). Person 이웃(사용자 자신, 다른 상대)은
+  기준으로 삼지 않는다 — 사용자 노드는 모든 방에 걸쳐 있어서 걸러지는 게 없기 때문이다.
+  상대 이름과 정확히 일치하는 노드가 없으면(호칭으로만 병합된 경우) 필터 없이 거리 재정렬만 한다.
 - 요청 이전 데이터만: 출처 에피소드 중 하나라도 `as_of` 이후면 그 사실을 버린다 (평가에서 미래 유출 방지).
   이미 무효화된(invalid_at ≤ as_of) 사실도 버린다 — 지금 어조를 정하는 데는 현재 관계가 맞다.
 - 결과 `text`는 사실 문장 그대로. 프롬프트의 [사실 맥락] 블록에 들어가며 "어조 조정에만 사용"한다.
@@ -21,7 +24,7 @@ from app.repositories.base import ContactRepo
 class GraphContextRetriever:
     version = "graph-context-v1"
 
-    def __init__(self, store: GraphStore, contacts: ContactRepo, top_k: int = 4, oversample: int = 3) -> None:
+    def __init__(self, store: GraphStore, contacts: ContactRepo, top_k: int = 4, oversample: int = 4) -> None:
         self._store = store
         self._contacts = contacts
         self._top_k = top_k
@@ -44,11 +47,16 @@ class GraphContextRetriever:
         contact = await self._contacts.get(user_id, contact_id)
         center = await self._store.find_entity_uuid(user_id, contact.alias)
         hits = await self._store.search(query, user_id, center, limit)
+        allowed: set[str] | None = None
+        if center is not None:
+            allowed = {center} | await self._store.event_neighbors(user_id, center)
         refs = await self._store.episode_refs({u for h in hits for u in h.episode_uuids})
         cutoff = as_of or datetime.now(UTC)
 
         out: list[RetrievedExample] = []
         for h in hits:
+            if allowed is not None and not ({h.source_node_uuid, h.target_node_uuid} & allowed):
+                continue
             eps = [refs[u] for u in h.episode_uuids if u in refs]
             times = [e.valid_at for e in eps if e.valid_at is not None]
             if any(t >= cutoff for t in times):

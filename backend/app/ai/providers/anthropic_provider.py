@@ -2,8 +2,9 @@
 
 - `client.messages.parse(..., output_format=ModelOutput)` 로 스키마가 보장된 JSON을 받는다.
 - 모델 기본값은 claude-opus-5-5 (설정 LLM_MODEL). 사고 깊이는 `output_config.effort`로 조절한다 (기본 medium).
-- 안전 분류기가 거절하면(`stop_reason == "refusal"`) 모델 장애와 같이 취급해 원문 유지로 축소 동작한다.
-  이 서비스는 거절 시 다른 모델로 넘기는 것보다 원문 유지가 설계 원칙(project-design §5.3)에 맞다.
+- 안전 분류기가 거절하면(`stop_reason == "refusal"`) `ModelRefusalError`를 낸다. 워크플로가 재생성 1회를
+  시도하고, 그래도 거절이면 원문 유지. 다른 모델로 넘기지는 않는다 (project-design §5.3). 11-08 실측에서
+  동생 방 문체 예시가 붙은 평범한 부탁 문장에도 거절이 나왔다.
 - 키는 ANTHROPIC_API_KEY 또는 `ant auth login` 프로필에서 SDK가 읽는다. 로그에 프롬프트 원문을 남기지 않는다.
 """
 
@@ -15,7 +16,7 @@ import anthropic
 
 from app.ai.providers.base import GenerationResult
 from app.core.config import Settings
-from app.core.errors import ModelUnavailableError
+from app.core.errors import ModelRefusalError, ModelUnavailableError
 from app.domain.rewrite import ModelOutput
 
 log = logging.getLogger(__name__)
@@ -58,7 +59,7 @@ class AnthropicProvider:
         if response.stop_reason == "refusal":
             category = response.stop_details.category if response.stop_details else None
             log.info("model refusal category=%s request_id=%s", category, response._request_id)
-            raise ModelUnavailableError("모델이 요청을 거절했습니다. 원문을 유지합니다.")
+            raise ModelRefusalError("모델이 요청을 거절했습니다.")
         if response.stop_reason == "max_tokens":
             raise ModelUnavailableError("모델 출력이 길이 한도에서 잘렸습니다.")
         if response.parsed_output is None:

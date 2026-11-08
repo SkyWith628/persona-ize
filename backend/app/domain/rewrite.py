@@ -53,7 +53,13 @@ class Violation(BaseModel):
     """검증 실패 항목. 재생성 시 피드백으로 그대로 전달한다."""
 
     check: Literal[
-        "preserve_missing", "fact_added", "negation_changed", "forbidden_phrase", "evidence_unknown", "empty"
+        "preserve_missing",
+        "fact_added",
+        "negation_changed",
+        "forbidden_phrase",
+        "evidence_unknown",
+        "empty",
+        "refusal",
     ]
     detail: str
 

@@ -53,6 +53,10 @@ class GraphStore(Protocol):
         """이름이 정확히 같은 엔티티 노드 하나 (상대 노드를 검색 중심으로 쓰기 위해)."""
         ...
 
+    async def event_neighbors(self, group_id: str, node_uuid: str) -> set[str]:
+        """이 노드와 엣지로 이어진 Event 노드들의 uuid (상대가 관여한 사건)."""
+        ...
+
     async def episode_refs(self, uuids: set[str]) -> dict[str, EpisodeRef]: ...
 
     async def close(self) -> None: ...
@@ -110,6 +114,17 @@ class GraphitiStore:
         )
         records = result[0] if isinstance(result, tuple) else result.records
         return records[0]["uuid"] if records else None
+
+    async def event_neighbors(self, group_id: str, node_uuid: str) -> set[str]:
+        result = await self._g.driver.execute_query(
+            "MATCH (c:Entity {uuid: $uuid, group_id: $group_id})"
+            "-[:RELATES_TO]-(e:Event {group_id: $group_id}) "
+            "RETURN DISTINCT e.uuid AS uuid",
+            uuid=node_uuid,
+            group_id=group_id,
+        )
+        records = result[0] if isinstance(result, tuple) else result.records
+        return {r["uuid"] for r in records}
 
     async def episode_refs(self, uuids: set[str]) -> dict[str, EpisodeRef]:
         if not uuids:

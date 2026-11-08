@@ -31,6 +31,7 @@ class FakeGraphStore:
     edges: list[GraphEdgeHit] = field(default_factory=list)
     refs: dict[str, EpisodeRef] = field(default_factory=dict)
     entities: dict[str, str] = field(default_factory=dict)  # name → uuid
+    events: dict[str, set[str]] = field(default_factory=dict)  # node uuid → 이웃 Event uuid
     searches: list[tuple[str, str, str | None, int]] = field(default_factory=list)
     fail_on: str | None = None  # 이 이름의 에피소드에서 예외
 
@@ -50,6 +51,9 @@ class FakeGraphStore:
 
     async def find_entity_uuid(self, group_id, name) -> str | None:  # noqa: ANN001
         return self.entities.get(name)
+
+    async def event_neighbors(self, group_id, node_uuid) -> set[str]:  # noqa: ANN001
+        return set(self.events.get(node_uuid, set()))
 
     async def episode_refs(self, uuids) -> dict[str, EpisodeRef]:  # noqa: ANN001
         return {u: self.refs[u] for u in uuids if u in self.refs}
@@ -163,7 +167,9 @@ async def test_import_background_graph_mode_marks_pending_then_completes() -> No
     assert len(store.added) == 2
 
 
-def _edge(uuid: str, fact: str, episodes: list[str], valid_at=None, invalid_at=None) -> GraphEdgeHit:  # noqa: ANN001
+def _edge(  # noqa: ANN001
+    uuid: str, fact: str, episodes: list[str], valid_at=None, invalid_at=None, src="node-me", dst="node-boss"
+) -> GraphEdgeHit:
     return GraphEdgeHit(
         uuid=uuid,
         name="Involved",
@@ -171,6 +177,8 @@ def _edge(uuid: str, fact: str, episodes: list[str], valid_at=None, invalid_at=N
         valid_at=valid_at,
         invalid_at=invalid_at,
         episode_uuids=episodes,
+        source_node_uuid=src,
+        target_node_uuid=dst,
     )
 
 
@@ -200,9 +208,40 @@ async def test_graph_retriever_filters_by_as_of_and_invalidation() -> None:
     assert got[0].purpose == "context" and got[0].speaker_role == "graph"
     assert got[0].source_message_ids == ["c1:m03"]
     assert got[0].sent_at == t(5)
-    # 상대 노드를 중심으로, 질의는 상황+초안, 과대 샘플링 3배
-    assert store.searches == [("보고\n자료 보내드립니다", "u", "node-boss", 12)]
+    # 상대 노드를 중심으로, 질의는 상황+초안, 과대 샘플링 4배
+    assert store.searches == [("보고\n자료 보내드립니다", "u", "node-boss", 16)]
     assert await r.retrieve(user_id="u", contact_id=boss.id, draft_text=" ", situation="") == []
+
+
+async def test_graph_retriever_keeps_only_contact_or_its_events() -> None:
+    contacts = InMemoryContactRepo()
+    boss = await contacts.create("u", "박지현", "superior")
+    t = datetime(2026, 10, 5, tzinfo=UTC)
+    store = FakeGraphStore(
+        entities={"박지현": "node-boss"},
+        events={"node-boss": {"ev-dashboard"}},
+        refs={
+            "e1": EpisodeRef("e1", "c1:m03", t),
+            "e2": EpisodeRef("e2", "c4:m02", t),
+            "e3": EpisodeRef("e3", "c1:m05", t),
+        },
+        edges=[
+            _edge("keep-contact", "박지현이 고객사 미팅에 간다", ["e1"], src="node-boss", dst="ev-meeting"),
+            _edge(
+                "drop-other-room", "사용자가 홈커밍 참석 여부를 묻는다", ["e2"], src="node-me", dst="ev-home"
+            ),
+            _edge("keep-event", "사용자가 대시보드 개편을 맡았다", ["e3"], src="node-me", dst="ev-dashboard"),
+            _edge("drop-me-only", "사용자가 케이크를 산다", ["e2"], src="node-me", dst="node-bro"),
+        ],
+    )
+    r = GraphContextRetriever(store, contacts, top_k=4)
+    got = await r.retrieve(user_id="u", contact_id=boss.id, draft_text="일정", situation="")
+    assert [e.id for e in got] == ["keep-contact", "keep-event"]
+
+    # 상대 노드를 못 찾으면 필터 없이 전부 (거리 재정렬만)
+    store.entities = {}
+    got = await r.retrieve(user_id="u", contact_id=boss.id, draft_text="일정", situation="")
+    assert len(got) == 4
 
 
 async def test_composite_merges_and_degrades() -> None:

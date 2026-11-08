@@ -40,3 +40,9 @@ class ModelUnavailableError(DomainError):
 
     status_code = 503
     code = "model_unavailable"
+
+
+class ModelRefusalError(ModelUnavailableError):
+    """모델(안전 분류기)이 생성을 거절했다. 장애가 아니므로 워크플로가 재생성 1회를 시도한다 (11-08 E003)."""
+
+    code = "model_refusal"

@@ -16,7 +16,7 @@ from app.ai.prompt import build_prompt, build_regenerate_suffix
 from app.ai.providers.base import LLMProvider
 from app.ai.retrieval.base import Retriever
 from app.ai.validation import validate_output
-from app.core.errors import ModelUnavailableError
+from app.core.errors import ModelRefusalError, ModelUnavailableError
 from app.domain.contact import Contact
 from app.domain.persona import PersonaSettings
 from app.domain.rewrite import (
@@ -77,6 +77,22 @@ class RewriteWorkflow:
             attempts = attempt + 1
             try:
                 gen = await self.provider.generate(system=prompt.system, user=user_prompt)
+            except ModelRefusalError as exc:
+                # 거절은 장애가 아니다. 위반처럼 기록하고 재생성 1회를 시도한다 (11-08 E003).
+                log.info("model refusal attempt=%d", attempts)
+                last_report = ValidationReport(
+                    passed=False, violations=[Violation(check="refusal", detail=exc.message)]
+                )
+                attempt_log.append(
+                    AttemptRecord(attempt=attempts, passed=False, violations=last_report.violations)
+                )
+                output = None
+                user_prompt = (
+                    prompt.user
+                    + "\n\n"
+                    + build_regenerate_suffix(self.prompt_version, "(출력 없음)", last_report.violations)
+                )
+                continue
             except ModelUnavailableError as exc:
                 log.info("model unavailable attempt=%d: %s", attempts, exc.message)
                 last_report = ValidationReport(
