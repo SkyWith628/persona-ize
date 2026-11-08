@@ -6,7 +6,8 @@ mode: work
 설계 원본과 팀 운영 문서는 iCloud `WorkSpace_M/projects/persona-ize/` — 이 저장소의 `docs/`는 그 복사본이다. 충돌하면 `docs/project-design.md`를 따른다.
 
 ## 명령어 (저장소 루트, Windows는 `.venv/Scripts/python.exe`, 맥은 `.venv/bin/python`)
-- 테스트: `cd backend && ../.venv/Scripts/python.exe -m pytest -q`
+- DB 기동·마이그레이션: `docker compose up -d postgres neo4j` → `cd backend && ../.venv/Scripts/python.exe -m alembic upgrade head` (`make up`, `make migrate`)
+- 테스트: `cd backend && ../.venv/Scripts/python.exe -m pytest -q` — Postgres 통합 테스트(`test_repos_postgres.py`)는 `.env`의 DATABASE_URL과 같은 서버에 `persona_ize_test` DB를 만들어 돌고, 접속이 안 되면 건너뛴다
 - lint(저장소 전체, 루트 `ruff.toml`): `.venv/Scripts/python.exe -m ruff check . && .venv/Scripts/python.exe -m ruff format --check .`
 - 접점 파일 검사: `.venv/Scripts/python.exe scripts/validate_data_files.py`
 - 평가: `.venv/Scripts/python.exe evals/run_eval.py --conditions A,B [--provider anthropic --repeat 3]`
@@ -19,7 +20,8 @@ mode: work
 ## 구조
 - `backend/app/ai/` 워크플로: `preserve.py`(보존 항목 규칙) → `prompt.py`(prompts/*.md 조립) → `providers/`(fake | anthropic) → `validation.py` → `workflow.py`(재생성 1회, 실패 시 원문 유지)
 - `backend/app/ai/retrieval/` 조건별 검색기. 지금은 `NullRetriever`만(A/B). C=pgvector(2주차), D=Graphiti(3주차)
-- `repositories/memory.py` 인메모리. 2주차에 PostgreSQL로 교체 (인터페이스 유지)
+- `repositories/base.py` Protocol(비동기) ← `postgres.py`(기본, SQLAlchemy 2 + asyncpg) / `memory.py`(테스트·DATABASE_URL 비었을 때). `db/models.py` 테이블, `db/session.py` 엔진, 스키마는 `backend/migrations/`(Alembic)
+- `api/deps.py build_state`가 DATABASE_URL 유무로 저장소를 고른다. `/healthz`의 `storage`로 확인
 - `api/deps.py` 인증은 `X-User-Id` 헤더 스텁. 본문의 user_id는 절대 신뢰하지 않는다
 - `graph/graphiti_p0/` 스파이크. `data/synthetic/`의 JSON을 읽는다
 
@@ -32,6 +34,9 @@ mode: work
 
 ## 함정
 - `ruff format`을 돌린 뒤 테스트. line-length 110
+- 저장소 메서드는 전부 `async`다(Postgres가 기준). 라우트·서비스에서 `await`를 빼먹으면 코루틴 객체가 그대로 응답에 들어간다
+- `backend/alembic.ini`는 ASCII만. alembic이 로케일 인코딩(cp949)으로 읽어 한글 주석이 있으면 UnicodeDecodeError
+- 스키마 변경은 `db/models.py`와 `migrations/versions/`를 함께 고친다. 자동 생성(`alembic revision --autogenerate`)은 결과를 꼭 읽고 커밋
 - 보존 항목 추출은 규칙 기반이라 오탐이 있다. 규칙을 바꾸면 `evals/preserve_rules.md`도 같이 고친다
 - fake 프로바이더는 원문을 그대로 돌려준다 → 검증은 항상 통과. 실제 품질은 `--provider anthropic`으로만 본다. 2026-11-08 실측(5사례×A/B, Opus·Sonnet 5.5)은 `evals/results/2026-11-08-first-real-run.md`
 - `.env`의 `LLM_PROVIDER=fake`여도 `run_eval.py --provider anthropic`은 실제 호출한다 (인자가 .env를 덮어쓴다). 서버(`make dev`)로 실제 호출을 보려면 `.env`를 `anthropic`으로

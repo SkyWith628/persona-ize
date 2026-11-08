@@ -1,0 +1,230 @@
+"""PostgreSQL 저장소 통합 테스트. 로컬 Postgres가 없으면 건너뛴다 (`docker compose up -d postgres`).
+
+같은 서버에 `persona_ize_test` DB를 만들어 public 스키마를 비우고 Alembic head까지 올린 뒤 테스트한다.
+`.env`의 DATABASE_URL이 가리키는 운영 DB는 건드리지 않는다. `TEST_DATABASE_URL`을 직접 주면 그 DB를 쓰되,
+이름이 `_test`로 끝나야 한다 (매 실행마다 스키마를 지우기 때문).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import os
+import uuid
+
+import pytest
+from fastapi.testclient import TestClient
+
+pytest.importorskip("sqlalchemy")
+asyncpg = pytest.importorskip("asyncpg")
+
+from app.core.config import Settings  # noqa: E402
+from app.core.errors import NotFoundError, VersionConflictError  # noqa: E402
+from app.db.migrate import upgrade_to_head  # noqa: E402
+from app.db.session import create_engine, create_session_factory  # noqa: E402
+from app.domain.persona import PersonaSettings  # noqa: E402
+from app.domain.rewrite import Feedback, RewriteResult, ValidationReport  # noqa: E402
+from app.main import create_app  # noqa: E402
+from app.repositories.postgres import PostgresContactRepo, PostgresRewriteRepo  # noqa: E402
+
+pytestmark = pytest.mark.anyio
+
+TEST_DB = "persona_ize_test"
+
+
+def _dsn(url: str) -> str:
+    return url.replace("postgresql+asyncpg://", "postgresql://", 1)
+
+
+def _urls() -> tuple[str, str] | None:
+    """(관리용 접속 URL, 테스트 DB URL). DATABASE_URL이 없으면 None."""
+    explicit = os.environ.get("TEST_DATABASE_URL")
+    if explicit:
+        if not explicit.rpartition("/")[2].split("?")[0].endswith("_test"):
+            raise RuntimeError("TEST_DATABASE_URL의 DB 이름은 _test로 끝나야 합니다 (스키마를 지웁니다).")
+        return explicit, explicit
+    base = Settings().database_url  # .env를 읽는다
+    if not base:
+        return None
+    head, _, _ = base.rpartition("/")
+    return base, f"{head}/{TEST_DB}"
+
+
+async def _prepare(admin_url: str, test_url: str) -> None:
+    if admin_url != test_url:
+        conn = await asyncpg.connect(_dsn(admin_url), timeout=3)
+        try:
+            exists = await conn.fetchval("SELECT 1 FROM pg_database WHERE datname = $1", TEST_DB)
+            if not exists:
+                await conn.execute(f'CREATE DATABASE "{TEST_DB}"')
+        finally:
+            await conn.close()
+    conn = await asyncpg.connect(_dsn(test_url), timeout=3)
+    try:
+        await conn.execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public")
+    finally:
+        await conn.close()
+
+
+@pytest.fixture(scope="session")
+def pg_url() -> str:
+    urls = _urls()
+    if urls is None:
+        pytest.skip("DATABASE_URL이 비어 있어 PostgreSQL 테스트를 건너뜁니다.")
+    admin_url, test_url = urls
+    try:
+        asyncio.run(_prepare(admin_url, test_url))
+    except (OSError, TimeoutError, asyncpg.PostgresError) as exc:
+        pytest.skip(f"PostgreSQL 연결 실패({type(exc).__name__}) — `docker compose up -d postgres` 후 다시.")
+    upgrade_to_head(test_url)
+    return test_url
+
+
+@pytest.fixture
+async def repos(pg_url: str):  # noqa: ANN201
+    engine = create_engine(pg_url)
+    sessions = create_session_factory(engine)
+    try:
+        yield PostgresContactRepo(sessions), PostgresRewriteRepo(sessions)
+    finally:
+        await engine.dispose()
+
+
+def _user() -> str:
+    return f"u-{uuid.uuid4().hex[:8]}"
+
+
+def _result(text: str = "내일 오전까지 보내드리겠습니다.") -> RewriteResult:
+    return RewriteResult(
+        status="recommended",
+        result_text=text,
+        intent="report",
+        preserved_items=[],
+        validation=ValidationReport(passed=True),
+        attempts=1,
+        model_version="fake-echo",
+        prompt_version="rewrite-v1",
+        retrieval_version="none",
+        token_usage={"input": 10, "output": 5},
+        latency_ms=12,
+    )
+
+
+async def test_contact_crud_and_isolation(repos) -> None:  # noqa: ANN001
+    contacts, _ = repos
+    a, b = _user(), _user()
+    c1 = await contacts.create(a, "박지현", "superior")
+    c2 = await contacts.create(a, "준호", "family")
+
+    listed = await contacts.list(a)
+    assert [c.id for c in listed] == [c1.id, c2.id]  # created_at 순
+    assert (await contacts.get(a, c1.id)).alias == "박지현"
+    assert await contacts.list(b) == []
+    with pytest.raises(NotFoundError):
+        await contacts.get(b, c1.id)
+    with pytest.raises(NotFoundError):
+        await contacts.latest_persona(b, c1.id)
+
+
+async def test_persona_versions_and_conflict(repos) -> None:  # noqa: ANN001
+    contacts, _ = repos
+    a = _user()
+    c = await contacts.create(a, "박지현", "superior")
+    assert await contacts.latest_persona(a, c.id) is None
+
+    v1 = await contacts.save_persona(a, c.id, PersonaSettings(formality=5, address_term="팀장님"), 0)
+    assert v1.version == 1
+    v2 = await contacts.save_persona(a, c.id, PersonaSettings(formality=4), 1)
+    assert v2.version == 2
+    assert (await contacts.latest_persona(a, c.id)).version == 2
+    assert (await contacts.get_persona(a, c.id, 1)).settings.address_term == "팀장님"
+
+    with pytest.raises(VersionConflictError):
+        await contacts.save_persona(a, c.id, PersonaSettings(), 1)  # 현재 2
+    with pytest.raises(NotFoundError):
+        await contacts.get_persona(a, c.id, 9)
+    # expected_version 생략은 무조건 추가
+    assert (await contacts.save_persona(a, c.id, PersonaSettings(), None)).version == 3
+
+
+async def test_rewrite_save_get_idempotency_feedback(repos) -> None:  # noqa: ANN001
+    contacts, rewrites = repos
+    a, b = _user(), _user()
+    c = await contacts.create(a, "박지현", "superior")
+    pv = await contacts.save_persona(a, c.id, PersonaSettings(formality=5), 0)
+
+    assert await rewrites.find_by_idempotency(a, "k1") is None
+    rec = await rewrites.save(
+        user_id=a,
+        contact_id=c.id,
+        persona_version_id=pv.id,
+        draft_version=1,
+        input_hash="h" * 64,
+        idempotency_key="k1",
+        result=_result(),
+    )
+    got = await rewrites.get(a, rec.id)
+    assert got.result == rec.result  # JSONB 왕복 후 동일
+    assert got.persona_version_id == pv.id
+    assert (await rewrites.find_by_idempotency(a, "k1")).id == rec.id
+    assert await rewrites.find_by_idempotency(b, "k1") is None
+    with pytest.raises(NotFoundError):
+        await rewrites.get(b, rec.id)
+
+    # 같은 사용자·같은 키 재삽입은 유일 제약 → 409. 키 없는 요청은 여러 번 저장된다.
+    with pytest.raises(VersionConflictError):
+        await rewrites.save(
+            user_id=a,
+            contact_id=c.id,
+            persona_version_id=None,
+            draft_version=1,
+            input_hash="x" * 64,
+            idempotency_key="k1",
+            result=_result(),
+        )
+    for _ in range(2):
+        await rewrites.save(
+            user_id=a,
+            contact_id=c.id,
+            persona_version_id=None,
+            draft_version=1,
+            input_hash="y" * 64,
+            idempotency_key=None,
+            result=_result(),
+        )
+
+    fb = Feedback(request_id=rec.id, accepted=False, edited_text="수정본", reason="너무 격식")
+    assert await rewrites.save_feedback(a, fb) == fb
+    assert await rewrites.save_feedback(a, Feedback(request_id=rec.id, accepted=True)) is not None  # 덮어쓰기
+    with pytest.raises(NotFoundError):
+        await rewrites.save_feedback(b, fb)
+
+
+def test_api_vertical_flow_on_postgres(pg_url: str) -> None:
+    """HTTP → 서비스 → PostgreSQL 저장소 배선 확인. 로직은 인메모리 테스트(test_api.py)와 같다."""
+    settings = Settings(_env_file=None, llm_provider="fake", database_url=pg_url)  # type: ignore[call-arg]
+    headers = {"X-User-Id": _user()}
+    with TestClient(create_app(settings)) as client:
+        assert client.get("/healthz").json()["storage"] == "postgres"
+        cid = client.post(
+            "/v1/contacts", json={"alias": "박지현", "relationship_type": "superior"}, headers=headers
+        ).json()["id"]
+        p = client.put(
+            f"/v1/contacts/{cid}/persona",
+            json={"settings": {"formality": 5, "address_term": "팀장님"}, "expected_version": 0},
+            headers=headers,
+        )
+        assert p.status_code == 200, p.text
+        assert client.get("/v1/contacts", headers=headers).json()[0]["persona_version"] == 1
+
+        h = {**headers, "Idempotency-Key": "pg-1"}
+        body = {"contact_id": cid, "draft_text": "오늘 정리해서 내일 오전까지 보내드릴게요."}
+        first = client.post("/v1/rewrites", json=body, headers=h)
+        assert first.status_code == 201, first.text
+        second = client.post("/v1/rewrites", json=body, headers=h)
+        assert second.json()["id"] == first.json()["id"]
+        assert client.get(f"/v1/rewrites/{first.json()['id']}", headers=headers).status_code == 200
+        fb = client.post(
+            f"/v1/rewrites/{first.json()['id']}/feedback", json={"accepted": True}, headers=headers
+        )
+        assert fb.status_code == 204
+        assert client.get(f"/v1/contacts/{cid}", headers={"X-User-Id": _user()}).status_code == 404

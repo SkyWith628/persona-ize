@@ -6,12 +6,13 @@ ifeq (,$(wildcard $(PY)))
 PY := .venv/bin/python
 endif
 
-.PHONY: help setup venv up down logs dev test lint eval graph-dry-run
+.PHONY: help setup venv up down logs dev migrate test lint eval graph-dry-run
 
 help:
 	@echo "make setup     - .env.example → .env (최초 1회)"
 	@echo "make venv      - 가상환경 생성 + 백엔드 설치"
-	@echo "make up        - PostgreSQL(pgvector), Neo4j, 백엔드 컨테이너 기동"
+	@echo "make up        - PostgreSQL(pgvector), Neo4j 컨테이너 기동 (backend 이미지는 빌드하지 않음)"
+	@echo "make migrate   - Alembic으로 DB 스키마를 최신으로"
 	@echo "make down      - 컨테이너 종료"
 	@echo "make dev       - 로컬에서 백엔드만 실행 (http://localhost:8000/docs)"
 	@echo "make test      - 백엔드 테스트"
@@ -28,7 +29,7 @@ venv:
 	$(PY) -m pip install -e "backend[dev]"
 
 up: setup
-	docker compose up -d --build
+	docker compose up -d postgres neo4j
 
 down:
 	docker compose down
@@ -38,6 +39,9 @@ logs:
 
 dev:
 	cd backend && ../$(PY) -m uvicorn app.main:app --reload --port 8000
+
+migrate:
+	cd backend && ../$(PY) -m alembic upgrade head
 
 test:
 	cd backend && ../$(PY) -m pytest -q

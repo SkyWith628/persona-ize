@@ -26,3 +26,9 @@ def user_a() -> dict[str, str]:
 @pytest.fixture
 def user_b() -> dict[str, str]:
     return {"X-User-Id": "user-b"}
+
+
+@pytest.fixture
+def anyio_backend() -> str:
+    # 비동기 테스트(pytest.mark.anyio)는 asyncio로만 돈다 (trio 미설치).
+    return "asyncio"

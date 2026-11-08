@@ -72,3 +72,9 @@
 - 결과: Docker Desktop 4.98 + WSL 3.0.3로 `docker compose up -d postgres neo4j` 성공. PostgreSQL 16.15 + pgvector 0.8.7, Neo4j 5.26.32 + APOC, 호스트에서 bolt·5432 접속 확인. 선행 조건은 BIOS 가상화(SVM)·VirtualMachinePlatform·WSL 설치였다(`docker/README.md`).
 - 결정: 2주차 C 경로(pgvector)와 3주차 D 연동은 로컬 컨테이너를 쓴다. Aura Free는 1주차 스파이크 결과 보관용으로 남기고 `.env`의 `NEO4J_URI`는 당장 바꾸지 않는다(스파이크 반복 측정 때 로컬로 전환).
 - 결정: backend 컨테이너 이미지는 당분간 빌드하지 않는다. `db` extra의 sentence-transformers가 torch를 끌어와 이미지가 수 GB라, 팀원 온보딩 전까지는 `make dev`(호스트 venv)로 백엔드를 띄운다.
+
+## 2026-11-08 저장소를 PostgreSQL로 교체: 비동기 Protocol, 결과는 JSONB
+- 결과: `repositories/base.py` Protocol 아래 `postgres.py`(SQLAlchemy 2 + asyncpg)와 `memory.py` 두 구현. Alembic 0001로 contacts·persona_versions·rewrite_requests·rewrite_results·feedback 생성. 통합 테스트 4개가 같은 서버의 `persona_ize_test` DB에서 돌고(39 passed), 접속이 없으면 건너뛴다.
+- 결정: 저장소 인터페이스는 **비동기**로 통일한다(asyncpg가 기준, 인메모리도 같은 모양). 라우트는 전부 `async def`.
+- 결정: `RewriteResult`는 `rewrite_results.payload` JSONB에 통째로 저장하고 집계용 열(result_text·validation_status·model_version·prompt_version·retrieval_version·token_usage·latency_ms)만 따로 둔다. 설계서 §6의 `rewrite_evidence`·`users`·`import_jobs`는 필요해지는 주에 추가.
+- 결정: 소유권은 모든 쿼리의 WHERE에 user_id를 함께 걸어 "없음"과 "남의 것"을 같은 404로 만든다. 동시성 충돌(페르소나 버전, Idempotency-Key)은 유일 제약 → 409로 번역.

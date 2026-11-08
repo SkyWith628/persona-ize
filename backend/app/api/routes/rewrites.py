@@ -7,12 +7,12 @@ from fastapi import APIRouter, Header, status
 
 from app.api.deps import State, UserId
 from app.api.schemas import FeedbackIn, RewriteCreate, RewriteOut
-from app.domain.rewrite import Feedback, RewriteInput
+from app.domain.rewrite import Feedback, RewriteInput, RewriteRecord
 
 router = APIRouter(prefix="/v1/rewrites", tags=["rewrites"])
 
 
-def _to_out(rec) -> RewriteOut:  # noqa: ANN001
+def _to_out(rec: RewriteRecord) -> RewriteOut:
     return RewriteOut(
         id=rec.id,
         contact_id=rec.contact_id,
@@ -35,10 +35,10 @@ async def create_rewrite(
 
 
 @router.get("/{request_id}", response_model=RewriteOut)
-def get_rewrite(request_id: UUID, user_id: UserId, state: State) -> RewriteOut:
-    return _to_out(state.rewrite_service.get(user_id, request_id))
+async def get_rewrite(request_id: UUID, user_id: UserId, state: State) -> RewriteOut:
+    return _to_out(await state.rewrite_service.get(user_id, request_id))
 
 
 @router.post("/{request_id}/feedback", status_code=status.HTTP_204_NO_CONTENT)
-def post_feedback(request_id: UUID, body: FeedbackIn, user_id: UserId, state: State) -> None:
-    state.rewrite_service.feedback(user_id, Feedback(request_id=request_id, **body.model_dump()))
+async def post_feedback(request_id: UUID, body: FeedbackIn, user_id: UserId, state: State) -> None:
+    await state.rewrite_service.feedback(user_id, Feedback(request_id=request_id, **body.model_dump()))
