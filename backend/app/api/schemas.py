@@ -73,6 +73,24 @@ class UsageOut(BaseModel):
     token_limit: int
 
 
+class Credentials(BaseModel):
+    username: str = Field(min_length=3, max_length=32)
+    password: str = Field(min_length=1, max_length=128)
+
+
+class AuthOut(BaseModel):
+    user_id: str
+    username: str
+    csrf_token: str = Field(description="쓰기 요청의 X-CSRF-Token 헤더 값")
+    expires_at: datetime
+
+
+class MeOut(BaseModel):
+    user_id: str
+    username: str
+    csrf_token: str
+
+
 class ErrorOut(BaseModel):
     code: str
     message: str

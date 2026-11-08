@@ -378,3 +378,25 @@ def test_import_and_vector_search_on_postgres(pg_url: str) -> None:
 
     texts = asyncio.run(_search())
     assert texts == ["팀장님, 금요일은 어렵고 다음 주 수요일까지는 가능합니다.\n어제는 죄송했습니다."]
+
+
+def test_auth_register_login_on_postgres(pg_url: str) -> None:
+    """users·sessions 테이블 왕복: 가입 → 쿠키 → me, 로그아웃 뒤 401, 재로그인."""
+    settings = Settings(_env_file=None, llm_provider="fake", database_url=pg_url, embedding_provider="fake")  # type: ignore[call-arg]
+    name = f"pg_{_user().replace('-', '_')}"
+    with TestClient(create_app(settings)) as client:
+        r = client.post("/v1/auth/register", json={"username": name, "password": "long-enough-pw"})
+        assert r.status_code == 201, r.text
+        assert client.get("/v1/auth/me").json()["username"] == name
+        csrf = r.json()["csrf_token"]
+        ok = client.post(
+            "/v1/contacts",
+            json={"alias": "박지현", "relationship_type": "superior"},
+            headers={"X-CSRF-Token": csrf},
+        )
+        assert ok.status_code == 201, ok.text
+        assert client.post("/v1/auth/logout").status_code == 204
+        assert client.get("/v1/auth/me").status_code == 401
+        again = client.post("/v1/auth/login", json={"username": name, "password": "long-enough-pw"})
+        assert again.status_code == 200 and again.json()["user_id"] == r.json()["user_id"]
+        assert client.get("/v1/contacts").json()[0]["alias"] == "박지현"

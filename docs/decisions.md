@@ -111,3 +111,9 @@
 - 결과: `usage_counters(user_id, day)`에 요청 수·입출력 토큰을 세고 `RewriteService`가 모델 호출 **전** 요청 수를 원자적으로 예약(Postgres UPSERT `WHERE rewrites < limit`), 호출 **뒤** 토큰을 더한다. 기본 200회·400k 토큰/일, `GET /v1/usage`. 동시 10건 예약에 한도 3 → 정확히 3건 통과 테스트.
 - 결정: 토큰 한도는 다음 요청부터 막는다(한 번의 초과 허용). 요청마다 예상 토큰을 미리 계산하는 것은 과하다. 멱등 재요청과 검증 실패(원문 유지)도 모델을 불렀으면 센다 — 과금 기준과 같게.
 - 결정: 한도는 사용자 단위만. 팀 전체 상한은 Anthropic Console 사용량 한도로 건다(코드 중복 금지). 429 메시지는 "내일 다시"로 고정 — 자정(KST) 리셋.
+
+## 2026-11-09 인증: 세션 쿠키 + CSRF 토큰, 비밀번호는 stdlib scrypt, 헤더 스텁은 설정으로
+- 결과: `/v1/auth/register|login|logout|me`. 세션 토큰은 HttpOnly·SameSite=Lax 쿠키로만 나가고 DB에는 SHA-256 해시만. 쓰기 요청은 세션별 CSRF 토큰을 `X-CSRF-Token`으로(없으면 403). 로그인 실패는 이름 유무와 무관하게 같은 401. 테스트 89개.
+- 결정: 비밀번호 해시는 추가 패키지 없이 `hashlib.scrypt`(n=2^14). argon2로 바꾸면 접두로 구분해 기존 해시도 검증한다. 세션 만료 14일, 로그아웃은 revoked_at.
+- 결정: `X-User-Id` 헤더 스텁은 지우지 않고 `AUTH_ALLOW_HEADER_STUB`로 둔다 — 평가 하니스·팀원 로컬 테스트가 쓴다. 배포 .env에서는 false. 쿠키가 있으면 헤더는 무시한다.
+- 미룬 것: 로그인 시도 제한(무차별 대입), 비밀번호 변경·재설정, 세션 목록. 프런트가 생기면 `SESSION_COOKIE_SECURE=true`와 CORS origin을 맞춘다.

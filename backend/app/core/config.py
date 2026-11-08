@@ -47,6 +47,11 @@ class Settings(BaseSettings):
     usage_daily_rewrite_limit: int = Field(200, ge=0)
     usage_daily_token_limit: int = Field(400_000, ge=0, description="입력+출력 토큰 합, 캐시 읽기 제외")
     usage_day_offset_hours: int = Field(9, ge=-12, le=14)
+    # 인증. 세션 쿠키가 기본. 헤더 스텁(X-User-Id)은 개발·테스트·평가 스크립트용 — 배포에서는 끈다.
+    session_ttl_days: int = Field(14, ge=1, le=365)
+    session_cookie_secure: bool = Field(False, description="https에서만 쿠키 전송. 로컬 http 개발은 False")
+    auth_allow_header_stub: bool = Field(True, description="X-User-Id 헤더로 인증 대체 허용 (개발용)")
+    auth_allow_register: bool = True
     # D 경로(그래프). NEO4J_URI가 비어 있으면 그래프를 쓰지 않고 D = C로 동작한다.
     neo4j_uri: str = ""
     neo4j_username: str = "neo4j"

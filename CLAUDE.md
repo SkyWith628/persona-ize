@@ -26,7 +26,7 @@ mode: work
 - `repositories/base.py` Protocol(비동기) ← `postgres.py`(기본, SQLAlchemy 2 + asyncpg) / `memory.py`(테스트·DATABASE_URL 비었을 때). `db/models.py` 테이블, `db/session.py` 엔진, 스키마는 `backend/migrations/`(Alembic)
 - `api/deps.py build_state`가 DATABASE_URL 유무로 저장소를 고른다. `/healthz`의 `storage`로 확인
 - 사용량 제어: `repositories/usage.py`(사용자·일 KST 카운터, Postgres는 원자적 UPSERT) → `RewriteService`가 모델 호출 전 요청 수를 예약하고 호출 뒤 토큰을 더한다. 한도는 `USAGE_DAILY_*`, 초과는 429 `usage_exceeded`, 조회는 `GET /v1/usage`(멱등 재요청은 세지 않음)
-- `api/deps.py` 인증은 `X-User-Id` 헤더 스텁. 본문의 user_id는 절대 신뢰하지 않는다
+- 인증(`api/deps.py current_user_id`): 세션 쿠키 `pi_session`(HttpOnly, SameSite=Lax) 우선, 쓰기 요청은 `X-CSRF-Token`(세션별 토큰, 로그인 응답·`/v1/auth/me`) 필수(403). 쿠키가 없으면 `AUTH_ALLOW_HEADER_STUB`일 때만 `X-User-Id` 헤더 — 개발·테스트·평가용, 배포에서는 false. 본문의 user_id는 절대 신뢰하지 않는다. 비밀번호는 stdlib scrypt(`core/security.py`), 세션 토큰은 해시만 저장(`users`·`sessions`, 0006)
 - `graph/graphiti_p0/` 스파이크. `data/synthetic/`의 JSON을 읽는다
 
 ## 컨벤션
