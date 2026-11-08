@@ -79,6 +79,10 @@ class GraphStore(Protocol):
         """
         ...
 
+    async def remove_group(self, group_id: str) -> int:
+        """사용자 그래프 전체 삭제 (계정 삭제). 지운 노드 수."""
+        ...
+
     async def ping(self) -> None:
         """연결 확인. 실패하면 예외."""
         ...
@@ -191,6 +195,14 @@ class GraphitiStore:
             # 다른 에피소드도 근거인 사실은 남는다.
             await self._g.remove_episode(uuid)
         return len(uuids)
+
+    async def remove_group(self, group_id: str) -> int:
+        result = await self._g.driver.execute_query(
+            "MATCH (n {group_id: $group_id}) DETACH DELETE n RETURN count(*) AS removed",
+            group_id=group_id,
+        )
+        records = result[0] if isinstance(result, tuple) else result.records
+        return int(records[0]["removed"]) if records else 0
 
     async def ping(self) -> None:
         await self._g.driver.execute_query("RETURN 1 AS ok")

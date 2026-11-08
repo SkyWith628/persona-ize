@@ -23,6 +23,7 @@
         <span id="me-name"></span>
         <span id="usage" class="muted"></span>
         <button id="pw-change" class="ghost">비밀번호 변경</button>
+        <button id="acct-delete" class="danger">계정 삭제</button>
         <button id="logout" class="ghost">로그아웃</button>
       </div>
     </div>
@@ -50,7 +51,10 @@
       </form>
 
       <div id="persona-box" class="hidden">
-        <h2>2. 페르소나 <span id="persona-version" class="muted"></span></h2>
+        <div class="row between">
+          <h2>2. 페르소나 <span id="persona-version" class="muted"></span></h2>
+          <button id="contact-delete" class="danger">이 상대 삭제</button>
+        </div>
         <form id="persona-form" class="persona">
           <label>격식 <output id="o-formality">3</output><input type="range" name="formality" min="1" max="5" value="3" /></label>
           <label>친근함 <output id="o-friendliness">3</output><input type="range" name="friendliness" min="1" max="5" value="3" /></label>

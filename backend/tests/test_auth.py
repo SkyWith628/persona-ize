@@ -167,3 +167,31 @@ def test_change_password_revokes_other_sessions() -> None:
     assert second.get("/v1/auth/me").status_code == 401
     assert client.post("/v1/auth/login", json=CRED).status_code == 401
     assert client.post("/v1/auth/login", json={**CRED, "password": body["new_password"]}).status_code == 200
+
+
+def test_delete_account_requires_password_and_csrf_then_wipes() -> None:
+    client = _client()
+    reg = client.post("/v1/auth/register", json=CRED)
+    csrf = reg.json()["csrf_token"]
+    client.post(
+        "/v1/contacts",
+        json={"alias": "박지현", "relationship_type": "superior"},
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert (
+        client.request("DELETE", "/v1/auth/me", json={"password": CRED["password"]}).status_code == 403
+    )  # CSRF 없음
+    assert (
+        client.request(
+            "DELETE", "/v1/auth/me", json={"password": "nope-nope-1"}, headers={"X-CSRF-Token": csrf}
+        ).status_code
+        == 401
+    )
+    ok = client.request(
+        "DELETE", "/v1/auth/me", json={"password": CRED["password"]}, headers={"X-CSRF-Token": csrf}
+    )
+    assert ok.status_code == 200, ok.text
+    assert ok.json()["contacts"] == 1
+    assert client.get("/v1/auth/me").status_code == 401
+    assert client.post("/v1/auth/login", json=CRED).status_code == 401  # 사용자 없음 → 같은 401
+    assert client.post("/v1/auth/register", json=CRED).status_code == 201  # 이름 재사용 가능

@@ -209,3 +209,36 @@ def test_web_index_and_static(client: TestClient) -> None:
     assert r.status_code == 200 and "Persona_ize" in r.text and "/static/app.js" in r.text
     assert client.get("/static/app.js").status_code == 200
     assert "text/css" in client.get("/static/app.css").headers["content-type"]
+
+
+def test_delete_contact_api_removes_history_and_conversations(
+    client: TestClient, user_a: dict[str, str]
+) -> None:
+    cid = _setup_contact(client, user_a)
+    conv = client.post(
+        "/v1/conversations", json={"contact_id": cid, "source_key": "c1"}, headers=user_a
+    ).json()
+    client.post(
+        f"/v1/conversations/{conv['id']}/imports",
+        json={
+            "messages": [
+                {
+                    "id": "m01",
+                    "speaker": "me",
+                    "sent_at": "2026-10-05T09:00:00+09:00",
+                    "text": "안녕하세요 팀장님",
+                }
+            ]
+        },
+        headers=user_a,
+    )
+    rec = client.post("/v1/rewrites", json={"contact_id": cid, "draft_text": DRAFT}, headers=user_a).json()
+    d = client.delete(f"/v1/contacts/{cid}", headers=user_a)
+    assert d.status_code == 200, d.text
+    assert (d.json()["conversations"], d.json()["messages"]) == (1, 1)
+    assert client.get(f"/v1/contacts/{cid}", headers=user_a).status_code == 404
+    assert client.get(f"/v1/conversations/{conv['id']}", headers=user_a).status_code == 404
+    assert d.json()["rewrites"] == 1
+    assert client.get("/v1/rewrites", headers=user_a).json() == []
+    assert client.get(f"/v1/rewrites/{rec['id']}", headers=user_a).status_code == 404
+    assert client.delete(f"/v1/contacts/{cid}", headers=user_a).status_code == 404

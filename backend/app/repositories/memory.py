@@ -86,6 +86,12 @@ class InMemoryContactRepo:
         versions.append(pv)
         return pv
 
+    async def delete(self, user_id: str, contact_id: UUID) -> None:
+        await self.get(user_id, contact_id)
+        del self._contacts[contact_id]
+        self._personas.pop(contact_id, None)
+        # 첨삭 이력은 RewriteRepo에 있다. 인메모리에서는 조회가 user·contact로 막히므로 따로 지우지 않는다
+
 
 class InMemoryRewriteRepo:
     def __init__(self) -> None:
@@ -96,6 +102,16 @@ class InMemoryRewriteRepo:
     async def find_by_idempotency(self, user_id: str, key: str) -> RewriteRecord | None:
         rid = self._by_idem.get((user_id, key))
         return self._records.get(rid) if rid else None
+
+    async def delete_by_contact(self, user_id: str, contact_id: UUID) -> int:
+        gone = [
+            rid for rid, r in self._records.items() if r.user_id == user_id and r.contact_id == contact_id
+        ]
+        for rid in gone:
+            del self._records[rid]
+            self._feedback.pop(rid, None)
+        self._by_idem = {k: v for k, v in self._by_idem.items() if v not in gone}
+        return len(gone)
 
     async def save(
         self,

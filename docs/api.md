@@ -15,6 +15,7 @@ curl -s -c cookie.txt -X POST localhost:8000/v1/auth/register -H "Content-Type: 
 ```
 응답의 `csrf_token`을 쓰기 요청에 `-H "X-CSRF-Token: ..."`로 보낸다. `POST /v1/auth/login`, `POST /v1/auth/logout`, `GET /v1/auth/me`(CSRF 토큰 재조회).
 `POST /v1/auth/password` `{current_password, new_password}`(CSRF 필수) — 바꾸면 다른 세션은 모두 로그아웃. 로그인 실패가 이름·IP별 5회(15분)에 닿으면 429 `too_many_attempts`.
+`DELETE /v1/auth/me` `{password}`(CSRF 필수) — **계정 삭제**. 상대·대화·묶음·첨삭 이력·그래프 group·사용량·세션을 모두 지우고 쿠키를 지운다. 되돌릴 수 없다. 응답 `{contacts, conversations, messages, graph_nodes_removed, graph_error}`.
 
 ## 상대·페르소나
 
@@ -24,6 +25,7 @@ curl -s -c cookie.txt -X POST localhost:8000/v1/auth/register -H "Content-Type: 
 | `GET /v1/contacts`, `GET /v1/contacts/{id}` | 목록·조회 (`persona_version` 포함) |
 | `PUT /v1/contacts/{id}/persona` `{settings, expected_version}` | 새 페르소나 버전. 현재 버전과 다르면 409 |
 | `GET /v1/contacts/{id}/persona` | 최신 버전 |
+| `DELETE /v1/contacts/{id}` | **상대 삭제**. 그 상대의 대화방·메시지·묶음·그래프 에피소드·페르소나·첨삭 이력을 모두 지운다. 응답 `{conversations, messages, episodes, graph_episodes, rewrites, graph_errors}` (그래프 삭제가 실패해도 DB는 지우고 사유를 돌려준다) |
 
 settings: `formality·friendliness·directness`(1~5), `length`(shorter/same/longer), `emoji`(none/rare/often), `address_term`, `preferred_phrases[]`, `forbidden_phrases[]`, `notes`.
 

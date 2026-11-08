@@ -33,6 +33,10 @@ class AuthRepo(Protocol):
         """이 사용자의 다른 활성 세션을 모두 폐기한다 (비밀번호 변경 뒤). 폐기한 수."""
         ...
 
+    async def delete_user(self, user_id: UUID) -> None:
+        """사용자와 세션을 지운다."""
+        ...
+
 
 class InMemoryAuthRepo:
     def __init__(self) -> None:
@@ -81,6 +85,11 @@ class InMemoryAuthRepo:
                 self._sessions[key] = s.model_copy(update={"revoked_at": at})
                 n += 1
         return n
+
+    async def delete_user(self, user_id: UUID) -> None:
+        self._users.pop(user_id, None)
+        for key in [k for k, s in self._sessions.items() if s.user_id == user_id]:
+            del self._sessions[key]
 
 
 class PostgresAuthRepo:
@@ -194,3 +203,11 @@ class PostgresAuthRepo:
                 .values(revoked_at=at)
             )
         return int(result.rowcount or 0)
+
+    async def delete_user(self, user_id: UUID) -> None:
+        from sqlalchemy import delete
+
+        from app.db.models import UserRow
+
+        async with self._sessions.begin() as s:
+            await s.execute(delete(UserRow).where(UserRow.id == user_id))  # sessions는 CASCADE

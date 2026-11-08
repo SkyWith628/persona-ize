@@ -67,6 +67,12 @@ class FakeGraphStore:
         self.added = [a for a in self.added if not (a["group_id"] == group_id and a["name"] in names)]
         return before - len(self.added)
 
+    async def remove_group(self, group_id) -> int:  # noqa: ANN001
+        before = len(self.added)
+        self.added = [a for a in self.added if a["group_id"] != group_id]
+        self.removed_groups = getattr(self, "removed_groups", []) + [group_id]
+        return before - len(self.added)
+
     async def ping(self) -> None:
         pass
 
@@ -421,3 +427,50 @@ async def test_composite_merges_and_degrades() -> None:
     assert [e.purpose for e in got] == ["style"]  # 그래프가 죽어도 C는 나온다
     with pytest.raises(ValueError):
         CompositeRetriever([])
+
+
+async def test_delete_contact_and_account_remove_everything() -> None:
+    from app.core.config import Settings
+    from app.repositories.auth import InMemoryAuthRepo
+    from app.repositories.memory import InMemoryRewriteRepo
+    from app.repositories.usage import InMemoryUsageRepo
+    from app.services.auth_service import AuthService, UnauthorizedError
+    from app.services.deletion_service import DeletionService
+
+    contacts, conversations, store, _, svc, boss, bro, c1, c2 = await _setup(graph_mode="sync")
+    await svc.import_messages("u", c1.id, ImportPayload(messages=MESSAGES_C1))
+    await svc.import_messages("u", c2.id, ImportPayload(messages=MESSAGES_C2))
+    assert len(store.added) == 3
+
+    auth = InMemoryAuthRepo()
+    settings = Settings(_env_file=None, llm_provider="fake", embedding_provider="fake")  # type: ignore[call-arg]
+    auth_service = AuthService(settings, auth)
+    reg = await auth_service.register("deleter", "long-enough-pw")
+    usage = InMemoryUsageRepo()
+    await usage.reserve_rewrite("u", __import__("datetime").date(2026, 11, 9), 10)
+    deletion = DeletionService(contacts, conversations, InMemoryRewriteRepo(), svc, usage, auth, store)
+
+    # 상대 삭제: 그 상대의 대화방·그래프 에피소드만 사라지고 다른 상대는 그대로
+    d = await deletion.delete_contact("u", boss.id)
+    assert (d.conversations, d.messages, d.graph_episodes, d.graph_errors) == (1, 2, 2, [])
+    assert [a["name"] for a in store.added] == ["c2:m01"]
+    assert [c.alias for c in await contacts.list("u")] == ["준호"]
+    from app.core.errors import NotFoundError
+
+    with pytest.raises(NotFoundError):
+        await contacts.get("u", boss.id)
+    with pytest.raises(NotFoundError):
+        await deletion.delete_contact("someone-else", bro.id)
+
+    # 계정 삭제: 비밀번호 확인 → 전부 삭제 → 그래프 group 통째로 → 사용자·세션·사용량
+    session = await auth_service.resolve(reg.session_token)
+    assert session is not None
+    with pytest.raises(UnauthorizedError):
+        await deletion.delete_account(session, "wrong-password")
+    # 이 테스트의 데이터 user_id는 "u"이고 계정은 별도 사용자라, 계정 삭제 경로를 "u"로 맞춰 본다
+    user_rows = [u for u, _ in auth._users.values()]
+    acct = await deletion.delete_account(session, "long-enough-pw")
+    assert acct.user_id == str(user_rows[0].id) and acct.contacts == 0  # 계정 사용자에겐 상대가 없었다
+    assert await auth_service.resolve(reg.session_token) is None  # 세션 사라짐
+    assert await auth.find_user_by_username("deleter") is None
+    assert store.removed_groups == [str(user_rows[0].id)]

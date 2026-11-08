@@ -408,3 +408,91 @@ def test_deep_healthz_on_postgres(pg_url: str) -> None:
         r = client.get("/healthz?deep=true")
         assert r.status_code == 200, r.text
         assert r.json()["checks"] == {"postgres": "ok", "neo4j": "skipped"}
+
+
+def test_delete_contact_and_account_cascade_on_postgres(pg_url: str) -> None:
+    """FK CASCADE 확인: 상대 삭제 → 대화방·메시지·묶음·페르소나·첨삭 이력, 계정 삭제 → 사용자·세션·사용량."""
+    settings = Settings(_env_file=None, llm_provider="fake", database_url=pg_url, embedding_provider="fake")  # type: ignore[call-arg]
+    name = f"pg_{_user().replace('-', '_')}"
+    with TestClient(create_app(settings)) as client:
+        reg = client.post("/v1/auth/register", json={"username": name, "password": "long-enough-pw"})
+        h = {"X-CSRF-Token": reg.json()["csrf_token"]}
+        cid = client.post(
+            "/v1/contacts", json={"alias": "박지현", "relationship_type": "superior"}, headers=h
+        ).json()["id"]
+        p = client.put(
+            f"/v1/contacts/{cid}/persona",
+            json={"settings": {"formality": 5, "address_term": "팀장님"}, "expected_version": 0},
+            headers=h,
+        )
+        assert p.status_code == 200, p.text
+        conv = client.post(
+            "/v1/conversations", json={"contact_id": cid, "source_key": "c1"}, headers=h
+        ).json()
+        imp = client.post(
+            f"/v1/conversations/{conv['id']}/imports",
+            json={
+                "messages": [
+                    {
+                        "id": "m01",
+                        "speaker": "me",
+                        "sent_at": "2026-10-05T09:00:00+09:00",
+                        "text": "안녕하세요",
+                    },
+                    {"id": "m02", "speaker": "contact", "sent_at": "2026-10-05T09:01:00+09:00", "text": "네"},
+                ]
+            },
+            headers=h,
+        )
+        assert imp.status_code == 202, imp.text
+        rec = client.post(
+            "/v1/rewrites",
+            json={"contact_id": cid, "draft_text": "오늘 정리해서 내일 오전까지 보내드릴게요."},
+            headers=h,
+        )
+        assert rec.status_code == 201, rec.text
+        client.post(f"/v1/rewrites/{rec.json()['id']}/feedback", json={"accepted": True}, headers=h)
+        assert client.get("/v1/usage").json()["rewrites"] == 1
+
+        d = client.delete(f"/v1/contacts/{cid}", headers=h)
+        assert d.status_code == 200, d.text
+        assert (d.json()["conversations"], d.json()["messages"], d.json()["rewrites"]) == (1, 2, 1)
+        assert client.get(f"/v1/contacts/{cid}").status_code == 404
+        assert client.get(f"/v1/conversations/{conv['id']}").status_code == 404
+        assert client.get(f"/v1/rewrites/{rec.json()['id']}").status_code == 404
+        assert client.get("/v1/rewrites").json() == []
+
+        # 계정 삭제: 상대 하나 더 만들어 두고 통째로
+        client.post("/v1/contacts", json={"alias": "준호", "relationship_type": "family"}, headers=h)
+        gone = client.request("DELETE", "/v1/auth/me", json={"password": "long-enough-pw"}, headers=h)
+        assert gone.status_code == 200, gone.text
+        assert gone.json()["contacts"] == 1
+        assert client.get("/v1/auth/me").status_code == 401
+        assert (
+            client.post("/v1/auth/login", json={"username": name, "password": "long-enough-pw"}).status_code
+            == 401
+        )
+
+    async def _count_rows() -> dict[str, int]:
+        conn = await asyncpg.connect(_dsn(pg_url))
+        try:
+            out = {}
+            for table in (
+                "users",
+                "sessions",
+                "usage_counters",
+                "contacts",
+                "conversations",
+                "messages",
+                "episodes",
+            ):
+                col = "username" if table == "users" else "user_id"
+                val = name if table == "users" else str(reg.json()["user_id"])
+                out[table] = await conn.fetchval(f"SELECT count(*) FROM {table} WHERE {col} = $1", val)  # noqa: S608
+            return out
+        finally:
+            await conn.close()
+
+    assert asyncio.run(_count_rows()) == dict.fromkeys(
+        ("users", "sessions", "usage_counters", "contacts", "conversations", "messages", "episodes"), 0
+    )

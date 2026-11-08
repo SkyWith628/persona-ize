@@ -25,6 +25,28 @@ class ContactOut(BaseModel):
     created_at: datetime
 
 
+class ContactDeletionOut(BaseModel):
+    contact_id: UUID
+    conversations: int
+    messages: int
+    episodes: int
+    graph_episodes: int
+    rewrites: int
+    graph_errors: list[str]
+
+
+class AccountDeleteIn(BaseModel):
+    password: str = Field(min_length=1, max_length=128)
+
+
+class AccountDeletionOut(BaseModel):
+    contacts: int
+    conversations: int
+    messages: int
+    graph_nodes_removed: int
+    graph_error: str | None
+
+
 class PersonaPut(BaseModel):
     settings: PersonaSettings
     expected_version: int | None = Field(

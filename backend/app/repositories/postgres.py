@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 
 from app.core.errors import NotFoundError, VersionConflictError
@@ -144,6 +144,11 @@ class PostgresContactRepo:
             raise VersionConflictError("페르소나 버전 충돌: 동시에 저장되었습니다. 다시 시도하세요.") from exc
         return _persona(row)
 
+    async def delete(self, user_id: str, contact_id: UUID) -> None:
+        async with self._sessions.begin() as s:
+            row = await self._owned_contact(s, user_id, contact_id)
+            await s.delete(row)  # persona_versions·rewrite_requests(→results·feedback)·conversations CASCADE
+
     @staticmethod
     async def _owned_contact(s, user_id: str, contact_id: UUID) -> ContactRow:  # noqa: ANN001
         row = await s.scalar(
@@ -157,6 +162,15 @@ class PostgresContactRepo:
 class PostgresRewriteRepo:
     def __init__(self, sessions: SessionFactory) -> None:
         self._sessions = sessions
+
+    async def delete_by_contact(self, user_id: str, contact_id: UUID) -> int:
+        async with self._sessions.begin() as s:
+            result = await s.execute(
+                delete(RewriteRequestRow).where(
+                    RewriteRequestRow.user_id == user_id, RewriteRequestRow.contact_id == contact_id
+                )
+            )  # results·feedback은 CASCADE
+        return int(result.rowcount or 0)
 
     async def find_by_idempotency(self, user_id: str, key: str) -> RewriteRecord | None:
         stmt = select(RewriteRequestRow).where(

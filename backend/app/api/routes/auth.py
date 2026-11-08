@@ -9,7 +9,15 @@ from __future__ import annotations
 from fastapi import APIRouter, Request, Response, status
 
 from app.api.deps import SESSION_COOKIE, State, current_session
-from app.api.schemas import AuthOut, Credentials, MeOut, PasswordChange, PasswordChangeOut
+from app.api.schemas import (
+    AccountDeleteIn,
+    AccountDeletionOut,
+    AuthOut,
+    Credentials,
+    MeOut,
+    PasswordChange,
+    PasswordChangeOut,
+)
 from app.domain.auth import AuthResult
 from app.services.auth_service import ForbiddenError
 
@@ -74,3 +82,22 @@ async def me(request: Request, state: State) -> MeOut:
     session = await current_session(request, state)
     user = await state.auth_service.me(session)
     return MeOut(user_id=str(user.id), username=user.username, csrf_token=session.csrf_token)
+
+
+@router.delete("/me", response_model=AccountDeletionOut)
+async def delete_me(
+    body: AccountDeleteIn, request: Request, response: Response, state: State
+) -> AccountDeletionOut:
+    """계정 삭제 (비밀번호 확인 + CSRF). 상대·대화·첨삭 이력·그래프·사용량·세션을 지운다. 되돌릴 수 없다."""
+    session = await current_session(request, state)
+    if not state.auth_service.csrf_ok(session, request.headers.get("X-CSRF-Token")):
+        raise ForbiddenError("CSRF 토큰이 없거나 맞지 않습니다 (X-CSRF-Token).")
+    d = await state.deletion_service.delete_account(session, body.password)
+    response.delete_cookie(SESSION_COOKIE, path="/")
+    return AccountDeletionOut(
+        contacts=d.contacts,
+        conversations=d.conversations,
+        messages=d.messages,
+        graph_nodes_removed=d.graph_nodes_removed,
+        graph_error=d.graph_error,
+    )

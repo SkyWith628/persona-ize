@@ -30,6 +30,7 @@ from app.repositories.base import ContactRepo, ConversationRepo, RewriteRepo
 from app.repositories.memory import InMemoryContactRepo, InMemoryConversationRepo, InMemoryRewriteRepo
 from app.repositories.usage import InMemoryUsageRepo, UsageRepo
 from app.services.auth_service import AuthService, ForbiddenError, UnauthorizedError
+from app.services.deletion_service import DeletionService
 from app.services.import_service import ImportService
 from app.services.rewrite_service import RewriteService
 
@@ -52,6 +53,7 @@ class AppState:
     auth_service: AuthService
     rewrite_service: RewriteService
     import_service: ImportService
+    deletion_service: DeletionService
     workflow: RewriteWorkflow  # 평가 하니스가 서비스 계층 없이 직접 돌린다
     storage: Storage = "memory"
     engine: Any = None  # sqlalchemy AsyncEngine | None — db extra 없이도 import되게 느슨히 둔다
@@ -143,6 +145,14 @@ def build_state(settings: Settings) -> AppState:
         retrievers={"A": null, "B": null, "C": vector, "D": d_retriever},
         prompt_version=settings.prompt_version,
     )
+    import_service = ImportService(
+        contacts,
+        conversations,
+        embedder,
+        max_messages=settings.max_import_messages,
+        graph_ingest=graph_ingest,
+        graph_mode="background",
+    )
     return AppState(
         settings=settings,
         contacts=contacts,
@@ -153,13 +163,9 @@ def build_state(settings: Settings) -> AppState:
         auth=auth,
         auth_service=AuthService(settings, auth),
         rewrite_service=RewriteService(settings, contacts, rewrites, workflow, usage),
-        import_service=ImportService(
-            contacts,
-            conversations,
-            embedder,
-            max_messages=settings.max_import_messages,
-            graph_ingest=graph_ingest,
-            graph_mode="background",
+        import_service=import_service,
+        deletion_service=DeletionService(
+            contacts, conversations, rewrites, import_service, usage, auth, graph_store
         ),
         workflow=workflow,
         storage=storage,

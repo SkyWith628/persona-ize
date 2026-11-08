@@ -65,6 +65,28 @@ $("#pw-change").addEventListener("click", async () => {
     flash(`비밀번호를 바꿨습니다. 다른 기기의 세션 ${r.revoked_sessions}개를 로그아웃했습니다.`);
   } catch (err) { flash(err.message, true); }
 });
+$("#contact-delete").addEventListener("click", async () => {
+  if (!state.contact) return;
+  if (!confirm(`'${state.contact.alias}'와 관련된 대화·검색 데이터·그래프 기록·첨삭 이력을 모두 지웁니다. 계속할까요?`)) return;
+  try {
+    const d = await api("DELETE", `/v1/contacts/${state.contact.id}`);
+    flash(`삭제: 대화방 ${d.conversations}, 메시지 ${d.messages}, 그래프 ${d.graph_episodes}${d.graph_errors.length ? ` (그래프 오류 ${d.graph_errors.length})` : ""}`);
+    state.contact = null; state.conv = null; state.rewrite = null;
+    $("#persona-box").classList.add("hidden"); $("#rewrite-form").classList.add("hidden"); $("#history-box").classList.add("hidden");
+    $("#rewrite-hint").classList.remove("hidden"); $("#result").classList.add("hidden");
+    await loadContacts();
+  } catch (err) { flash(err.message, true); }
+});
+$("#acct-delete").addEventListener("click", async () => {
+  if (!confirm("계정과 모든 데이터(상대·대화·첨삭 이력·그래프)를 지웁니다. 되돌릴 수 없습니다. 계속할까요?")) return;
+  const pw = prompt("확인을 위해 비밀번호를 입력하세요");
+  if (!pw) return;
+  try {
+    const d = await api("DELETE", "/v1/auth/me", { password: pw });
+    state.me = null; state.csrf = null; state.contact = null; renderAuth();
+    flash(`계정을 삭제했습니다 (상대 ${d.contacts}, 대화방 ${d.conversations}, 그래프 노드 ${d.graph_nodes_removed}).`);
+  } catch (err) { flash(err.message, true); }
+});
 $("#logout").addEventListener("click", async () => { await api("POST", "/v1/auth/logout"); state.me = null; state.csrf = null; renderAuth(); });
 
 async function auth(kind) {

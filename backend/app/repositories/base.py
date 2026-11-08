@@ -41,6 +41,10 @@ class ContactRepo(Protocol):
         """새 버전을 추가한다. expected_version이 현재 최신과 다르면 VersionConflictError."""
         ...
 
+    async def delete(self, user_id: str, contact_id: UUID) -> None:
+        """상대·페르소나 버전·첨삭 이력을 지운다 (대화방은 먼저 지워야 한다). 없으면 NotFoundError."""
+        ...
+
 
 class RewriteRepo(Protocol):
     async def find_by_idempotency(self, user_id: str, key: str) -> RewriteRecord | None: ...
@@ -67,6 +71,10 @@ class RewriteRepo(Protocol):
         ...
 
     async def save_feedback(self, user_id: str, feedback: Feedback) -> Feedback: ...
+
+    async def delete_by_contact(self, user_id: str, contact_id: UUID) -> int:
+        """그 상대의 첨삭 요청·결과·피드백을 지운다 (상대 삭제). 지운 요청 수."""
+        ...
 
 
 class ConversationRepo(Protocol):

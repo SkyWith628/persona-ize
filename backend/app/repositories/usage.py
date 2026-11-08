@@ -23,6 +23,8 @@ class UsageRepo(Protocol):
         self, user_id: str, day: date, input_tokens: int, output_tokens: int
     ) -> UsageCounter: ...
 
+    async def delete_user(self, user_id: str) -> None: ...
+
 
 class InMemoryUsageRepo:
     def __init__(self) -> None:
@@ -48,6 +50,10 @@ class InMemoryUsageRepo:
         row.input_tokens += input_tokens
         row.output_tokens += output_tokens
         return row.model_copy()
+
+    async def delete_user(self, user_id: str) -> None:
+        for key in [k for k in self._rows if k[0] == user_id]:
+            del self._rows[key]
 
 
 class PostgresUsageRepo:
@@ -131,3 +137,11 @@ class PostgresUsageRepo:
         async with self._sessions.begin() as s:
             row = (await s.execute(stmt)).scalar_one()
         return self._counter(row)
+
+    async def delete_user(self, user_id: str) -> None:
+        from sqlalchemy import delete
+
+        from app.db.models import UsageCounterRow
+
+        async with self._sessions.begin() as s:
+            await s.execute(delete(UsageCounterRow).where(UsageCounterRow.user_id == user_id))

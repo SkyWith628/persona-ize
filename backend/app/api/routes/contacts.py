@@ -5,7 +5,7 @@ from uuid import UUID
 from fastapi import APIRouter, status
 
 from app.api.deps import AppState, State, UserId
-from app.api.schemas import ContactCreate, ContactOut, PersonaOut, PersonaPut
+from app.api.schemas import ContactCreate, ContactDeletionOut, ContactOut, PersonaOut, PersonaPut
 from app.core.errors import NotFoundError
 from app.domain.contact import Contact
 
@@ -54,4 +54,19 @@ async def get_persona(contact_id: UUID, user_id: UserId, state: State) -> Person
         raise NotFoundError("저장된 페르소나가 없습니다.")
     return PersonaOut(
         contact_id=pv.contact_id, version=pv.version, settings=pv.settings, created_at=pv.created_at
+    )
+
+
+@router.delete("/{contact_id}", response_model=ContactDeletionOut)
+async def delete_contact(contact_id: UUID, user_id: UserId, state: State) -> ContactDeletionOut:
+    """상대와 그 상대의 대화방·묶음·그래프 에피소드·페르소나·첨삭 이력을 모두 지운다."""
+    d = await state.deletion_service.delete_contact(user_id, contact_id)
+    return ContactDeletionOut(
+        contact_id=d.contact_id,
+        conversations=d.conversations,
+        messages=d.messages,
+        episodes=d.episodes,
+        graph_episodes=d.graph_episodes,
+        rewrites=d.rewrites,
+        graph_errors=d.graph_errors,
     )
