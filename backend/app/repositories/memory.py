@@ -17,6 +17,7 @@ from app.domain.conversation import (
     Episode,
     EpisodeDraft,
     EpisodeHit,
+    GraphStatus,
     ImportJob,
     Message,
     NewMessage,
@@ -145,7 +146,13 @@ class InMemoryConversationRepo:
         self._jobs: dict[UUID, ImportJob] = {}
 
     async def create(
-        self, user_id: str, contact_id: UUID, title: str, source: str, source_key: str
+        self,
+        user_id: str,
+        contact_id: UUID,
+        title: str,
+        source: str,
+        source_key: str,
+        me_name: str | None = None,
     ) -> Conversation:
         for c in self._conversations.values():
             if c.user_id == user_id and c.source_key == source_key:
@@ -157,6 +164,7 @@ class InMemoryConversationRepo:
             title=title,
             source=source,
             source_key=source_key,
+            me_name=me_name,
             created_at=_now(),
         )
         self._conversations[conv.id] = conv
@@ -278,4 +286,23 @@ class InMemoryConversationRepo:
         job = self._jobs.get(job_id)
         if job is None or job.user_id != user_id:
             raise NotFoundError("가져오기 작업을 찾을 수 없습니다.")
+        return job
+
+    async def mark_graph_ingested(self, user_id: str, message_ids: list[UUID], at: datetime) -> None:
+        wanted = set(message_ids)
+        for conv_id, msgs in self._messages.items():
+            if self._conversations[conv_id].user_id != user_id:
+                continue
+            self._messages[conv_id] = [
+                m.model_copy(update={"graph_ingested_at": at}) if m.id in wanted else m for m in msgs
+            ]
+
+    async def update_job_graph(
+        self, user_id: str, job_id: UUID, status: GraphStatus, episodes: int, error: str | None
+    ) -> ImportJob:
+        job = await self.get_job(user_id, job_id)
+        job = job.model_copy(
+            update={"graph_status": status, "graph_episodes": episodes, "graph_error": error}
+        )
+        self._jobs[job_id] = job
         return job

@@ -11,7 +11,15 @@ from typing import Protocol
 from uuid import UUID
 
 from app.domain.contact import Contact
-from app.domain.conversation import Conversation, EpisodeDraft, EpisodeHit, ImportJob, Message, NewMessage
+from app.domain.conversation import (
+    Conversation,
+    EpisodeDraft,
+    EpisodeHit,
+    GraphStatus,
+    ImportJob,
+    Message,
+    NewMessage,
+)
 from app.domain.persona import PersonaSettings, PersonaVersion, RelationshipType
 from app.domain.rewrite import Feedback, RewriteRecord, RewriteResult
 
@@ -58,7 +66,13 @@ class ConversationRepo(Protocol):
     """대화방·메시지·검색 단위(episode)·가져오기 작업. 임베딩 벡터는 저장소가 들고 kNN도 저장소가 한다."""
 
     async def create(
-        self, user_id: str, contact_id: UUID, title: str, source: str, source_key: str
+        self,
+        user_id: str,
+        contact_id: UUID,
+        title: str,
+        source: str,
+        source_key: str,
+        me_name: str | None = None,
     ) -> Conversation:
         """(user_id, source_key)가 이미 있으면 VersionConflictError."""
         ...
@@ -105,3 +119,11 @@ class ConversationRepo(Protocol):
     async def save_job(self, job: ImportJob) -> ImportJob: ...
 
     async def get_job(self, user_id: str, job_id: UUID) -> ImportJob: ...
+
+    async def mark_graph_ingested(self, user_id: str, message_ids: list[UUID], at: datetime) -> None:
+        """그래프에 넣은 메시지를 표시한다 (재실행 멱등)."""
+        ...
+
+    async def update_job_graph(
+        self, user_id: str, job_id: UUID, status: GraphStatus, episodes: int, error: str | None
+    ) -> ImportJob: ...

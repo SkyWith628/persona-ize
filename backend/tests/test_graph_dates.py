@@ -1,0 +1,120 @@
+"""상대 날짜 해석기 테스트. 사례는 data/synthetic의 실제 문장에서 가져왔다."""
+
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+
+import pytest
+
+from app.graph.dates import DiscourseContext, annotate_relative_dates, resolve_relative_dates
+
+KST = timezone(timedelta(hours=9))
+
+
+def _at(day: str) -> datetime:
+    return datetime.fromisoformat(f"{day}T09:00:00").replace(tzinfo=KST)
+
+
+def test_calendar_assumption() -> None:
+    # 아래 기대값은 2026-10-05이 월요일이라는 전제 위에 있다.
+    assert _at("2026-10-05").weekday() == 0
+
+
+@pytest.mark.parametrize(
+    ("day", "text", "expected"),
+    [
+        # c1:m03, 월요일
+        (
+            "2026-10-05",
+            "솔직히 이번 주 금요일은 어렵고, 다음 주 수요일까지는 가능합니다.",
+            [("이번 주 금요일", "2026-10-09"), ("다음 주 수요일", "2026-10-14")],
+        ),
+        # c1:m04 수식어 없는 요일 → 다가오는 요일과 그 다음 주, 두 후보 (문맥 의존)
+        (
+            "2026-10-05",
+            "금요일에 고객사 미팅이 있어서요. 목요일까지는 안 될까요?",
+            [("금요일", "2026-10-09 또는 2026-10-16"), ("목요일", "2026-10-08 또는 2026-10-15")],
+        ),
+        # c1:m05 '수요일로 조정' — 문맥상 다음 주 수요일(10-14). 두 후보 중 뒤의 것
+        ("2026-10-05", "수요일로 조정 부탁드립니다.", [("수요일", "2026-10-07 또는 2026-10-14")]),
+        # c1:m07 화요일의 어제
+        ("2026-10-06", "어제 일정 건은 제가 말이 좀 딱딱했던 것 같아 죄송합니다.", [("어제", "2026-10-05")]),
+        # c1:m01 '이번 주' 단독 → 주 범위. '주간보고'의 '주'는 건드리지 않는다
+        ("2026-10-05", "이번 주 주간보고 초안 공유드립니다.", [("이번 주", "2026-10-05~10-11")]),
+        # c2:m01 이번 주말 → 토~일
+        ("2026-10-05", "형 이번 주말에 엄마 생신인 거 알지?", [("이번 주말", "2026-10-10~10-11")]),
+        # c2:m02 토요일 (월요일 기준)
+        ("2026-10-05", "토요일 저녁 맞지?", [("토요일", "2026-10-10 또는 2026-10-17")]),
+        # c2:m06 내일
+        ("2026-10-05", "내일 하려고 ㅋㅋ", [("내일", "2026-10-06")]),
+        # c4:m01 금요일 기준 다음 주 토요일 → 모델이 10-18로 틀렸던 사례
+        ("2026-10-09", "다음 주 토요일 동아리 홈커밍 올 거지?", [("다음 주 토요일", "2026-10-17")]),
+        # c4:m03 금요일에 말한 '금요일까지' → 오늘이 아니라 다음 금요일부터
+        ("2026-10-09", "금요일까지만 알려줘!", [("금요일", "2026-10-16 또는 2026-10-23")]),
+        # c1:m10, c1:m11 다음 달과 절대 날짜
+        ("2026-10-14", "다음 달 워크숍 발표도 맡아줄래요?", [("다음 달", "2026-11")]),
+        ("2026-10-14", "자료는 11월 5일까지 드리겠습니다.", [("11월 5일", "2026-11-05")]),
+        # c3:m05 토요일에 말한 '다음 주부터'
+        ("2026-10-17", "나 다음 주부터 너네 파트 파트장으로 발령났어", [("다음 주", "2026-10-19~10-25")]),
+        # c3:m09 수요일의 금요일 → 모델이 10-24로 틀렸던 사례. 후보 둘 다 금요일
+        ("2026-10-21", "금요일까지 API 문서 정리 부탁드려요.", [("금요일", "2026-10-23 또는 2026-10-30")]),
+        # 시간대 표현은 무시
+        ("2026-10-05", "오후에 다시 얘기해요.", []),
+    ],
+)
+def test_resolve_dataset_cases(day: str, text: str, expected: list[tuple[str, str]]) -> None:
+    assert resolve_relative_dates(text, _at(day)) == expected
+
+
+def test_annotate_inserts_values_in_place() -> None:
+    text = "이번 주 금요일은 어렵고, 다음 주 수요일까지는 가능합니다."
+    out = annotate_relative_dates(text, _at("2026-10-05"))
+    assert out == "이번 주 금요일(=2026-10-09)은 어렵고, 다음 주 수요일(=2026-10-14)까지는 가능합니다."
+
+
+def test_annotate_is_idempotent() -> None:
+    once = annotate_relative_dates("내일 보자", _at("2026-10-05"))
+    assert annotate_relative_dates(once, _at("2026-10-05")) == once == "내일(=2026-10-06) 보자"
+
+
+def test_invalid_absolute_date_left_alone() -> None:
+    assert resolve_relative_dates("2월 30일에 보자", _at("2026-10-05")) == []
+
+
+def test_discourse_anchor_resolves_bare_weekday() -> None:
+    # c1:m03 → m05 → m08: '다음 주 수요일(10-14)' 뒤의 '수요일'은 10-14다 (5차에서 모델이 10-07로 틀림).
+    ctx = DiscourseContext()
+    annotate_relative_dates(
+        "이번 주 금요일은 어렵고, 다음 주 수요일까지는 가능합니다.", _at("2026-10-05"), ctx
+    )
+    assert resolve_relative_dates("수요일로 조정 부탁드립니다.", _at("2026-10-05"), ctx) == [
+        ("수요일", "2026-10-14")
+    ]
+    assert resolve_relative_dates("수요일로 갑시다.", _at("2026-10-06"), ctx) == [("수요일", "2026-10-14")]
+    # 금요일도 '이번 주 금요일(10-09)'을 이어받는다. 목요일은 앵커가 없어 두 후보
+    assert resolve_relative_dates("금요일에 미팅. 목요일까지는?", _at("2026-10-05"), ctx) == [
+        ("금요일", "2026-10-09"),
+        ("목요일", "2026-10-08 또는 2026-10-15"),
+    ]
+
+
+def test_discourse_anchor_expires_after_date() -> None:
+    ctx = DiscourseContext()
+    annotate_relative_dates("다음 주 수요일까지 가능합니다.", _at("2026-10-05"), ctx)
+    # 10-15에는 10-14 앵커가 지났으므로 두 후보로 돌아간다
+    assert resolve_relative_dates("수요일에 보자", _at("2026-10-15"), ctx) == [
+        ("수요일", "2026-10-21 또는 2026-10-28")
+    ]
+
+
+def test_weekend_anchors_saturday() -> None:
+    # c2:m01 '이번 주말' → m02 '토요일 저녁'
+    ctx = DiscourseContext()
+    annotate_relative_dates("형 이번 주말에 엄마 생신인 거 알지?", _at("2026-10-05"), ctx)
+    assert resolve_relative_dates("토요일 저녁 맞지?", _at("2026-10-05"), ctx) == [("토요일", "2026-10-10")]
+
+
+def test_without_context_still_two_candidates() -> None:
+    assert resolve_relative_dates("수요일로 조정", _at("2026-10-05")) == [
+        ("수요일", "2026-10-07 또는 2026-10-14")
+    ]

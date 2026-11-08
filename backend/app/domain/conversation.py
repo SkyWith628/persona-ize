@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 
 SpeakerRole = Literal["me", "contact"]
 ImportStatus = Literal["completed", "failed"]
+GraphStatus = Literal["skipped", "pending", "running", "completed", "failed"]
 
 
 class Conversation(BaseModel):
@@ -23,6 +24,7 @@ class Conversation(BaseModel):
     title: str
     source: str = Field(description="synthetic-json 등 원본 종류")
     source_key: str = Field(description="데이터셋의 대화방 id (c1). 메시지 참조 `c1:m03`의 앞부분")
+    me_name: str | None = Field(None, description="그래프 에피소드에 쓰는 사용자 표시 이름 (없으면 '사용자')")
     created_at: datetime
 
 
@@ -43,6 +45,7 @@ class Message(BaseModel):
     speaker_role: SpeakerRole
     sent_at: datetime
     text: str
+    graph_ingested_at: datetime | None = Field(None, description="그래프(D)에 넣은 시각. None이면 미수집")
 
 
 class EpisodeDraft(BaseModel):
@@ -85,4 +88,7 @@ class ImportJob(BaseModel):
     episodes: int = 0
     error_code: str | None = None
     error_message: str | None = None
+    graph_status: GraphStatus = Field("skipped", description="그래프 수집 단계. 그래프를 안 쓰면 skipped")
+    graph_episodes: int = 0
+    graph_error: str | None = None
     created_at: datetime

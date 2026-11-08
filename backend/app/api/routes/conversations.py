@@ -35,6 +35,9 @@ def _job_out(j: ImportJob) -> ImportJobOut:
         episodes=j.episodes,
         error_code=j.error_code,
         error_message=j.error_message,
+        graph_status=j.graph_status,
+        graph_episodes=j.graph_episodes,
+        graph_error=j.graph_error,
         created_at=j.created_at,
     )
 
@@ -42,7 +45,7 @@ def _job_out(j: ImportJob) -> ImportJobOut:
 @router.post("/v1/conversations", response_model=ConversationOut, status_code=status.HTTP_201_CREATED)
 async def create_conversation(body: ConversationCreate, user_id: UserId, state: State) -> ConversationOut:
     conv = await state.import_service.create_conversation(
-        user_id, body.contact_id, body.title, body.source, body.source_key
+        user_id, body.contact_id, body.title, body.source, body.source_key, body.me_name
     )
     return _conv_out(conv)
 

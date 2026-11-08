@@ -28,6 +28,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--dataset", type=Path, default=ROOT / "data" / "synthetic" / "sample_conversations.json")
     p.add_argument("--characters", type=Path, default=ROOT / "evals" / "characters.csv")
     p.add_argument("--user", default="demo", help="적재할 사용자 id (X-User-Id와 같은 값)")
+    p.add_argument(
+        "--graph", action="store_true", help="적재 뒤 그래프(Neo4j)에도 넣는다. haiku 호출, 메시지당 10~15초"
+    )
     return p.parse_args(argv)
 
 
@@ -40,12 +43,17 @@ async def run(args: argparse.Namespace) -> int:
         return 2
     state = build_state(settings)
     try:
-        report = await load_synthetic(state, args.dataset, args.user, args.characters)
+        if args.graph and not state.graph_enabled:
+            print("--graph에는 .env의 NEO4J_URI가 필요합니다 (로컬 compose: bolt://localhost:7687).")
+            return 2
+        report = await load_synthetic(state, args.dataset, args.user, args.characters, graph=args.graph)
     finally:
         await state.close()
     print(f"user={report.user_id} storage={state.storage} embedder={state.embedder.version}")
     print(f"상대 {len(report.contacts)}명, 대화방 {len(report.conversations)}개")
     print(f"메시지 새로 {report.imported}건, 중복 건너뜀 {report.duplicates}건, 묶음 {report.episodes}개")
+    if args.graph:
+        print(f"그래프 에피소드 새로 {report.graph_episodes}개 (이미 들어간 메시지는 건너뜀)")
     for line in report.failed:
         print("실패:", line)
     return 1 if report.failed else 0

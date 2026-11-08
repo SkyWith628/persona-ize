@@ -35,7 +35,7 @@ class RetrievedExample(BaseModel):
     id: str
     purpose: Literal["style", "context"]
     text: str
-    speaker_role: Literal["me", "contact"]
+    speaker_role: Literal["me", "contact", "graph"]  # graph: 그래프에서 뽑은 사실 문장 (D)
     sent_at: datetime | None = None
     source_message_ids: list[str] = Field(default_factory=list)
 

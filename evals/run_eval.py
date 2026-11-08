@@ -8,7 +8,8 @@
 relation → 상대 정보는 evals/characters.csv 에서 찾는다.
 
 C/D 조건은 과거 대화가 필요하다. `--dataset`(기본 data/synthetic/sample_conversations.json)을 `--user`로
-적재한 뒤(멱등) 그 사용자의 상대 id로 검색한다. 저장소는 .env의 DATABASE_URL(없으면 인메모리),
+적재한 뒤(멱등) 그 사용자의 상대 id로 검색한다. D는 추가로 그래프 수집이 필요하다(NEO4J_URI, haiku 호출,
+메시지당 10~15초; 한 번 넣으면 다음부터는 건너뛴다). 저장소는 .env의 DATABASE_URL(없으면 인메모리),
 임베딩은 EMBEDDING_PROVIDER(local=e5-small, 첫 실행에 모델 다운로드; `--embedding fake`로 빠른 점검).
 검색 기준 시각은 사례의 `as_of` 날짜 당일 끝(한국 시간)이다 — 그 날까지의 대화만 본다.
 
@@ -136,13 +137,19 @@ async def prepare_contacts(
 ) -> dict[str, Contact]:
     """relation → Contact. 검색 조건이 있으면 데이터셋을 적재하고 저장소의 상대를 쓴다."""
     if any(c in RETRIEVAL_CONDITIONS for c in args.condition_list):
-        report = await load_synthetic(state, args.dataset, args.user, args.characters)
+        need_graph = "D" in args.condition_list
+        if need_graph and not state.graph_enabled:
+            raise SystemExit(
+                "D 조건은 그래프가 필요합니다. .env의 NEO4J_URI를 채우세요 (로컬 compose: bolt://localhost:7687)."
+            )
+        report = await load_synthetic(state, args.dataset, args.user, args.characters, graph=need_graph)
         if report.failed:
             raise SystemExit("과거 대화 적재 실패: " + "; ".join(report.failed))
         print(
             f"과거 대화 적재: user={args.user} storage={state.storage} embedder={state.embedder.version} "
             f"상대 {len(report.contacts)} 대화방 {len(report.conversations)} "
             f"새 메시지 {report.imported} 중복 {report.duplicates} 묶음 {report.episodes}"
+            + (f" 그래프 에피소드 새로 {report.graph_episodes}" if need_graph else "")
         )
         by_alias = {c.alias: c for c in await state.contacts.list(args.user)}
         out: dict[str, Contact] = {}

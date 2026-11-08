@@ -43,9 +43,12 @@ class Settings(BaseSettings):
     embedding_dim: int = Field(384, gt=0)
     max_import_messages: int = Field(5000, gt=0)
     retrieval_top_k: int = Field(4, ge=1, le=20)
+    # D 경로(그래프). NEO4J_URI가 비어 있으면 그래프를 쓰지 않고 D = C로 동작한다.
     neo4j_uri: str = ""
     neo4j_username: str = "neo4j"
     neo4j_password: str = ""
+    graph_llm_model: str = "claude-haiku-4-5"  # 5.5 계열은 graphiti 강제 tool_choice에 400 (decisions 11-04)
+    graph_search_top_k: int = Field(4, ge=1, le=20)
 
     @model_validator(mode="after")
     def _check_provider(self) -> Settings:

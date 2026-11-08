@@ -128,6 +128,7 @@ class ConversationRow(Base):
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     source: Mapped[str] = mapped_column(String(64), nullable=False)
     source_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    me_name: Mapped[str | None] = mapped_column(String(50), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     __table_args__ = (
@@ -151,6 +152,9 @@ class ImportJobRow(Base):
     episodes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    graph_status: Mapped[str] = mapped_column(String(16), nullable=False, default="skipped")
+    graph_episodes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    graph_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     __table_args__ = (
@@ -170,6 +174,7 @@ class MessageRow(Base):
     speaker_role: Mapped[str] = mapped_column(String(8), nullable=False)  # me | contact
     sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     text: Mapped[str] = mapped_column(Text, nullable=False)
+    graph_ingested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     __table_args__ = (

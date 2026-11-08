@@ -29,6 +29,7 @@ class LoadReport:
     imported: int = 0
     duplicates: int = 0
     episodes: int = 0
+    graph_episodes: int = 0  # 그래프에 새로 넣은 에피소드 수 (graph=True일 때)
     failed: list[str] = field(default_factory=list)
 
 
@@ -48,11 +49,23 @@ def load_relationship_types(characters_csv: Path | None) -> dict[str, str]:
 
 
 async def load_synthetic(
-    state: AppState, dataset_path: Path, user_id: str, characters_csv: Path | None = None
+    state: AppState,
+    dataset_path: Path,
+    user_id: str,
+    characters_csv: Path | None = None,
+    *,
+    graph: bool = False,
 ) -> LoadReport:
+    """graph=True면 적재 뒤 미수집 메시지를 전체 시각 순으로 그래프에 넣는다 (NEO4J_URI 필요, haiku 호출).
+
+    가져오기 중에는 백그라운드 그래프 수집을 끈다 — 스크립트가 끝나면 태스크가 죽고, 순서도 대화방별로 섞인다.
+    """
     data = load_dataset(dataset_path)
     rel_types = load_relationship_types(characters_csv)
     report = LoadReport(user_id=user_id)
+    me_name = str((data.get("user") or {}).get("name") or "").strip() or None
+    previous_mode = state.import_service.graph_mode
+    state.import_service.graph_mode = "off"
 
     by_alias = {c.alias: c for c in await state.contacts.list(user_id)}
     by_key = {c.source_key: c for c in await state.conversations.list(user_id)}
@@ -70,7 +83,7 @@ async def load_synthetic(
         conversation = by_key.get(key)
         if conversation is None:
             conversation = await state.import_service.create_conversation(
-                user_id, contact.id, conv.get("title"), f"synthetic:{dataset_path.name}", key
+                user_id, contact.id, conv.get("title"), f"synthetic:{dataset_path.name}", key, me_name
             )
             by_key[key] = conversation
         report.conversations[key] = conversation.id
@@ -88,4 +101,10 @@ async def load_synthetic(
         report.episodes += job.episodes
         if job.status != "completed":
             report.failed.append(f"{key}: {job.error_code} {job.error_message}")
+    state.import_service.graph_mode = previous_mode
+
+    if graph:
+        if state.graph_ingest is None:
+            raise RuntimeError("그래프 수집에는 NEO4J_URI가 필요합니다 (.env).")
+        report.graph_episodes = await state.graph_ingest.ingest_pending(user_id)
     return report

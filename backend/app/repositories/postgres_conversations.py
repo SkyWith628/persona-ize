@@ -8,7 +8,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
 
 from app.core.errors import NotFoundError, VersionConflictError
@@ -19,6 +19,7 @@ from app.domain.conversation import (
     Episode,
     EpisodeDraft,
     EpisodeHit,
+    GraphStatus,
     ImportJob,
     Message,
     NewMessage,
@@ -37,6 +38,7 @@ def _conversation(row: ConversationRow) -> Conversation:
         title=row.title,
         source=row.source,
         source_key=row.source_key,
+        me_name=row.me_name,
         created_at=row.created_at,
     )
 
@@ -50,6 +52,7 @@ def _message(row: MessageRow) -> Message:
         speaker_role=row.speaker_role,  # type: ignore[arg-type]
         sent_at=row.sent_at,
         text=row.text,
+        graph_ingested_at=row.graph_ingested_at,
     )
 
 
@@ -80,6 +83,9 @@ def _job(row: ImportJobRow) -> ImportJob:
         episodes=row.episodes,
         error_code=row.error_code,
         error_message=row.error_message,
+        graph_status=row.graph_status,  # type: ignore[arg-type]
+        graph_episodes=row.graph_episodes,
+        graph_error=row.graph_error,
         created_at=row.created_at,
     )
 
@@ -89,7 +95,13 @@ class PostgresConversationRepo:
         self._sessions = sessions
 
     async def create(
-        self, user_id: str, contact_id: UUID, title: str, source: str, source_key: str
+        self,
+        user_id: str,
+        contact_id: UUID,
+        title: str,
+        source: str,
+        source_key: str,
+        me_name: str | None = None,
     ) -> Conversation:
         row = ConversationRow(
             id=uuid4(),
@@ -98,6 +110,7 @@ class PostgresConversationRepo:
             title=title,
             source=source,
             source_key=source_key,
+            me_name=me_name,
             created_at=_now(),
         )
         try:
@@ -250,6 +263,9 @@ class PostgresConversationRepo:
                     episodes=job.episodes,
                     error_code=job.error_code,
                     error_message=job.error_message,
+                    graph_status=job.graph_status,
+                    graph_episodes=job.graph_episodes,
+                    graph_error=job.graph_error,
                     created_at=job.created_at,
                 )
             )
@@ -274,3 +290,27 @@ class PostgresConversationRepo:
         if row is None:
             raise NotFoundError("대화방을 찾을 수 없습니다.")
         return row
+
+    async def mark_graph_ingested(self, user_id: str, message_ids: list[UUID], at: datetime) -> None:
+        if not message_ids:
+            return
+        async with self._sessions.begin() as s:
+            await s.execute(
+                update(MessageRow)
+                .where(MessageRow.user_id == user_id, MessageRow.id.in_(message_ids))
+                .values(graph_ingested_at=at)
+            )
+
+    async def update_job_graph(
+        self, user_id: str, job_id: UUID, status: GraphStatus, episodes: int, error: str | None
+    ) -> ImportJob:
+        async with self._sessions.begin() as s:
+            row = await s.scalar(
+                select(ImportJobRow).where(ImportJobRow.id == job_id, ImportJobRow.user_id == user_id)
+            )
+            if row is None:
+                raise NotFoundError("가져오기 작업을 찾을 수 없습니다.")
+            row.graph_status = status
+            row.graph_episodes = episodes
+            row.graph_error = error
+        return _job(row)

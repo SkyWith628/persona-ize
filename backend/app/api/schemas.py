@@ -7,7 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from app.domain.conversation import ImportStatus, SpeakerRole
+from app.domain.conversation import GraphStatus, ImportStatus, SpeakerRole
 from app.domain.persona import PersonaSettings, RelationshipType
 from app.domain.rewrite import Condition, RewriteResult
 
@@ -75,6 +75,9 @@ class ConversationCreate(BaseModel):
     source_key: str | None = Field(
         None, max_length=64, description="데이터셋의 대화방 id (c1). 생략하면 생성. 사용자 안에서 유일"
     )
+    me_name: str | None = Field(
+        None, max_length=50, description="그래프 수집에 쓰는 내 표시 이름 (예: 김민수)"
+    )
 
 
 class ConversationOut(BaseModel):
@@ -103,4 +106,7 @@ class ImportJobOut(BaseModel):
     episodes: int
     error_code: str | None
     error_message: str | None
+    graph_status: GraphStatus
+    graph_episodes: int
+    graph_error: str | None
     created_at: datetime
