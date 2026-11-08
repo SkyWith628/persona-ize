@@ -474,3 +474,24 @@ async def test_delete_contact_and_account_remove_everything() -> None:
     assert await auth_service.resolve(reg.session_token) is None  # 세션 사라짐
     assert await auth.find_user_by_username("deleter") is None
     assert store.removed_groups == [str(user_rows[0].id)]
+
+
+async def test_reset_wipes_group_or_one_conversation_then_reingests() -> None:
+    _, conversations, store, ingest, svc, _, _, c1, c2 = await _setup(graph_mode="sync")
+    await svc.import_messages("u", c1.id, ImportPayload(messages=MESSAGES_C1))
+    await svc.import_messages("u", c2.id, ImportPayload(messages=MESSAGES_C2))
+    assert len(store.added) == 3 and await conversations.users_with_pending_graph() == []
+
+    # 한 방만: c1 에피소드 2개 제거, c1 메시지 2개 되돌림, c2는 그대로
+    assert await ingest.reset("u", c1.id) == (2, 2)
+    assert [a["name"] for a in store.added] == ["c2:m01"]
+    assert all(m.graph_ingested_at is None for m in await conversations.list_messages("u", c1.id))
+    assert all(m.graph_ingested_at is not None for m in await conversations.list_messages("u", c2.id))
+    assert await ingest.ingest_user("u") == 2  # 재수집은 c1만
+    assert sorted(a["name"] for a in store.added) == ["c1:m01", "c1:m02", "c2:m01"]
+
+    # 사용자 전체: group 통째로 + 메시지 3개 되돌림 → 재수집 3
+    assert await ingest.reset("u") == (3, 3)
+    assert store.added == [] and store.removed_groups[-1] == "u"
+    assert await ingest.ingest_user("u") == 3
+    assert await ingest.reset("someone-else") == (0, 0)

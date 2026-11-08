@@ -161,3 +161,7 @@ class ConversationRepo(Protocol):
     async def close_stale_graph_jobs(self, user_id: str) -> int:
         """미수집 메시지가 남지 않은 대화방의 pending/running 작업을 completed로. 바꾼 수."""
         ...
+
+    async def reset_graph_ingested(self, user_id: str, conversation_id: UUID | None = None) -> int:
+        """graph_ingested_at을 비워 다시 수집 대상으로 만든다 (그래프 재구축). 바꾼 메시지 수."""
+        ...

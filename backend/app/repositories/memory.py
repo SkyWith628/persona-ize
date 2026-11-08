@@ -368,3 +368,13 @@ class InMemoryConversationRepo:
                 self._jobs[jid] = job.model_copy(update={"graph_status": "completed"})
                 n += 1
         return n
+
+    async def reset_graph_ingested(self, user_id: str, conversation_id: UUID | None = None) -> int:
+        n = 0
+        for conv_id, msgs in self._messages.items():
+            conv = self._conversations.get(conv_id)
+            if conv is None or conv.user_id != user_id or (conversation_id and conv_id != conversation_id):
+                continue
+            n += sum(1 for m in msgs if m.graph_ingested_at is not None)
+            self._messages[conv_id] = [m.model_copy(update={"graph_ingested_at": None}) for m in msgs]
+        return n

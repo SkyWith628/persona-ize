@@ -108,6 +108,26 @@ class GraphIngestService:
         """대화방 삭제 때 그 메시지들의 에피소드를 그래프에서 지운다."""
         return await self._store.remove_episodes(user_id, names)
 
+    async def reset(self, user_id: str, conversation_id: UUID | None = None) -> tuple[int, int]:
+        """그래프를 지우고 메시지를 다시 수집 대상으로 되돌린다. (그래프에서 지운 수, 되돌린 메시지 수).
+
+        대화방을 주면 그 방의 에피소드만 지운다(다른 방 사실은 남는다). 안 주면 사용자 group 전체를
+        DETACH DELETE 한다 — 스키마·프롬프트를 바꿔 다시 뽑을 때. 실제 재수집은 `ingest_user`로.
+        """
+        lock = self._locks.setdefault(user_id, asyncio.Lock())
+        async with lock:  # 진행 중인 수집과 겹치지 않게
+            if conversation_id is None:
+                removed = await self._store.remove_group(user_id)
+            else:
+                conv = await self._conversations.get(user_id, conversation_id)
+                messages = await self._conversations.list_messages(user_id, conv.id)
+                names = [
+                    f"{conv.source_key}:{m.source_key}" for m in messages if m.graph_ingested_at is not None
+                ]
+                removed = await self._store.remove_episodes(user_id, names)
+            reset = await self._conversations.reset_graph_ingested(user_id, conversation_id)
+        return removed, reset
+
     async def resume_all(self) -> dict[str, int]:
         """서버 시작 시: 미수집 메시지가 남은 사용자마다 이어서 넣고, 끝난 작업의 상태를 정리한다.
 

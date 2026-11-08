@@ -366,3 +366,15 @@ class PostgresConversationRepo:
                 .values(graph_status="completed")
             )
         return int(result.rowcount or 0)
+
+    async def reset_graph_ingested(self, user_id: str, conversation_id: UUID | None = None) -> int:
+        stmt = (
+            update(MessageRow)
+            .where(MessageRow.user_id == user_id, MessageRow.graph_ingested_at.is_not(None))
+            .values(graph_ingested_at=None)
+        )
+        if conversation_id is not None:
+            stmt = stmt.where(MessageRow.conversation_id == conversation_id)
+        async with self._sessions.begin() as s:
+            result = await s.execute(stmt)
+        return int(result.rowcount or 0)

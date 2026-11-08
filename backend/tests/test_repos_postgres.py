@@ -548,3 +548,40 @@ def test_usage_report_reads_counters_and_results_on_postgres(pg_url: str) -> Non
         == report.counters[0].input_tokens - report.conditions[0].input_tokens
     )
     assert (empty.counters, empty.conditions) == ([], [])
+
+
+def test_reset_graph_ingested_on_postgres(pg_url: str) -> None:
+    from datetime import UTC, datetime
+
+    async def _run() -> tuple[int, int, int, list[bool]]:
+        engine = create_engine(pg_url)
+        sessions = create_session_factory(engine)
+        try:
+            contacts, convs = PostgresContactRepo(sessions), PostgresConversationRepo(sessions)
+            u = _user()
+            boss = await contacts.create(u, "박지현", "superior")
+            c1 = await convs.create(u, boss.id, "팀장 방", "json", "c1")
+            c2 = await convs.create(u, boss.id, "두 번째 방", "json", "c2")
+            from app.domain.conversation import NewMessage
+
+            now = datetime(2026, 10, 5, 0, 0, tzinfo=UTC)
+            for conv, n in ((c1, 2), (c2, 1)):
+                await convs.add_messages(
+                    u,
+                    conv.id,
+                    [
+                        NewMessage(source_key=f"m0{i}", speaker_role="me", sent_at=now, text="안녕")
+                        for i in range(n)
+                    ],
+                )
+                ids = [m.id for m in await convs.list_messages(u, conv.id)]
+                await convs.mark_graph_ingested(u, ids, now)
+            one = await convs.reset_graph_ingested(u, c1.id)
+            rest = await convs.reset_graph_ingested(u)
+            again = await convs.reset_graph_ingested(u)
+            flags = [m.graph_ingested_at is None for m in await convs.list_messages(u, c2.id)]
+            return one, rest, again, flags
+        finally:
+            await engine.dispose()
+
+    assert asyncio.run(_run()) == (2, 1, 0, [True])
