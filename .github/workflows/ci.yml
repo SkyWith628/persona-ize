@@ -8,21 +8,38 @@ on:
 jobs:
   backend:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: persona
+          POSTGRES_PASSWORD: persona
+          POSTGRES_DB: persona_ize_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U persona -d persona_ize_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      # 통합 테스트(tests/test_repos_postgres.py)가 쓰는 DB. 이름이 _test로 끝나야 한다(스키마를 지운다).
+      TEST_DATABASE_URL: postgresql+asyncpg://persona:persona@localhost:5432/persona_ize_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install
-        run: pip install -e "backend[dev]"
+          cache: pip
+      - name: Install (dev + db — torch 없는 조합)
+        run: pip install -e "backend[dev,db]"
       - name: Lint (저장소 전체, ruff.toml)
         run: |
           ruff check .
           ruff format --check .
-      - name: Test
+      - name: Test (Postgres 통합 테스트 포함, skip이 있으면 사유를 보여 준다)
         working-directory: backend
-        run: pytest -q
-      - name: Eval smoke (fake provider)
+        run: pytest -q -rs
+      - name: Eval smoke (fake provider, 인메모리)
         run: python evals/run_eval.py --cases evals/eval_cases.csv --conditions A,B --out /tmp/eval.csv
 
   data-files:

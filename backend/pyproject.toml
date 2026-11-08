@@ -18,12 +18,15 @@ dev = [
     "pytest>=8",
     "ruff>=0.6",
 ]
-# 2주차: pgvector 기반 C 경로 + 로컬 임베딩 (Anthropic은 임베딩 API가 없다)
+# PostgreSQL + pgvector 저장소 (torch 없음 — CI가 이 extra로 통합 테스트를 돌린다)
 db = [
     "sqlalchemy[asyncio]>=2.0",
     "asyncpg>=0.29",
     "pgvector>=0.3",
     "alembic>=1.13",
+]
+# 로컬 임베딩 e5-small (torch를 끌어와 크다). 실제 C/D 검색과 Docker 이미지에 필요
+embed = [
     "sentence-transformers>=3.0",
 ]
 # 3주차: Graphiti 기반 D 경로 (graph/graphiti_p0 스파이크와 같은 버전)

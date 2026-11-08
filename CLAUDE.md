@@ -45,6 +45,7 @@ mode: work
 - 서버 시작 때 e5 임베더를 백그라운드로 워밍업한다(`_warm_up_embedder`). 로그 `embedder warmed up`이 뜨기 전 첫 C/D 요청은 10초쯤 걸릴 수 있다
 - `/v1/rewrites/usage`처럼 `/{request_id}` 뒤에 고정 경로를 붙이면 UUID 파싱 422가 난다 → 고정 경로는 별도 라우터(`/v1/usage`)
 - fake 프로바이더도 글자 수 기반 토큰 수를 보고한다(사용량 테스트용). 실제 토큰과 다르니 비용 계산엔 anthropic 결과만 쓴다
+- 설치 extra: `dev`(테스트·ruff), `db`(SQLAlchemy·asyncpg·pgvector·alembic, torch 없음 — CI가 이 조합으로 Postgres 통합 테스트를 돌린다), `embed`(sentence-transformers·torch), `graph`(graphiti). 로컬 개발은 `backend[dev,db,embed,graph]`
 - 저장소 메서드는 전부 `async`다(Postgres가 기준). 라우트·서비스에서 `await`를 빼먹으면 코루틴 객체가 그대로 응답에 들어간다
 - `backend/alembic.ini`는 ASCII만. alembic이 로케일 인코딩(cp949)으로 읽어 한글 주석이 있으면 UnicodeDecodeError
 - 스키마 변경은 `db/models.py`와 `migrations/versions/`를 함께 고친다. 자동 생성(`alembic revision --autogenerate`)은 결과를 꼭 읽고 커밋

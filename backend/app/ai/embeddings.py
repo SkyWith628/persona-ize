@@ -42,7 +42,7 @@ class LocalE5Embedder:
                 from sentence_transformers import SentenceTransformer
             except ImportError as exc:  # pragma: no cover - 설치 안내
                 raise RuntimeError(
-                    "sentence-transformers가 없습니다: pip install -e 'backend[db]' "
+                    "sentence-transformers가 없습니다: pip install -e 'backend[embed]' "
                     "(또는 EMBEDDING_PROVIDER=fake)"
                 ) from exc
             self._model = SentenceTransformer(self.model_name)

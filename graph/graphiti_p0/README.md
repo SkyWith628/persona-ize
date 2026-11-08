@@ -37,7 +37,7 @@
 저장소 루트의 `.venv`에 그래프 의존성을 추가한다 (sentence-transformers는 torch를 끌어와 용량이 크다):
 
 ```bash
-.venv/Scripts/python.exe -m pip install -e "backend[graph]"
+.venv/Scripts/python.exe -m pip install -e "backend[db,embed,graph]"
 ```
 
 ## 3. 실행

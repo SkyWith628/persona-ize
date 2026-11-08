@@ -17,7 +17,7 @@
 ```bash
 cp .env.example .env            # LLM_PROVIDER=fake면 키 없이 동작
 py -3.14 -m venv .venv          # 맥: python3 -m venv .venv
-.venv/Scripts/python.exe -m pip install -e "backend[dev]"
+.venv/Scripts/python.exe -m pip install -e "backend[dev,db,embed]"   # 그래프(D)까지: backend[dev,db,embed,graph]
 make up                          # PostgreSQL(pgvector)·Neo4j 컨테이너 (Docker Desktop 필요)
 make migrate                     # DB 스키마 최신으로
 make import-synthetic            # 합성 대화 적재 (user=demo). 그래프까지: scripts/import_synthetic.py --graph

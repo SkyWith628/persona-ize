@@ -30,7 +30,7 @@ setup:
 venv:
 	py -3.14 -m venv .venv || python3 -m venv .venv
 	$(PY) -m pip install --upgrade pip
-	$(PY) -m pip install -e "backend[dev]"
+	$(PY) -m pip install -e "backend[dev,db,embed]"
 
 up: setup
 	docker compose up -d postgres neo4j
