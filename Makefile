@@ -6,7 +6,7 @@ ifeq (,$(wildcard $(PY)))
 PY := .venv/bin/python
 endif
 
-.PHONY: help setup venv up up-all down logs dev migrate import-synthetic demo-prepare test lint eval blind graph-dry-run
+.PHONY: help setup venv up up-all down logs dev migrate import-synthetic demo-prepare test lint eval blind graph-dry-run usage-report graph-reset housekeeping
 
 help:
 	@echo "make setup     - .env.example → .env (최초 1회)"
@@ -23,6 +23,9 @@ help:
 	@echo "make eval      - evals/eval_cases.csv 로 A/B/C 실행, 결과 CSV 저장"
 	@echo "make blind RESULTS=evals/results/<결과>.csv - 블라인드 채점 시트 생성 (evals/blind/)"
 	@echo "make graph-dry-run - 그래프 스파이크 변환만 확인 (네트워크 없음)"
+	@echo "make usage-report - 사용자·일·조건별 첨삭 호출 수·토큰 (최근 7일)"
+	@echo "make graph-reset USER=demo [ARGS=--dry-run] - 그 사용자의 그래프를 지우고 다시 수집 (확인 질문 있음)"
+	@echo "make housekeeping - 만료 세션·오래된 작업·사용량 카운터 정리"
 
 setup:
 	@test -f .env || (cp .env.example .env && echo ".env 생성됨 — 키와 비밀번호를 채우세요")
@@ -70,3 +73,12 @@ blind:
 
 graph-dry-run:
 	cd graph/graphiti_p0 && ../../$(PY) ingest.py --dry-run
+
+usage-report:
+	$(PY) scripts/usage_report.py
+
+graph-reset:
+	$(PY) scripts/graph_reset.py --user $(USER) $(ARGS)
+
+housekeeping:
+	$(PY) scripts/housekeeping.py

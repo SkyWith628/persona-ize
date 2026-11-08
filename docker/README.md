@@ -19,6 +19,7 @@ Neo4j 자격증명은 `.env`의 `NEO4J_USERNAME`/`NEO4J_PASSWORD`. 기본 비밀
 ### backend 이미지 (2026-11-09 검증)
 - `docker compose build backend` 2분 32초, 이미지 **2.26GB**. torch는 CPU 휠(`--index-url https://download.pytorch.org/whl/cpu`)로 깐다 — 기본 인덱스면 CUDA 휠로 수 GB가 더 붙는다. `db`+`graph` extra 모두 설치(그래프 D 경로 동작).
 - 컨테이너 시작 때 `alembic upgrade head` → uvicorn. e5 모델(~470MB)은 첫 기동 때 내려받고 `hf-cache` 볼륨에 남는다(워밍업 완료 로그 `embedder warmed up`까지 약 30초).
+- 점검: `curl localhost:8000/healthz?deep=true` — Postgres·Neo4j에 실제로 붙어 보고 하나라도 실패하면 503 `degraded`(`checks` 항목별). 컨테이너 헬스체크나 배포 점검에 이걸 쓴다.
 - 확인한 것: `/healthz`(storage=postgres, graph=True), 화면 `/`, 가져오기 3건 → 백그라운드 그래프 수집 25초 → D 첨삭 201 → 삭제(그래프 에피소드 3 포함). 컨테이너 안에서 Neo4j는 `bolt://neo4j:7687`, Postgres는 `postgres:5432`(compose environment가 .env 값을 덮어쓴다).
 
 ## Windows 선행 조건 (새 PC에서 Docker Desktop이 안 뜰 때)

@@ -173,3 +173,12 @@
 ## 2026-11-09 프롬프트 rewrite-v2(호칭 규칙)가 기본 — 재생성 9/45 → 0/30, 호칭은 설정이 공급
 - 결과: v2 규칙 "설정에 호칭이 있으면 그것만, 없으면 새 호칭을 넣지 않는다, 예시·맥락 호칭을 베끼지 않는다, 제안은 warnings에". 같은 5사례 B/C/D에서 재생성 0/30(v1 9/45, 전부 E004). 부작용으로 사라진 '유진아'·'준호야'는 호칭 공급 규칙(상사·지인·친구·가족·연인에 characters.csv 호칭, 동료는 비움)으로 복구. `evals/results/2026-11-09-repeat3.md` 후속 절.
 - 결정: 기본 `PROMPT_VERSION=rewrite-v2`. v1은 폴더를 남겨 `--prompt rewrite-v1`로 재현. 동료(colleague)에는 호칭을 자동으로 넣지 않는다 — 동기→파트장처럼 바뀌는 호칭은 사용자가 설정에서 정한다. 시연 계정의 친구·가족 페르소나는 `prepare_demo.py`가 호칭을 보강한다(새 버전).
+
+## 2026-11-09 운영 묶음 ①: 재시작 이어받기·깊은 헬스체크·CI에서 Postgres 통합 테스트
+- 결과: 서버가 뜨면 `graph_ingested_at`이 빈 사용자를 찾아 그래프 수집을 이어받고(`resume_all`, 백그라운드, `GRAPH_RESUME_ON_START`) pending/running으로 남은 작업을 completed로 정리한다. `/healthz?deep=true`는 Postgres·Neo4j에 실제로 붙어 보고 하나라도 실패하면 503 `degraded`. CI는 `pgvector/pgvector:pg16` 서비스 컨테이너로 Postgres 통합 테스트를 실제로 돈다(그전엔 전부 skip).
+- 결정: 설치 extra를 `db`(SQLAlchemy·asyncpg·pgvector·alembic, torch 없음)와 `embed`(sentence-transformers)로 나눈다 — CI가 torch 없이 1분 안에 DB 테스트를 돌리기 위해. 로컬 개발·Docker 이미지는 `db,embed,graph` 전부.
+
+## 2026-11-09 운영 묶음 ②: 상대·계정 삭제 + 운영 스크립트 3개
+- 결과: `DELETE /v1/contacts/{id}`(대화방별 그래프 에피소드 → DB CASCADE → 첨삭 이력 → 상대·페르소나), `DELETE /v1/auth/me`(비밀번호 재확인+CSRF → 상대 전부 → 그래프 group DETACH DELETE → 사용량·세션·사용자). Postgres에서 7개 테이블 0행까지 확인. 화면에 두 버튼. `scripts/usage_report.py`(사용자·일 KST·조건별 호출·토큰, 마크다운/CSV), `scripts/graph_reset.py`(사용자 또는 한 방의 그래프를 지우고 재수집, dry-run·확인 질문), `scripts/housekeeping.py`(만료·폐기 세션 7일, 작업 30일, 사용량 90일).
+- 결정: 그래프 삭제가 실패해도 DB 삭제는 진행하고 사유만 돌려준다(원문 삭제가 우선, 설계 §9). 계정 삭제는 삭제 결과 수만 응답하고 쿠키를 지운다. 로그인 제한 키는 1000개를 넘으면 실패 기록 때 빈 키를 비운다(프로세스 메모리 증가 방지).
+- 남은 것: A1 Console 실제 금액 확인은 사용자 몫 — `usage_report.py`의 토큰 수와 맞춰 본다.

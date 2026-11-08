@@ -8,6 +8,8 @@
 |---|---|---|---|
 | A1 | **API 크레딧 충전 + Console 비용 확인·기록** — 2026-11-09 01:30 그래프 수집 중 `credit balance is too low`(400)로 중단. 충전 전까지 Claude 호출(첨삭 anthropic·그래프 수집·run_eval --provider anthropic)은 전부 실패한다. 충전 뒤 `make demo-prepare`를 다시 돌리면 demo 그래프의 남은 21건이 들어간다 — 11/08~09 Opus ~90회, haiku 에피소드 ~260건의 실제 금액을 `evals/results/*.md` 비용 절에 적는다 | 사례 120개 × 4조건 × repeat 3 = 1,440회 예산을 잡으려면 1회 단가가 필요 | 10분 (사용자가 Console 열어야 함) |
 
+운영 묶음(11/09 밤)은 끝났다 — 재시작 이어받기·`/healthz?deep=true`·CI Postgres·상대/계정 삭제·`usage_report`·`graph_reset`·`housekeeping`. 결과는 `decisions.md` 11-09 "운영 묶음 ①②".
+
 ## B. 팀원 산출물이 오면 (대기 중)
 
 | # | 작업 | 기다리는 것 | 담당 |
@@ -25,7 +27,8 @@
 - 그래프 스파이크 분산 측정 2~3회 — 로컬 Neo4j·haiku라 비용은 작지만 지금 결정에 영향 없음.
 - D 조건 커뮤니티 요약·재정렬(Graphiti build_communities) — 설계서가 "시간 부족 시 가장 먼저 줄일 것"으로 지정.
 - Sonnet 5.5 vs Opus 5.5 본격 비교 — 사례 20개 이후 B1과 함께.
-- 비동기 가져오기 작업 큐(deletion-jobs 포함) — 데이터가 커질 때. 지금은 요청 안 처리 + 백그라운드 태스크.
+- 비동기 가져오기 작업 큐 — 데이터가 커질 때. 지금은 요청 안 처리 + 백그라운드 태스크 + 서버 시작 때 이어받기. 삭제는 동기(상대·계정·대화방 모두).
+- `housekeeping.py` 스케줄 등록(작업 스케줄러/cron) — 배포 환경이 정해지면.
 - 카카오톡 내보내기 어댑터 — 샘플 파일 확보 후.
 
 ## 월요일(11/10) 회의 안건

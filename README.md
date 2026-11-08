@@ -65,12 +65,16 @@ curl -s -X POST localhost:8000/v1/rewrites -H "X-User-Id: me" -H "Idempotency-Ke
 | `make eval` | 평가 사례 A/B 실행 → `evals/results/` |
 | `make graph-dry-run` | 그래프 스파이크 변환만 확인 |
 | `python scripts/validate_data_files.py` | CSV/JSON 접점 파일 형식 검사 |
+| `make usage-report` | 사용자·일(KST)·조건별 첨삭 호출 수·토큰 (최근 7일, `scripts/usage_report.py --help`) |
+| `make graph-reset USER=demo` | 그 사용자의 그래프를 지우고 다시 수집 (`--dry-run`으로 먼저 확인, haiku 비용) |
+| `make housekeeping` | 만료·폐기 세션, 오래된 가져오기 작업·사용량 카운터 정리 |
+| `curl localhost:8000/healthz?deep=true` | Postgres·Neo4j 연결까지 확인 (문제면 503) |
 
 Windows에 `make`가 없으면 Makefile의 명령을 그대로 실행한다.
 
 ## 상태 (2026-11-09)
 - 저장소: `github.com/SkyWith628/persona-ize` (비공개).
-- 백엔드: 상대·페르소나, 첨삭 워크플로(의도·보존 추출 → 검색 → 프롬프트 → 검증 → 재생성 1회 → 원문 유지), PostgreSQL(Alembic), 대화 업로드·화자 지정, C(pgvector 문체 kNN)·D(Graphiti 그래프 맥락) 검색, 삭제, 사용량 제어(429), 세션 쿠키 인증, 데모 화면.
+- 백엔드: 상대·페르소나, 첨삭 워크플로(의도·보존 추출 → 검색 → 프롬프트 → 검증 → 재생성 1회 → 원문 유지), PostgreSQL(Alembic), 대화 업로드·화자 지정, C(pgvector 문체 kNN)·D(Graphiti 그래프 맥락) 검색, 삭제(대화방·상대·계정), 사용량 제어(429), 세션 쿠키 인증, 데모 화면, 운영(재시작 이어받기·깊은 헬스체크·사용량 보고·그래프 재구축·정리 스크립트). CI는 Postgres 통합 테스트까지 돈다.
 - 실측: Opus 5.5로 5사례 × A/B/C/D ([2주차 메모](evals/results/2026-11-08-week2-abc-run.md), [3주차 메모](evals/results/2026-11-08-week3-abcd-run.md)). 1주차 그래프 스파이크: [graph/graph-spike-report.md](graph/graph-spike-report.md).
 - 시연: `make demo-prepare` 뒤 [docs/demo-script.md](docs/demo-script.md) (demo 계정, 3장면, 보험).
 - 다음: [docs/backlog.md](docs/backlog.md) — 팀장 단독 항목(A), 팀원 산출물 대기(B), 보류(C), 월요일 안건.
