@@ -72,15 +72,20 @@ async def run(args: argparse.Namespace) -> int:
 
         made = 0
         for contact in await state.contacts.list(user_id):
-            if await state.contacts.latest_persona(user_id, contact.id) is not None:
-                continue
             settings_ = persona_for(contact.relationship_type, contact.alias, args.characters)
+            current = await state.contacts.latest_persona(user_id, contact.id)
+            if current is not None:
+                # 호칭 규칙이 바뀌어(11-09) 기존 페르소나에 호칭이 비어 있으면 새 버전으로 보강한다.
+                if settings_.address_term and not current.settings.address_term:
+                    await state.contacts.save_persona(user_id, contact.id, settings_, current.version)
+                    made += 1
+                continue
             try:
                 await state.contacts.save_persona(user_id, contact.id, settings_, 0)
                 made += 1
             except VersionConflictError:
                 pass
-        print(f"페르소나 v1 생성 {made}명 (기본값 표: {sorted(DEFAULT_PERSONAS)})")
+        print(f"페르소나 생성·보강 {made}명 (기본값 표: {sorted(DEFAULT_PERSONAS)})")
 
         # 그래프 (haiku 호출). 실패하면 넣은 데까지 남고, 다시 돌리면 남은 메시지부터 이어서 넣는다.
         if args.graph:

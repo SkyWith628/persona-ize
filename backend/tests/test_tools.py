@@ -183,3 +183,17 @@ def test_merge_scores_attaches_conditions_and_averages_numeric_columns() -> None
     assert "메모" not in by_cond["B"]  # 숫자가 아닌 열은 평균 안 냄
     with pytest.raises(ValueError, match="키에 없는"):
         merge_scores([{**scored[0], "item_id": "zzzzzz"}], build.key_rows)
+
+
+def test_persona_from_aliases_sets_address_for_close_and_formal_relations_only() -> None:
+    from app.services.synthetic_loader import persona_from_aliases, pick_address
+
+    assert pick_address(["유진", "유진아"]) == "유진아"
+    assert pick_address(["준호", "야"]) == "준호"
+    assert pick_address(["지현 팀장님", "팀장님"]) == "지현 팀장님"
+    assert persona_from_aliases("friend", ["유진", "유진아"]).address_term == "유진아"
+    assert persona_from_aliases("superior", ["지현 팀장님", "팀장님"]).address_term == "지현 팀장님"
+    assert (
+        persona_from_aliases("colleague", ["서연", "서연아", "서연 파트장님"]).address_term is None
+    )  # 동료는 비운다
+    assert persona_from_aliases("family", []).address_term is None

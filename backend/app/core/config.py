@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     llm_model: str = DEFAULT_MODEL
     llm_effort: Literal["low", "medium", "high", "xhigh", "max"] = "medium"
-    prompt_version: str = "rewrite-v1"
+    prompt_version: str = "rewrite-v2"  # v2: 호칭 규칙 명시 (decisions 11-09)
 
     max_draft_chars: int = Field(2000, gt=0)
     max_situation_chars: int = Field(500, gt=0)

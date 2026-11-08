@@ -120,3 +120,28 @@ async def test_condition_a_hides_persona() -> None:
 @pytest.fixture
 def anyio_backend() -> str:
     return "asyncio"
+
+
+def test_prompt_v2_has_address_rule_and_same_placeholders() -> None:
+    from datetime import UTC, datetime
+    from uuid import uuid4
+
+    from app.ai.prompt import available_versions, build_prompt
+    from app.domain.contact import Contact
+
+    assert {"rewrite-v1", "rewrite-v2"} <= set(available_versions())
+    contact = Contact(
+        id=uuid4(), user_id="u", alias="이서연", relationship_type="colleague", created_at=datetime.now(UTC)
+    )
+    v2 = build_prompt(
+        version="rewrite-v2",
+        contact=contact,
+        persona=PersonaSettings(),
+        intent="apology",
+        preserved=[],
+        draft_text="어제는 제가 좀 예민했던 것 같아요. 미안합니다.",
+        situation="사과",
+        retrieved=[],
+    )
+    assert "호칭 규칙" in v2.system and "새 호칭" in v2.system and "warnings" in v2.system
+    assert "[원문]" in v2.user and "[문체 예시" in v2.user  # user.md는 v1과 같은 자리표시자

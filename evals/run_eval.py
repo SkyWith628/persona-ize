@@ -35,7 +35,7 @@ from app.core.config import Settings  # noqa: E402
 from app.domain.contact import Contact  # noqa: E402
 from app.domain.persona import PersonaSettings  # noqa: E402
 from app.domain.rewrite import RewriteInput  # noqa: E402
-from app.services.synthetic_loader import DEFAULT_PERSONAS, load_synthetic  # noqa: E402
+from app.services.synthetic_loader import load_synthetic, persona_from_aliases  # noqa: E402
 
 DEFAULT_CASES = ROOT / "evals" / "eval_cases.csv"
 DEFAULT_CHARACTERS = ROOT / "evals" / "characters.csv"
@@ -63,6 +63,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--repeat", type=int, default=1, help="사례당 반복 횟수 (변동 관찰)")
     p.add_argument("--provider", choices=["fake", "anthropic"], default="fake")
     p.add_argument("--model", default=None, help="LLM_MODEL 덮어쓰기")
+    p.add_argument("--prompt", default=None, help="PROMPT_VERSION 덮어쓰기 (예: rewrite-v2)")
+    p.add_argument("--case", default=None, help="이 case_id들만 (쉼표 구분, 예: E003,E005)")
     p.add_argument("--embedding", choices=["local", "fake"], default=None, help="EMBEDDING_PROVIDER 덮어쓰기")
     p.add_argument(
         "--out",
@@ -103,12 +105,9 @@ def load_cases(path: Path, split: str) -> list[dict[str, str]]:
 
 
 def build_persona(character: dict[str, str]) -> PersonaSettings:
-    base = DEFAULT_PERSONAS.get(character["relationship_type"], PersonaSettings())
+    """관계 유형 기본값 + 호칭 (규칙은 synthetic_loader.persona_from_aliases — 시연 준비와 같다)."""
     aliases = [a.strip() for a in character.get("aliases", "").split(";") if a.strip()]
-    if base.formality >= 4 and aliases:
-        # 상사·지인은 첫 호칭을 기본 호칭으로 쓴다 (검증에서 호칭 추가를 허용하기 위해).
-        return base.model_copy(update={"address_term": aliases[0]})
-    return base
+    return persona_from_aliases(character["relationship_type"], aliases)
 
 
 def parse_as_of(raw: str) -> datetime | None:
@@ -166,6 +165,8 @@ async def run(args: argparse.Namespace) -> Path:
     overrides: dict[str, str] = {"llm_provider": args.provider}
     if args.model:
         overrides["llm_model"] = args.model
+    if args.prompt:
+        overrides["prompt_version"] = args.prompt
     if args.embedding:
         overrides["embedding_provider"] = args.embedding
     settings = Settings(**overrides)  # type: ignore[arg-type]  # .env도 읽는다
@@ -183,6 +184,11 @@ async def _run_with_state(state: AppState, args: argparse.Namespace) -> Path:
     workflow = state.workflow
     characters = load_characters(args.characters)
     cases = load_cases(args.cases, args.split)
+    if args.case:
+        wanted = {c.strip() for c in args.case.split(",") if c.strip()}
+        cases = [c for c in cases if c["case_id"] in wanted]
+        if not cases:
+            raise SystemExit(f"--case에 맞는 사례가 없습니다: {sorted(wanted)}")
     unknown = sorted({c["relation"] for c in cases} - characters.keys())
     if unknown:
         raise SystemExit(f"characters.csv 에 없는 relation: {unknown} (가이드 4단계 표를 먼저 채운다)")

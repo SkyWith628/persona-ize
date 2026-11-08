@@ -44,12 +44,33 @@ def load_aliases(characters_csv: Path | None) -> dict[str, list[str]]:
         }
 
 
+# 호칭을 설정에 넣는 관계. 동료(colleague)는 비운다 — 동기→파트장처럼 호칭이 바뀌는 사례의 판단을 모델에
+# 맡기지 않고 사용자가 정하게 하기 위해서다 (rewrite-v2는 설정에 없는 호칭을 넣지 않는다).
+ADDRESS_FROM_ALIASES = {"superior", "acquaintance", "friend", "family", "partner"}
+
+
+def pick_address(aliases: list[str]) -> str | None:
+    """부르는 말('유진아', '준호야')이 있으면 그것, 없으면 첫 호칭."""
+    if not aliases:
+        return None
+    vocative = [a for a in aliases if a.endswith(("아", "야")) and len(a) >= 2 and a not in ("야",)]
+    return vocative[0] if vocative else aliases[0]
+
+
 def persona_for(relationship_type: str, alias: str, characters_csv: Path | None = None) -> PersonaSettings:
-    """기본값 + (상사·지인이면) characters.csv의 첫 호칭. run_eval.build_persona와 같은 규칙."""
+    """기본값 + characters.csv의 호칭(관계가 ADDRESS_FROM_ALIASES일 때).
+
+    run_eval.build_persona가 같은 규칙을 쓴다.
+    """
+    return persona_from_aliases(relationship_type, load_aliases(characters_csv).get(alias, []))
+
+
+def persona_from_aliases(relationship_type: str, aliases: list[str]) -> PersonaSettings:
     base = DEFAULT_PERSONAS.get(relationship_type, PersonaSettings())
-    aliases = load_aliases(characters_csv).get(alias, [])
-    if base.formality >= 4 and aliases:
-        return base.model_copy(update={"address_term": aliases[0]})
+    if relationship_type in ADDRESS_FROM_ALIASES:
+        address = pick_address(aliases)
+        if address:
+            return base.model_copy(update={"address_term": address})
     return base
 
 
