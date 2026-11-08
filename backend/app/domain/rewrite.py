@@ -73,6 +73,8 @@ class RewriteInput(BaseModel):
     situation: str = ""
     condition: Condition = "B"
     persona_version: int | None = None
+    # 검색 기준 시각. 이 시각 이전 대화만 검색한다 (평가 사례의 as_of). None이면 지금.
+    as_of: datetime | None = None
 
 
 class RewriteResult(BaseModel):

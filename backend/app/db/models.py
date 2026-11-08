@@ -11,10 +11,14 @@ import uuid
 from datetime import datetime
 from typing import Any
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
+# episodes.embedding의 차원. 마이그레이션 0002와 같아야 한다. 모델을 바꾸면 새 마이그레이션으로 재색인.
+EMBEDDING_DIM = 384
 
 
 class Base(DeclarativeBase):
@@ -111,3 +115,106 @@ class FeedbackRow(Base):
     reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
     consent_to_reuse: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ConversationRow(Base):
+    __tablename__ = "conversations"
+
+    id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    contact_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("contacts.id", ondelete="CASCADE"), nullable=False
+    )
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "source_key", name="uq_conversations_user_source_key"),
+        Index("ix_conversations_user_contact", "user_id", "contact_id"),
+    )
+
+
+class ImportJobRow(Base):
+    __tablename__ = "import_jobs"
+
+    id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False
+    )
+    source_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)  # completed | failed
+    imported: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    duplicates: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    episodes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "conversation_id", "source_hash", name="uq_import_jobs_user_conv_hash"),
+    )
+
+
+class MessageRow(Base):
+    __tablename__ = "messages"
+
+    id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False
+    )
+    source_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    speaker_role: Mapped[str] = mapped_column(String(8), nullable=False)  # me | contact
+    sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("conversation_id", "source_key", name="uq_messages_conversation_source_key"),
+        Index("ix_messages_user_conversation_sent", "user_id", "conversation_id", "sent_at"),
+    )
+
+
+class EpisodeRow(Base):
+    """검색 단위. 벡터 차원은 마이그레이션(0002)에 384로 고정.
+
+    임베딩 모델을 바꾸면 재색인 + 새 마이그레이션.
+    """
+
+    __tablename__ = "episodes"
+
+    id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    contact_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("contacts.id", ondelete="CASCADE"), nullable=False
+    )
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False
+    )
+    context_text: Mapped[str] = mapped_column(Text, nullable=False)
+    style_text: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding: Mapped[list[float]] = mapped_column(Vector(EMBEDDING_DIM), nullable=False)
+    embedding_version: Mapped[str] = mapped_column(String(128), nullable=False)
+    start_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    end_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    source_message_ids: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (Index("ix_episodes_user_contact_end", "user_id", "contact_id", "end_at"),)
+
+
+class EpisodeMessageRow(Base):
+    """묶음 ↔ 메시지 연결. 원문 삭제 시 파생 묶음을 찾는 데 쓴다."""
+
+    __tablename__ = "episode_messages"
+
+    episode_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("episodes.id", ondelete="CASCADE"), primary_key=True
+    )
+    message_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("messages.id", ondelete="CASCADE"), primary_key=True
+    )
+    position: Mapped[int] = mapped_column(Integer, nullable=False)

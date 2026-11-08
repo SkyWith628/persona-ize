@@ -145,6 +145,7 @@ class RewriteWorkflow:
                 contact_id=inp.contact_id,
                 draft_text=inp.draft_text,
                 situation=inp.situation,
+                as_of=inp.as_of,
             )
         except Exception as exc:  # noqa: BLE001 - 검색 계층의 어떤 장애든 축소 동작
             log.warning("retrieval failed, continuing without history: %s", exc)

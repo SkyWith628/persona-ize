@@ -7,6 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from app.domain.conversation import ImportStatus, SpeakerRole
 from app.domain.persona import PersonaSettings, RelationshipType
 from app.domain.rewrite import Condition, RewriteResult
 
@@ -65,3 +66,41 @@ class FeedbackIn(BaseModel):
 class ErrorOut(BaseModel):
     code: str
     message: str
+
+
+class ConversationCreate(BaseModel):
+    contact_id: UUID
+    title: str | None = Field(None, max_length=200)
+    source: str = Field("json", max_length=64)
+    source_key: str | None = Field(
+        None, max_length=64, description="데이터셋의 대화방 id (c1). 생략하면 생성. 사용자 안에서 유일"
+    )
+
+
+class ConversationOut(BaseModel):
+    id: UUID
+    contact_id: UUID
+    title: str
+    source: str
+    source_key: str
+    created_at: datetime
+
+
+class MessageOut(BaseModel):
+    id: UUID
+    source_key: str
+    speaker_role: SpeakerRole
+    sent_at: datetime
+    text: str
+
+
+class ImportJobOut(BaseModel):
+    id: UUID
+    conversation_id: UUID
+    status: ImportStatus
+    imported: int
+    duplicates: int
+    episodes: int
+    error_code: str | None
+    error_message: str | None
+    created_at: datetime

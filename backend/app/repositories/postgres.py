@@ -18,6 +18,9 @@ from app.db.session import SessionFactory
 from app.domain.contact import Contact
 from app.domain.persona import PersonaSettings, PersonaVersion, RelationshipType
 from app.domain.rewrite import Feedback, RewriteRecord, RewriteResult
+from app.repositories.postgres_conversations import PostgresConversationRepo
+
+__all__ = ["PostgresContactRepo", "PostgresConversationRepo", "PostgresRewriteRepo"]
 
 
 def _now() -> datetime:

@@ -9,8 +9,18 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
+from app.ai.embeddings import cosine
 from app.core.errors import NotFoundError, VersionConflictError
 from app.domain.contact import Contact
+from app.domain.conversation import (
+    Conversation,
+    Episode,
+    EpisodeDraft,
+    EpisodeHit,
+    ImportJob,
+    Message,
+    NewMessage,
+)
 from app.domain.persona import PersonaSettings, PersonaVersion, RelationshipType
 from app.domain.rewrite import Feedback, RewriteRecord, RewriteResult
 
@@ -123,3 +133,149 @@ class InMemoryRewriteRepo:
         await self.get(user_id, feedback.request_id)
         self._feedback[feedback.request_id] = feedback
         return feedback
+
+
+class InMemoryConversationRepo:
+    """대화방·메시지·묶음을 메모리에 둔다. kNN은 전수 코사인 (테스트·소규모 실험용)."""
+
+    def __init__(self) -> None:
+        self._conversations: dict[UUID, Conversation] = {}
+        self._messages: dict[UUID, list[Message]] = {}
+        self._episodes: dict[UUID, list[tuple[Episode, list[float]]]] = {}  # conversation_id → (episode, vec)
+        self._jobs: dict[UUID, ImportJob] = {}
+
+    async def create(
+        self, user_id: str, contact_id: UUID, title: str, source: str, source_key: str
+    ) -> Conversation:
+        for c in self._conversations.values():
+            if c.user_id == user_id and c.source_key == source_key:
+                raise VersionConflictError(f"같은 source_key의 대화방이 이미 있습니다: {source_key}")
+        conv = Conversation(
+            id=uuid4(),
+            user_id=user_id,
+            contact_id=contact_id,
+            title=title,
+            source=source,
+            source_key=source_key,
+            created_at=_now(),
+        )
+        self._conversations[conv.id] = conv
+        self._messages[conv.id] = []
+        self._episodes[conv.id] = []
+        return conv
+
+    async def list(self, user_id: str, contact_id: UUID | None = None) -> list[Conversation]:
+        return sorted(
+            (
+                c
+                for c in self._conversations.values()
+                if c.user_id == user_id and (contact_id is None or c.contact_id == contact_id)
+            ),
+            key=lambda c: c.created_at,
+        )
+
+    async def get(self, user_id: str, conversation_id: UUID) -> Conversation:
+        c = self._conversations.get(conversation_id)
+        if c is None or c.user_id != user_id:
+            raise NotFoundError("대화방을 찾을 수 없습니다.")
+        return c
+
+    async def add_messages(
+        self, user_id: str, conversation_id: UUID, messages: list[NewMessage]
+    ) -> tuple[int, int]:
+        conv = await self.get(user_id, conversation_id)
+        existing = {m.source_key for m in self._messages[conv.id]}
+        inserted = 0
+        for nm in messages:
+            if nm.source_key in existing:
+                continue
+            existing.add(nm.source_key)
+            self._messages[conv.id].append(
+                Message(
+                    id=uuid4(),
+                    user_id=user_id,
+                    conversation_id=conv.id,
+                    source_key=nm.source_key,
+                    speaker_role=nm.speaker_role,
+                    sent_at=nm.sent_at,
+                    text=nm.text,
+                )
+            )
+            inserted += 1
+        return inserted, len(messages) - inserted
+
+    async def list_messages(self, user_id: str, conversation_id: UUID) -> list[Message]:
+        conv = await self.get(user_id, conversation_id)
+        return sorted(self._messages[conv.id], key=lambda m: m.sent_at)
+
+    async def replace_episodes(
+        self,
+        user_id: str,
+        conversation_id: UUID,
+        contact_id: UUID,
+        drafts: list[EpisodeDraft],
+        vectors: list[list[float]],
+        embedding_version: str,
+    ) -> int:
+        conv = await self.get(user_id, conversation_id)
+        if len(drafts) != len(vectors):
+            raise ValueError("묶음 수와 벡터 수가 다릅니다.")
+        self._episodes[conv.id] = [
+            (
+                Episode(
+                    id=uuid4(),
+                    user_id=user_id,
+                    contact_id=contact_id,
+                    conversation_id=conv.id,
+                    context_text=d.context_text,
+                    style_text=d.style_text,
+                    embedding_version=embedding_version,
+                    start_at=d.start_at,
+                    end_at=d.end_at,
+                    source_message_ids=list(d.source_message_ids),
+                ),
+                vec,
+            )
+            for d, vec in zip(drafts, vectors, strict=True)
+        ]
+        return len(drafts)
+
+    async def search_episodes(
+        self,
+        user_id: str,
+        contact_id: UUID,
+        query: list[float],
+        top_k: int,
+        before: datetime | None = None,
+    ) -> list[EpisodeHit]:
+        hits: list[EpisodeHit] = []
+        for conv_id, pairs in self._episodes.items():
+            conv = self._conversations[conv_id]
+            if conv.user_id != user_id or conv.contact_id != contact_id:
+                continue
+            for ep, vec in pairs:
+                if before is not None and ep.end_at >= before:
+                    continue
+                hits.append(EpisodeHit(episode=ep, score=cosine(query, vec)))
+        hits.sort(key=lambda h: (-h.score, h.episode.end_at))
+        return hits[:top_k]
+
+    async def find_job(self, user_id: str, conversation_id: UUID, source_hash: str) -> ImportJob | None:
+        for job in self._jobs.values():
+            if (
+                job.user_id == user_id
+                and job.conversation_id == conversation_id
+                and job.source_hash == source_hash
+            ):
+                return job
+        return None
+
+    async def save_job(self, job: ImportJob) -> ImportJob:
+        self._jobs[job.id] = job
+        return job
+
+    async def get_job(self, user_id: str, job_id: UUID) -> ImportJob:
+        job = self._jobs.get(job_id)
+        if job is None or job.user_id != user_id:
+            raise NotFoundError("가져오기 작업을 찾을 수 없습니다.")
+        return job

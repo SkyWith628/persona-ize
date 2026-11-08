@@ -34,6 +34,7 @@
 
 비전공자용 작성 안내(등장인물 표, 사건을 여러 방에 나누는 법): [docs/dataset-guide.md](../../docs/dataset-guide.md).
 검증: `python scripts/validate_data_files.py` (CI에서도 돈다).
+적재: `python scripts/import_synthetic.py --user demo` — 상대·대화방·메시지를 DB에 넣고 문체 예시 묶음을 임베딩한다 (여러 번 돌려도 중복 없음). API로 올릴 때는 `POST /v1/conversations/{id}/imports`에 같은 `messages` 배열과, 이름을 쓴 경우 `speaker_map`({"김민수": "me"})을 함께 보낸다.
 
 ## 파일
 | 파일 | 내용 |

@@ -9,8 +9,8 @@ from app.main import create_app
 
 @pytest.fixture
 def settings() -> Settings:
-    # .env를 무시하고 fake 프로바이더로 고정한다.
-    return Settings(_env_file=None, llm_provider="fake")  # type: ignore[call-arg]
+    # .env를 무시하고 fake 프로바이더·fake 임베더로 고정한다 (네트워크·torch 없음).
+    return Settings(_env_file=None, llm_provider="fake", embedding_provider="fake")  # type: ignore[call-arg]
 
 
 @pytest.fixture

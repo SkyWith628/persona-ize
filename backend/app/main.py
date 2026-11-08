@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.deps import build_state
-from app.api.routes import contacts, health, rewrites
+from app.api.routes import contacts, conversations, health, rewrites
 from app.core.config import Settings, get_settings
 from app.core.errors import DomainError
 
@@ -48,6 +48,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(health.router)
     app.include_router(contacts.router)
     app.include_router(rewrites.router)
+    app.include_router(conversations.router)
     return app
 
 

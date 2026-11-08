@@ -78,3 +78,9 @@
 - 결정: 저장소 인터페이스는 **비동기**로 통일한다(asyncpg가 기준, 인메모리도 같은 모양). 라우트는 전부 `async def`.
 - 결정: `RewriteResult`는 `rewrite_results.payload` JSONB에 통째로 저장하고 집계용 열(result_text·validation_status·model_version·prompt_version·retrieval_version·token_usage·latency_ms)만 따로 둔다. 설계서 §6의 `rewrite_evidence`·`users`·`import_jobs`는 필요해지는 주에 추가.
 - 결정: 소유권은 모든 쿼리의 WHERE에 user_id를 함께 걸어 "없음"과 "남의 것"을 같은 404로 만든다. 동시성 충돌(페르소나 버전, Idempotency-Key)은 유일 제약 → 409로 번역.
+
+## 2026-11-08 C 경로(업로드·화자 지정·pgvector 검색) 구현과 묶음 규칙
+- 결과: `POST /v1/conversations/{id}/imports`(speaker_map으로 화자 지정, 해시로 재업로드 멱등, 겹친 메시지 id는 건너뛰고 수 보고) → 묶음 → e5-small 임베딩 → `episodes`(vector 384). `VectorStyleRetriever`가 같은 상대·as_of 이전 묶음을 kNN으로 고른다. 합성 36건 → 묶음 18개, 검색 25ms 안팎. `run_eval.py --conditions A,B,C`가 recall 열을 채운다(E002 1.0, E004 1.0, E005 0.5, fake 모델 기준이라 검색만 평가).
+- 결정: **묶음 = 본인 발화 연속 구간 1개 + 그 앞 메시지 최대 window-1(=3)개.** 임베딩은 묶음 전문(상대/나 표기), 문체 예시 본문은 본인 발화만(상대 말투 혼입 방지), 출처 id는 묶음 전체(맥락 메시지도 recall에 인정). 설계서의 "2~6턴 묶음"을 이렇게 고정한다.
+- 결정: 검색 기준 시각은 사례 `as_of` 날짜의 당일 끝(KST). 평가에서 미래 대화가 새지 않게 `RewriteInput.as_of`를 추가했다. API 요청은 지금 시각.
+- 결정: 가져오기는 요청 안에서 동기로 끝내되 응답은 설계대로 202 + job. 비동기 작업 큐는 데이터가 커질 때. D 조건은 3주차 그래프 맥락을 붙이기 전까지 C와 같으므로 지금 D 수치는 비교에 쓰지 않는다.

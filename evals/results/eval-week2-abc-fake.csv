@@ -1,0 +1,16 @@
+case_id,split,relation,condition,repeat,status,validation_passed,violations,intent,result_text,attempts,latency_ms,input_tokens,output_tokens,model_version,prompt_version,retrieval_version,retrieved_ids,evidence_ids,recall
+E001,dev,팀장,A,1,recommended,True,,schedule,오늘 정리해서 내일 오전까지 보내드릴게요.,1,0,0,0,fake-echo,rewrite-v1,none,,,
+E001,dev,팀장,B,1,recommended,True,,schedule,오늘 정리해서 내일 오전까지 보내드릴게요.,1,0,0,0,fake-echo,rewrite-v1,none,,,
+E001,dev,팀장,C,1,recommended,True,,schedule,오늘 정리해서 내일 오전까지 보내드릴게요.,1,26,0,0,fake-echo,rewrite-v1,knn-style-v1/st:intfloat/multilingual-e5-small:384:v1,c1:m01;c1:m04;c1:m05;c1:m06;c1:m07;c1:m08;c1:m09;c1:m10;c1:m11,,
+E002,dev,팀장,A,1,recommended,True,,refusal,이번 주 금요일은 어렵고 다음 주 수요일까지는 가능합니다.,1,0,0,0,fake-echo,rewrite-v1,none,,,
+E002,dev,팀장,B,1,recommended,True,,refusal,이번 주 금요일은 어렵고 다음 주 수요일까지는 가능합니다.,1,0,0,0,fake-echo,rewrite-v1,none,,,
+E002,dev,팀장,C,1,recommended,True,,refusal,이번 주 금요일은 어렵고 다음 주 수요일까지는 가능합니다.,1,26,0,0,fake-echo,rewrite-v1,knn-style-v1/st:intfloat/multilingual-e5-small:384:v1,c1:m01;c1:m02;c1:m03;c1:m04;c1:m05,,1.00
+E003,dev,동생,A,1,recommended,True,,request,토요일 오전에 차 좀 빌려줄 수 있어?,1,0,0,0,fake-echo,rewrite-v1,none,,,
+E003,dev,동생,B,1,recommended,True,,request,토요일 오전에 차 좀 빌려줄 수 있어?,1,0,0,0,fake-echo,rewrite-v1,none,,,
+E003,dev,동생,C,1,recommended,True,,request,토요일 오전에 차 좀 빌려줄 수 있어?,1,23,0,0,fake-echo,rewrite-v1,knn-style-v1/st:intfloat/multilingual-e5-small:384:v1,c2:m01;c2:m02;c2:m03;c2:m04;c2:m05;c2:m06,,
+E004,dev,동기,A,1,recommended,True,,apology,어제는 제가 좀 예민했던 것 같아요. 미안합니다.,1,0,0,0,fake-echo,rewrite-v1,none,,,
+E004,dev,동기,B,1,recommended,True,,apology,어제는 제가 좀 예민했던 것 같아요. 미안합니다.,1,0,0,0,fake-echo,rewrite-v1,none,,,
+E004,dev,동기,C,1,recommended,True,,apology,어제는 제가 좀 예민했던 것 같아요. 미안합니다.,1,24,0,0,fake-echo,rewrite-v1,knn-style-v1/st:intfloat/multilingual-e5-small:384:v1,c3:m01;c3:m02;c3:m03;c3:m04;c3:m05;c3:m06;c3:m07;c3:m08;c3:m09;c3:m10,,1.00
+E005,test,친구,A,1,recommended,True,,schedule,다음 달 둘째 주 토요일 저녁 어때?,1,0,0,0,fake-echo,rewrite-v1,none,,,
+E005,test,친구,B,1,recommended,True,,schedule,다음 달 둘째 주 토요일 저녁 어때?,1,0,0,0,fake-echo,rewrite-v1,none,,,
+E005,test,친구,C,1,recommended,True,,schedule,다음 달 둘째 주 토요일 저녁 어때?,1,22,0,0,fake-echo,rewrite-v1,knn-style-v1/st:intfloat/multilingual-e5-small:384:v1,c4:m01;c4:m02;c4:m03;c4:m04;c4:m05;c4:m06,,0.50

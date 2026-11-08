@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 pytest.importorskip("sqlalchemy")
 asyncpg = pytest.importorskip("asyncpg")
 
+from app.ai.embeddings import FakeEmbedder  # noqa: E402
 from app.core.config import Settings  # noqa: E402
 from app.core.errors import NotFoundError, VersionConflictError  # noqa: E402
 from app.db.migrate import upgrade_to_head  # noqa: E402
@@ -24,7 +25,11 @@ from app.db.session import create_engine, create_session_factory  # noqa: E402
 from app.domain.persona import PersonaSettings  # noqa: E402
 from app.domain.rewrite import Feedback, RewriteResult, ValidationReport  # noqa: E402
 from app.main import create_app  # noqa: E402
-from app.repositories.postgres import PostgresContactRepo, PostgresRewriteRepo  # noqa: E402
+from app.repositories.postgres import (  # noqa: E402
+    PostgresContactRepo,
+    PostgresConversationRepo,
+    PostgresRewriteRepo,
+)
 
 pytestmark = pytest.mark.anyio
 
@@ -228,3 +233,108 @@ def test_api_vertical_flow_on_postgres(pg_url: str) -> None:
         )
         assert fb.status_code == 204
         assert client.get(f"/v1/contacts/{cid}", headers={"X-User-Id": _user()}).status_code == 404
+
+
+def test_import_and_vector_search_on_postgres(pg_url: str) -> None:
+    """가져오기 → episodes(pgvector) 저장 → C 조건 첨삭이 kNN 결과를 받는지. 임베더는 fake."""
+    settings = Settings(_env_file=None, llm_provider="fake", database_url=pg_url, embedding_provider="fake")  # type: ignore[call-arg]
+    headers = {"X-User-Id": _user()}
+    with TestClient(create_app(settings)) as client:
+        cid = client.post(
+            "/v1/contacts", json={"alias": "박지현", "relationship_type": "superior"}, headers=headers
+        ).json()["id"]
+        client.put(
+            f"/v1/contacts/{cid}/persona",
+            json={"settings": {"formality": 5}, "expected_version": 0},
+            headers=headers,
+        )
+        conv_id = client.post(
+            "/v1/conversations", json={"contact_id": cid, "source_key": "c1"}, headers=headers
+        ).json()["id"]
+        job = client.post(
+            f"/v1/conversations/{conv_id}/imports",
+            json={
+                "speaker_map": {"김민수": "me", "박지현": "contact"},
+                "messages": [
+                    {
+                        "id": "m01",
+                        "speaker": "박지현",
+                        "sent_at": "2026-10-05T09:25:00+09:00",
+                        "text": "언제까지 가능해요?",
+                    },
+                    {
+                        "id": "m02",
+                        "speaker": "김민수",
+                        "sent_at": "2026-10-05T09:31:00+09:00",
+                        "text": "팀장님, 금요일은 어렵고 다음 주 수요일까지는 가능합니다.",
+                    },
+                    {
+                        "id": "m03",
+                        "speaker": "me",
+                        "sent_at": "2026-10-06T09:00:00+09:00",
+                        "text": "어제는 죄송했습니다.",
+                    },
+                ],
+            },
+            headers=headers,
+        )
+        assert job.status_code == 202, job.text
+        assert (job.json()["imported"], job.json()["episodes"]) == (3, 1)  # m02·m03 연속 본인 발화 → 한 묶음
+        # 같은 내용 재업로드는 같은 작업
+        assert (
+            client.post(
+                f"/v1/conversations/{conv_id}/imports",
+                json={
+                    "speaker_map": {"김민수": "me", "박지현": "contact"},
+                    "messages": [
+                        {
+                            "id": "m01",
+                            "speaker": "박지현",
+                            "sent_at": "2026-10-05T09:25:00+09:00",
+                            "text": "언제까지 가능해요?",
+                        },
+                        {
+                            "id": "m02",
+                            "speaker": "김민수",
+                            "sent_at": "2026-10-05T09:31:00+09:00",
+                            "text": "팀장님, 금요일은 어렵고 다음 주 수요일까지는 가능합니다.",
+                        },
+                        {
+                            "id": "m03",
+                            "speaker": "me",
+                            "sent_at": "2026-10-06T09:00:00+09:00",
+                            "text": "어제는 죄송했습니다.",
+                        },
+                    ],
+                },
+                headers=headers,
+            ).json()["id"]
+            == job.json()["id"]
+        )
+        r = client.post(
+            "/v1/rewrites",
+            json={
+                "contact_id": cid,
+                "draft_text": "금요일은 어렵고 수요일까지는 가능합니다.",
+                "condition": "C",
+            },
+            headers=headers,
+        )
+        assert r.status_code == 201, r.text
+        assert r.json()["result"]["retrieval_version"].startswith("knn-style-v1/fake")
+
+    # 저장소 직접: 검색 범위·순서
+    async def _search() -> list[str]:
+        engine = create_engine(pg_url)
+        repo = PostgresConversationRepo(create_session_factory(engine))
+        try:
+            emb = FakeEmbedder(dim=384)
+            hits = await repo.search_episodes(
+                headers["X-User-Id"], uuid.UUID(cid), await emb.embed_query("금요일은 어렵고 수요일까지"), 5
+            )
+            return [h.episode.style_text for h in hits]
+        finally:
+            await engine.dispose()
+
+    texts = asyncio.run(_search())
+    assert texts == ["팀장님, 금요일은 어렵고 다음 주 수요일까지는 가능합니다.\n어제는 죄송했습니다."]

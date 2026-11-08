@@ -1,12 +1,13 @@
 """검색 인터페이스. 실험 조건별로 구현을 바꿔 끼운다 (design.md §3-2).
 
 - A/B: NullRetriever (검색 없음)
-- C: VectorStyleRetriever (2주차, pgvector) — 같은 상대에게 쓴 본인 발화 kNN, purpose=style
+- C: VectorStyleRetriever (`vector.py`) — 같은 상대에게 쓴 본인 발화 묶음 kNN, purpose=style
 - D: C + GraphContextRetriever (3주차, Graphiti) — 사건·관계 맥락, purpose=context
 """
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Protocol
 from uuid import UUID
 
@@ -26,6 +27,7 @@ class Retriever(Protocol):
         draft_text: str,
         situation: str,
         top_k: int = 4,
+        as_of: datetime | None = None,
     ) -> list[RetrievedExample]: ...
 
 
@@ -42,5 +44,6 @@ class NullRetriever:
         draft_text: str,
         situation: str,
         top_k: int = 4,
+        as_of: datetime | None = None,
     ) -> list[RetrievedExample]:
         return []

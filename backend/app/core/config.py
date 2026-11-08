@@ -37,6 +37,12 @@ class Settings(BaseSettings):
     request_timeout_seconds: float = Field(20.0, gt=0)
 
     database_url: str = ""
+    # 문체 예시 검색(C) 임베딩. local=sentence-transformers(기본), fake=테스트용 해시 벡터.
+    embedding_provider: Literal["local", "fake"] = "local"
+    embedding_model: str = "intfloat/multilingual-e5-small"
+    embedding_dim: int = Field(384, gt=0)
+    max_import_messages: int = Field(5000, gt=0)
+    retrieval_top_k: int = Field(4, ge=1, le=20)
     neo4j_uri: str = ""
     neo4j_username: str = "neo4j"
     neo4j_password: str = ""
