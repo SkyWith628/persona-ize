@@ -102,6 +102,9 @@ class RewriteService:
     async def get(self, user_id: str, request_id: UUID) -> RewriteRecord:
         return await self._rewrites.get(user_id, request_id)
 
+    async def history(self, user_id: str, contact_id: UUID | None, limit: int) -> list[RewriteRecord]:
+        return await self._rewrites.list(user_id, contact_id, limit)
+
     async def feedback(self, user_id: str, fb: Feedback) -> Feedback:
         return await self._rewrites.save_feedback(user_id, fb)
 

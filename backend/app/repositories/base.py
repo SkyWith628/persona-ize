@@ -59,6 +59,12 @@ class RewriteRepo(Protocol):
 
     async def get(self, user_id: str, request_id: UUID) -> RewriteRecord: ...
 
+    async def list(
+        self, user_id: str, contact_id: UUID | None = None, limit: int = 20
+    ) -> list[RewriteRecord]:
+        """최근 순. contact_id가 있으면 그 상대 것만."""
+        ...
+
     async def save_feedback(self, user_id: str, feedback: Feedback) -> Feedback: ...
 
 

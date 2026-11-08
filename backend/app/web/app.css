@@ -47,3 +47,15 @@ details ul { margin: 0.25rem 0 0; padding-left: 1.2rem; }
 code { background: var(--bg); padding: 0 0.3rem; border-radius: 4px; }
 .hidden { display: none !important; }
 .tag { font-size: 0.78rem; padding: 0.05rem 0.45rem; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+.empty { padding: 0.5rem 0.6rem; border: 1px dashed var(--line); border-radius: 8px; }
+.msgs { list-style: none; padding: 0; margin: 0.4rem 0; max-height: 14rem; overflow: auto; font-size: 0.9rem; }
+.msgs li { padding: 0.25rem 0.4rem; border-bottom: 1px solid var(--line); }
+.msgs li.me { color: var(--accent); }
+.msgs .when { color: var(--muted); font-size: 0.8rem; margin-right: 0.4rem; }
+.list li .hist { display: flex; flex-direction: column; gap: 0.1rem; overflow: hidden; }
+.list li .hist .text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 600px) {
+  .top { padding: 0.75rem 1rem; }
+  .auth form.row { width: 100%; }
+  .row > button { flex: 1 1 auto; }
+}

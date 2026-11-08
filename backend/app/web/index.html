@@ -33,6 +33,7 @@
   <main id="app" class="grid hidden">
     <section class="col">
       <h2>1. 상대</h2>
+      <p id="contact-empty" class="muted empty">아직 상대가 없습니다. 별칭과 관계를 넣고 추가하세요. 실명 대신 별칭을 써도 됩니다.</p>
       <ul id="contact-list" class="list"></ul>
       <form id="contact-form" class="row">
         <input id="contact-alias" placeholder="별칭 (예: 박지현)" maxlength="50" required />
@@ -67,7 +68,8 @@
           <button type="submit">저장 (새 버전)</button>
         </form>
 
-        <h2>3. 과거 대화</h2>
+        <h2>3. 과거 대화 <span class="muted">(C·D 조건의 재료)</span></h2>
+        <p id="conv-empty" class="muted empty">대화방이 없습니다. 추가한 뒤 선택하면 메시지를 붙여 넣을 수 있습니다. 없어도 A·B 조건은 됩니다.</p>
         <ul id="conv-list" class="list"></ul>
         <form id="conv-form" class="row">
           <input id="conv-title" placeholder="대화방 이름" maxlength="200" />
@@ -83,12 +85,17 @@
           </div>
           <p id="import-status" class="muted"></p>
         </form>
+        <details id="msg-box" class="hidden">
+          <summary>이 대화방의 메시지 <span id="msg-count" class="muted"></span></summary>
+          <ul id="msg-list" class="msgs"></ul>
+        </details>
       </div>
     </section>
 
     <section class="col">
       <h2>4. 첨삭</h2>
-      <form id="rewrite-form" class="persona">
+      <p id="rewrite-hint" class="muted empty">왼쪽에서 상대를 선택하면 첨삭할 수 있습니다. 결과는 자동으로 보내지 않습니다 — 복사해서 직접 보냅니다.</p>
+      <form id="rewrite-form" class="persona hidden">
         <label>상황 <input name="situation" placeholder="예: 일정 지연 양해" maxlength="500" /></label>
         <label>조건
           <select name="condition">
@@ -118,6 +125,12 @@
         <details><summary>보존 항목·검증</summary><ul id="result-preserved"></ul><p id="result-validation" class="muted"></p></details>
         <details><summary>참고한 과거 표현</summary><ul id="result-evidence"></ul></details>
       </article>
+
+      <div id="history-box" class="hidden">
+        <h2>최근 첨삭 <span id="history-count" class="muted"></span></h2>
+        <p id="history-empty" class="muted empty">아직 이 상대에게 받은 추천이 없습니다.</p>
+        <ul id="history-list" class="list"></ul>
+      </div>
     </section>
   </main>
 

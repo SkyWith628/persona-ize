@@ -82,6 +82,7 @@ async function loadContacts() {
   state.contacts = await api("GET", "/v1/contacts");
   const ul = $("#contact-list");
   ul.innerHTML = "";
+  $("#contact-empty").classList.toggle("hidden", state.contacts.length > 0);
   for (const c of state.contacts) {
     const li = document.createElement("li");
     li.className = state.contact?.id === c.id ? "selected" : "";
@@ -103,10 +104,34 @@ $("#contact-form").addEventListener("submit", async (e) => {
 async function selectContact(c) {
   state.contact = c; state.conv = null; state.rewrite = null;
   $("#persona-box").classList.remove("hidden");
+  $("#rewrite-form").classList.remove("hidden");
+  $("#rewrite-hint").classList.add("hidden");
+  $("#history-box").classList.remove("hidden");
   $("#result").classList.add("hidden");
   await loadContacts();
   await loadPersona();
   await loadConversations();
+  await loadHistory();
+}
+
+// ---------- 첨삭 이력 ----------
+async function loadHistory() {
+  if (!state.contact) return;
+  const rows = await api("GET", `/v1/rewrites?contact_id=${state.contact.id}&limit=10`);
+  const ul = $("#history-list");
+  ul.innerHTML = "";
+  $("#history-empty").classList.toggle("hidden", rows.length > 0);
+  $("#history-count").textContent = rows.length ? `${rows.length}건` : "";
+  for (const rec of rows) {
+    const li = document.createElement("li");
+    const r = rec.result;
+    const when = new Date(rec.created_at).toLocaleString("ko-KR", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+    const cond = (r.retrieval_version === "none") ? "A/B" : (r.retrieval_version.includes("graph") ? "D" : "C");
+    li.innerHTML = `<span class="hist"><span class="muted"><span class="when">${when}</span><span class="tag">${cond}</span> <span class="${r.status === "recommended" ? "status-ok" : "status-fallback"}">${r.status === "recommended" ? "추천" : "원문 유지"}</span></span><span class="text">${esc(r.result_text)}</span></span>`;
+    li.className = state.rewrite?.id === rec.id ? "selected" : "";
+    li.addEventListener("click", () => { state.rewrite = rec; renderResult(rec); loadHistory(); $("#result").scrollIntoView({ behavior: "smooth", block: "nearest" }); });
+    ul.appendChild(li);
+  }
 }
 
 // ---------- 페르소나 ----------
@@ -132,6 +157,8 @@ async function loadPersona() {
 
 personaForm.addEventListener("submit", async (e) => {
   e.preventDefault();
+  const saveBtn = personaForm.querySelector("button[type=submit]");
+  saveBtn.disabled = true;
   const f = personaForm.elements;
   const list = (v) => v.split(",").map((x) => x.trim()).filter(Boolean);
   const settings = {
@@ -145,6 +172,7 @@ personaForm.addEventListener("submit", async (e) => {
     flash("페르소나를 저장했습니다.");
     await loadPersona(); await loadContacts();
   } catch (err) { flash(err.message, true); if (/충돌/.test(err.message)) await loadPersona(); }
+  finally { saveBtn.disabled = false; }
 });
 
 // ---------- 과거 대화 ----------
@@ -172,8 +200,27 @@ async function loadConversations() {
     li.addEventListener("click", () => { state.conv = c; loadConversations(); });
     ul.appendChild(li);
   }
+  $("#conv-empty").classList.toggle("hidden", state.conversations.length > 0);
   $("#import-form").classList.toggle("hidden", !state.conv);
-  if (state.conv) $("#import-me-name").value = state.conv.me_name || "";
+  $("#msg-box").classList.toggle("hidden", !state.conv);
+  if (state.conv) {
+    $("#import-me-name").value = state.conv.me_name || "";
+    await loadMessages();
+  }
+}
+
+async function loadMessages() {
+  const msgs = await api("GET", `/v1/conversations/${state.conv.id}/messages`);
+  const ul = $("#msg-list");
+  ul.innerHTML = "";
+  $("#msg-count").textContent = msgs.length ? `${msgs.length}건` : "(없음)";
+  for (const m of msgs.slice(-50)) {
+    const li = document.createElement("li");
+    li.className = m.speaker_role;
+    const when = new Date(m.sent_at).toLocaleString("ko-KR", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+    li.innerHTML = `<span class="when">${when}</span>${m.speaker_role === "me" ? "나" : esc(state.contact.alias)}: ${esc(m.text)}`;
+    ul.appendChild(li);
+  }
 }
 
 $("#conv-form").addEventListener("submit", async (e) => {
@@ -224,6 +271,9 @@ $("#import-form").addEventListener("submit", async (e) => {
     }
     if (job.graph_status === "failed") status.textContent += ` — 그래프 오류: ${job.graph_error}`;
     if (job.graph_status === "completed") status.textContent += " · 완료";
+    if (job.graph_status === "skipped") status.textContent += " (그래프는 NEO4J_URI가 없어 건너뜀)";
+    $("#import-text").value = "";
+    await loadMessages();
   } catch (err) { status.textContent = ""; flash(err.message, true); }
 });
 
@@ -242,7 +292,7 @@ $("#rewrite-form").addEventListener("submit", async (e) => {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.message || data.detail?.message || `${res.status} 오류`);
-    state.rewrite = data; renderResult(data); await loadUsage();
+    state.rewrite = data; renderResult(data); await loadUsage(); await loadHistory();
   } catch (err) { flash(err.message, true); }
   finally { btn.disabled = false; btn.textContent = "추천 받기"; }
 });

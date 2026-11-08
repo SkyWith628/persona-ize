@@ -130,6 +130,17 @@ class InMemoryRewriteRepo:
             raise NotFoundError("추천 요청을 찾을 수 없습니다.")
         return rec
 
+    async def list(
+        self, user_id: str, contact_id: UUID | None = None, limit: int = 20
+    ) -> list[RewriteRecord]:
+        rows = [
+            r
+            for r in self._records.values()
+            if r.user_id == user_id and (contact_id is None or r.contact_id == contact_id)
+        ]
+        rows.sort(key=lambda r: r.created_at, reverse=True)
+        return rows[:limit]
+
     async def save_feedback(self, user_id: str, feedback: Feedback) -> Feedback:
         await self.get(user_id, feedback.request_id)
         self._feedback[feedback.request_id] = feedback

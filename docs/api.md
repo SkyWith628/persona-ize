@@ -45,6 +45,7 @@ settings: `formality·friendliness·directness`(1~5), `length`(shorter/same/long
 | 메서드·경로 | 내용 |
 |---|---|
 | `POST /v1/rewrites` `{contact_id, draft_text, situation?, condition?, persona_version?}` + `Idempotency-Key` 헤더 | 추천 생성. condition A/B/C/D (기본 B) |
+| `GET /v1/rewrites?contact_id=&limit=` | 첨삭 이력 (최근 순, 최대 100) |
 | `GET /v1/rewrites/{id}` | 결과 조회 |
 | `POST /v1/rewrites/{id}/feedback` `{accepted, edited_text?, reason?, consent_to_reuse?}` | 적용·수정·거절 피드백 |
 | `GET /v1/usage` | 오늘(KST) 요청 수·토큰과 한도. 넘으면 첨삭이 429 `usage_exceeded` |

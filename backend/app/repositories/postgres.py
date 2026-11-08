@@ -210,6 +210,17 @@ class PostgresRewriteRepo:
             row = await self._owned_request(s, user_id, request_id)
         return _record(row)
 
+    async def list(
+        self, user_id: str, contact_id: UUID | None = None, limit: int = 20
+    ) -> list[RewriteRecord]:
+        stmt = select(RewriteRequestRow).where(RewriteRequestRow.user_id == user_id)
+        if contact_id is not None:
+            stmt = stmt.where(RewriteRequestRow.contact_id == contact_id)
+        stmt = stmt.order_by(RewriteRequestRow.created_at.desc()).limit(limit)
+        async with self._sessions() as s:
+            rows = (await s.scalars(stmt)).unique().all()
+        return [_record(r) for r in rows if r.result is not None]
+
     async def save_feedback(self, user_id: str, feedback: Feedback) -> Feedback:
         async with self._sessions.begin() as s:
             await self._owned_request(s, user_id, feedback.request_id)

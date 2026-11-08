@@ -58,6 +58,28 @@ def test_vertical_flow(client: TestClient, user_a: dict[str, str]) -> None:
     assert fb.status_code == 204
 
 
+def test_rewrite_history(client: TestClient, user_a: dict[str, str], user_b: dict[str, str]) -> None:
+    cid = _setup_contact(client, user_a)
+    cid2 = _setup_contact(client, user_a)
+    for text, c in ((DRAFT, cid), ("네 알겠습니다.", cid), ("금요일에 봬요.", cid2)):
+        assert (
+            client.post(
+                "/v1/rewrites", json={"contact_id": c, "draft_text": text}, headers=user_a
+            ).status_code
+            == 201
+        )
+    all_rows = client.get("/v1/rewrites", headers=user_a).json()
+    assert [r["result"]["result_text"] for r in all_rows] == [
+        "금요일에 봬요.",
+        "네 알겠습니다.",
+        DRAFT,
+    ]  # 최근 순
+    only = client.get(f"/v1/rewrites?contact_id={cid}&limit=1", headers=user_a).json()
+    assert len(only) == 1 and only[0]["result"]["result_text"] == "네 알겠습니다."
+    assert client.get("/v1/rewrites", headers=user_b).json() == []
+    assert client.get("/v1/rewrites?limit=0", headers=user_a).status_code == 422
+
+
 def test_idempotency(client: TestClient, user_a: dict[str, str]) -> None:
     cid = _setup_contact(client, user_a)
     payload = {"contact_id": cid, "draft_text": DRAFT}

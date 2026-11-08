@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Header, status
+from fastapi import APIRouter, Header, Query, status
 
 from app.api.deps import State, UserId
 from app.api.schemas import FeedbackIn, RewriteCreate, RewriteOut, UsageOut
@@ -34,6 +34,13 @@ async def create_rewrite(
     inp = RewriteInput(user_id=user_id, **body.model_dump())
     rec = await state.rewrite_service.rewrite(inp, idempotency_key)
     return _to_out(rec)
+
+
+@router.get("", response_model=list[RewriteOut], summary="첨삭 이력 (최근 순)")
+async def list_rewrites(
+    user_id: UserId, state: State, contact_id: UUID | None = None, limit: int = Query(20, ge=1, le=100)
+) -> list[RewriteOut]:
+    return [_to_out(r) for r in await state.rewrite_service.history(user_id, contact_id, limit)]
 
 
 @router.get("/{request_id}", response_model=RewriteOut)
