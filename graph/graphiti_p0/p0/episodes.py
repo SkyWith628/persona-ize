@@ -11,6 +11,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from p0.dates import annotate_relative_dates
+
 SPEAKER_ME = "me"
 SPEAKER_CONTACT = "contact"
 
@@ -63,10 +65,12 @@ def format_body(sent_at: datetime, speaker: str, listener: str, text: str) -> st
 
     요일을 적어 주는 이유: 모델이 '다음 주 수요일' 같은 상대 날짜를 요일 없이 계산하면 틀린다(11-08 3차).
     수신자를 적어 주는 이유: 짧은 답장에서 상대 엔티티를 세우지 못해 자기참조 엣지가 생겼다(11-08 3차).
+    상대 날짜 표현 뒤에는 코드가 계산한 `(=YYYY-MM-DD)`를 붙인다. 요일만으로는 모델 산술이 안 고쳐졌다
+    (11-08 4차).
     시각은 데이터셋의 시간대(한국 시간) 그대로 보여 준다. graphiti에 넘기는 reference_time은 따로 UTC다.
     """
     stamp = f"{sent_at:%Y-%m-%d} {WEEKDAYS_KO[sent_at.weekday()]} {sent_at:%H:%M}"
-    return f"[{stamp}] {speaker} → {listener}: {text}"
+    return f"[{stamp}] {speaker} → {listener}: {annotate_relative_dates(text, sent_at)}"
 
 
 def build_episodes(dataset: dict[str, Any]) -> list[EpisodeInput]:

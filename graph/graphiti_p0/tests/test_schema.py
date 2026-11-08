@@ -66,7 +66,7 @@ def test_participant_role_is_closed_set() -> None:
         "Relationship, 사람↔사건이면 Involved만",
         "hierarchy",
         "자기참조",
-        "[2026-10-05 월] 기준",
+        "(=YYYY-MM-DD)",
     ],
 )
 def test_instructions_cover_known_failures(keyword: str) -> None:
