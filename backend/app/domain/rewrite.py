@@ -63,6 +63,15 @@ class ValidationReport(BaseModel):
     violations: list[Violation] = Field(default_factory=list)
 
 
+class AttemptRecord(BaseModel):
+    """시도 한 번의 기록. 재생성 효과를 세려면 최종 검증만으로는 부족하다 (첫 실측 메모 11-08)."""
+
+    attempt: int = Field(ge=1)
+    passed: bool
+    violations: list[Violation] = Field(default_factory=list)
+    rewritten_text: str | None = Field(None, description="모델 출력. 모델 장애면 None")
+
+
 class RewriteInput(BaseModel):
     """워크플로 입력. user_id는 인증에서 결정되며 본문에서 신뢰하지 않는다."""
 
@@ -87,6 +96,7 @@ class RewriteResult(BaseModel):
     preserved_items: list[PreservedItem]
     validation: ValidationReport
     attempts: int
+    attempt_log: list[AttemptRecord] = Field(default_factory=list, description="시도별 검증 기록 (시간 순)")
     model_version: str
     prompt_version: str
     retrieval_version: str

@@ -20,6 +20,7 @@ from app.core.errors import ModelUnavailableError
 from app.domain.contact import Contact
 from app.domain.persona import PersonaSettings
 from app.domain.rewrite import (
+    AttemptRecord,
     Condition,
     ModelOutput,
     RetrievedExample,
@@ -70,6 +71,7 @@ class RewriteWorkflow:
         last_report: ValidationReport | None = None
         user_prompt = prompt.user
         output: ModelOutput | None = None
+        attempt_log: list[AttemptRecord] = []
 
         for attempt in range(1 + MAX_REGENERATIONS):
             attempts = attempt + 1
@@ -80,12 +82,23 @@ class RewriteWorkflow:
                 last_report = ValidationReport(
                     passed=False, violations=[Violation(check="empty", detail=exc.message)]
                 )
+                attempt_log.append(
+                    AttemptRecord(attempt=attempts, passed=False, violations=last_report.violations)
+                )
                 break
             model_version = gen.model_version
             for k, v in gen.usage.items():
                 usage[k] = usage.get(k, 0) + v
             output = gen.output
             last_report = validate_output(inp.draft_text, output, preserved, persona_used, retrieved)
+            attempt_log.append(
+                AttemptRecord(
+                    attempt=attempts,
+                    passed=last_report.passed,
+                    violations=last_report.violations,
+                    rewritten_text=output.rewritten_text,
+                )
+            )
             if last_report.passed:
                 break
             user_prompt = (
@@ -108,6 +121,7 @@ class RewriteWorkflow:
                 preserved_items=preserved,
                 validation=last_report,
                 attempts=attempts,
+                attempt_log=attempt_log,
                 model_version=model_version,
                 prompt_version=self.prompt_version,
                 retrieval_version=retriever.version,
@@ -126,6 +140,7 @@ class RewriteWorkflow:
             preserved_items=preserved,
             validation=last_report,
             attempts=attempts,
+            attempt_log=attempt_log,
             model_version=model_version,
             prompt_version=self.prompt_version,
             retrieval_version=retriever.version,

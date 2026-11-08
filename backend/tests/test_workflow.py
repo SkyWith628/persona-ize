@@ -58,6 +58,11 @@ async def test_regenerate_once_then_pass() -> None:
     # 재생성 프롬프트에 구체적 위반 항목이 들어갔는지
     assert "위반 항목" in provider.prompts[1]
     assert "내일 오후" in provider.prompts[1]
+    # 시도별 기록: 1차 실패(어떤 위반인지), 2차 통과
+    assert [(a.attempt, a.passed) for a in r.attempt_log] == [(1, False), (2, True)]
+    assert r.attempt_log[0].rewritten_text == BAD.rewritten_text
+    assert "preserve_missing" in {v.check for v in r.attempt_log[0].violations}  # "내일 오전" 누락
+    assert r.attempt_log[1].violations == []
 
 
 @pytest.mark.anyio

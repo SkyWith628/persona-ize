@@ -216,6 +216,8 @@ async def _run_with_state(state: AppState, args: argparse.Namespace) -> Path:
         "retrieved_ids",
         "evidence_ids",
         "recall",
+        "warnings",
+        "first_attempt_violations",
     ]
     total = len(cases) * len(args.condition_list) * args.repeat
     done = 0
@@ -278,6 +280,13 @@ async def _run_with_state(state: AppState, args: argparse.Namespace) -> Path:
                         "retrieved_ids": ";".join(retrieved_ids),
                         "evidence_ids": ";".join(result.evidence_ids),
                         "recall": recall,
+                        "warnings": " | ".join(result.warnings),
+                        # 재생성이 있었을 때 1차가 왜 걸렸는지 (최종 validation에는 안 남는다)
+                        "first_attempt_violations": " | ".join(
+                            v.detail for v in result.attempt_log[0].violations
+                        )
+                        if result.attempt_log
+                        else "",
                     }
                     writer.writerow(row)
                     fjs.write(
