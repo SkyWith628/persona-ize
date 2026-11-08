@@ -126,3 +126,11 @@ def test_import_flow_and_condition_c(
     # B 조건은 검색하지 않는다
     rb = client.post("/v1/rewrites", json={"contact_id": cid, "draft_text": "네 알겠습니다."}, headers=user_a)
     assert rb.json()["result"]["retrieval_version"] == "none"
+
+    # 삭제: 남의 것은 404, 본인은 지워지고 이후 404
+    assert client.delete(f"/v1/conversations/{conv_id}", headers=user_b).status_code == 404
+    d = client.delete(f"/v1/conversations/{conv_id}", headers=user_a)
+    assert d.status_code == 200, d.text
+    assert (d.json()["messages"], d.json()["episodes"], d.json()["graph_episodes"]) == (5, 2, 0)
+    assert client.get(f"/v1/conversations/{conv_id}", headers=user_a).status_code == 404
+    assert client.get(f"/v1/imports/{body['id']}", headers=user_a).status_code == 404

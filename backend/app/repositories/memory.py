@@ -312,3 +312,11 @@ class InMemoryConversationRepo:
         conv = conv.model_copy(update={"me_name": me_name})
         self._conversations[conv.id] = conv
         return conv
+
+    async def delete_conversation(self, user_id: str, conversation_id: UUID) -> tuple[int, int]:
+        conv = await self.get(user_id, conversation_id)
+        messages = len(self._messages.pop(conv.id, []))
+        episodes = len(self._episodes.pop(conv.id, []))
+        self._jobs = {k: j for k, j in self._jobs.items() if j.conversation_id != conv.id}
+        del self._conversations[conv.id]
+        return messages, episodes

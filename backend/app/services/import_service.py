@@ -26,7 +26,7 @@ from pydantic import BaseModel, Field
 from app.ai.embeddings import Embedder
 from app.ai.episodes import DEFAULT_WINDOW, build_episodes
 from app.core.errors import InvalidInputError
-from app.domain.conversation import Conversation, ImportJob, NewMessage, SpeakerRole
+from app.domain.conversation import Conversation, DeletionResult, ImportJob, NewMessage, SpeakerRole
 from app.repositories.base import ContactRepo, ConversationRepo
 
 if TYPE_CHECKING:
@@ -193,6 +193,32 @@ class ImportService:
         """테스트·종료용: 떠 있는 백그라운드 수집을 기다린다."""
         if self._tasks:
             await asyncio.gather(*self._tasks, return_exceptions=True)
+
+    async def delete_conversation(self, user_id: str, conversation_id: UUID) -> DeletionResult:
+        """원문·묶음·가져오기 작업·그래프 에피소드를 지운다. 삭제 뒤 C/D 검색에 이 대화방이 나오지 않는다.
+
+        그래프를 먼저 지운다 (메시지 목록이 필요하다). 그래프 삭제가 실패해도 DB는 지우고 사유를 돌려준다 —
+        사용자의 삭제 요청은 원문 삭제가 우선이고, 그래프 잔여물은 재시도 대상으로 남긴다.
+        """
+        conv = await self._conversations.get(user_id, conversation_id)  # 소유권
+        messages = await self._conversations.list_messages(user_id, conv.id)
+        graph_removed = 0
+        graph_error: str | None = None
+        if self._graph_ingest is not None:
+            names = [f"{conv.source_key}:{m.source_key}" for m in messages if m.graph_ingested_at is not None]
+            try:
+                graph_removed = await self._graph_ingest.remove_episodes(user_id, names)
+            except Exception as exc:  # noqa: BLE001 - DB 삭제는 계속한다
+                log.warning("graph removal failed conversation=%s: %s", conv.id, exc)
+                graph_error = str(exc)[:500]
+        deleted_messages, deleted_episodes = await self._conversations.delete_conversation(user_id, conv.id)
+        return DeletionResult(
+            conversation_id=conv.id,
+            messages=deleted_messages,
+            episodes=deleted_episodes,
+            graph_episodes=graph_removed,
+            graph_error=graph_error,
+        )
 
     async def reindex(self, user_id: str, conv: Conversation) -> int:
         """대화방의 묶음을 전부 다시 만들고 임베딩한다. 임베딩 모델을 바꿨을 때도 이걸 돌린다."""

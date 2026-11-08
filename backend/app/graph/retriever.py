@@ -54,10 +54,16 @@ class GraphContextRetriever:
         cutoff = as_of or datetime.now(UTC)
 
         out: list[RetrievedExample] = []
+        seen_sources: set[frozenset[str]] = set()
         for h in hits:
             if allowed is not None and not ({h.source_node_uuid, h.target_node_uuid} & allowed):
                 continue
             eps = [refs[u] for u in h.episode_uuids if u in refs]
+            # 같은 메시지에서 나온 사실이 둘이면 하나만 (2차 실측: c1:m01 "주간보고" 사실이 두 번 들어감)
+            source_key = frozenset(e.name for e in eps)
+            if source_key and source_key in seen_sources:
+                continue
+            seen_sources.add(source_key)
             times = [e.valid_at for e in eps if e.valid_at is not None]
             if any(t >= cutoff for t in times):
                 continue

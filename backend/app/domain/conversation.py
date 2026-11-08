@@ -77,6 +77,16 @@ class EpisodeHit(BaseModel):
     score: float = Field(description="코사인 유사도 (높을수록 가까움)")
 
 
+class DeletionResult(BaseModel):
+    """대화방 삭제 결과. 원문·묶음·그래프 에피소드까지 추적한다 (project-design §6 삭제)."""
+
+    conversation_id: UUID
+    messages: int
+    episodes: int
+    graph_episodes: int = Field(0, description="그래프에서 지운 에피소드 수 (그래프를 안 쓰면 0)")
+    graph_error: str | None = Field(None, description="그래프 삭제 실패 사유. DB 삭제는 그래도 진행한다")
+
+
 class ImportJob(BaseModel):
     id: UUID
     user_id: str

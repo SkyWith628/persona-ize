@@ -1,4 +1,8 @@
-"""대화방·가져오기 API (project-design §7). 삭제(DELETE /v1/conversations/{id})는 5주차."""
+"""대화방·가져오기·삭제 API (project-design §7).
+
+삭제는 요청 안에서 끝내고 결과를 바로 돌려준다 (설계의 deletion-jobs는 데이터가 커지면). 그래프 삭제가
+실패해도 DB는 지워지고 `graph_error`에 사유가 남는다.
+"""
 
 from __future__ import annotations
 
@@ -7,7 +11,7 @@ from uuid import UUID
 from fastapi import APIRouter, status
 
 from app.api.deps import State, UserId
-from app.api.schemas import ConversationCreate, ConversationOut, ImportJobOut, MessageOut
+from app.api.schemas import ConversationCreate, ConversationOut, DeletionOut, ImportJobOut, MessageOut
 from app.domain.conversation import Conversation, ImportJob
 from app.services.import_service import ImportPayload
 
@@ -21,6 +25,7 @@ def _conv_out(c: Conversation) -> ConversationOut:
         title=c.title,
         source=c.source,
         source_key=c.source_key,
+        me_name=c.me_name,
         created_at=c.created_at,
     )
 
@@ -87,3 +92,16 @@ async def import_messages(
 @router.get("/v1/imports/{job_id}", response_model=ImportJobOut)
 async def get_import(job_id: UUID, user_id: UserId, state: State) -> ImportJobOut:
     return _job_out(await state.conversations.get_job(user_id, job_id))
+
+
+@router.delete("/v1/conversations/{conversation_id}", response_model=DeletionOut)
+async def delete_conversation(conversation_id: UUID, user_id: UserId, state: State) -> DeletionOut:
+    """원문·묶음·가져오기 작업·그래프 에피소드를 지운다. 이후 C/D 검색에 이 대화방은 나오지 않는다."""
+    d = await state.import_service.delete_conversation(user_id, conversation_id)
+    return DeletionOut(
+        conversation_id=d.conversation_id,
+        messages=d.messages,
+        episodes=d.episodes,
+        graph_episodes=d.graph_episodes,
+        graph_error=d.graph_error,
+    )

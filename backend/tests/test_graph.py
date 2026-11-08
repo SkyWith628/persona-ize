@@ -58,6 +58,11 @@ class FakeGraphStore:
     async def episode_refs(self, uuids) -> dict[str, EpisodeRef]:  # noqa: ANN001
         return {u: self.refs[u] for u in uuids if u in self.refs}
 
+    async def remove_episodes(self, group_id, names) -> int:  # noqa: ANN001
+        before = len(self.added)
+        self.added = [a for a in self.added if not (a["group_id"] == group_id and a["name"] in names)]
+        return before - len(self.added)
+
     async def close(self) -> None:
         pass
 
@@ -224,6 +229,7 @@ async def test_graph_retriever_keeps_only_contact_or_its_events() -> None:
             "e1": EpisodeRef("e1", "c1:m03", t),
             "e2": EpisodeRef("e2", "c4:m02", t),
             "e3": EpisodeRef("e3", "c1:m05", t),
+            "e4": EpisodeRef("e4", "c2:m02", t),
         },
         edges=[
             _edge("keep-contact", "박지현이 고객사 미팅에 간다", ["e1"], src="node-boss", dst="ev-meeting"),
@@ -231,7 +237,7 @@ async def test_graph_retriever_keeps_only_contact_or_its_events() -> None:
                 "drop-other-room", "사용자가 홈커밍 참석 여부를 묻는다", ["e2"], src="node-me", dst="ev-home"
             ),
             _edge("keep-event", "사용자가 대시보드 개편을 맡았다", ["e3"], src="node-me", dst="ev-dashboard"),
-            _edge("drop-me-only", "사용자가 케이크를 산다", ["e2"], src="node-me", dst="node-bro"),
+            _edge("drop-me-only", "사용자가 케이크를 산다", ["e4"], src="node-me", dst="node-bro"),
         ],
     )
     r = GraphContextRetriever(store, contacts, top_k=4)
@@ -242,6 +248,45 @@ async def test_graph_retriever_keeps_only_contact_or_its_events() -> None:
     store.entities = {}
     got = await r.retrieve(user_id="u", contact_id=boss.id, draft_text="일정", situation="")
     assert len(got) == 4
+
+
+async def test_delete_conversation_removes_rows_episodes_and_graph() -> None:
+    _, conversations, store, _, svc, boss, _, c1, c2 = await _setup(graph_mode="sync")
+    await svc.import_messages("u", c1.id, ImportPayload(messages=MESSAGES_C1))
+    await svc.import_messages("u", c2.id, ImportPayload(messages=MESSAGES_C2))
+    assert len(store.added) == 3
+    vector = VectorStyleRetriever(conversations, FakeEmbedder(dim=32))
+    assert await vector.retrieve(user_id="u", contact_id=boss.id, draft_text="수요일", situation="") != []
+
+    d = await svc.delete_conversation("u", c1.id)
+    assert (d.messages, d.episodes, d.graph_episodes, d.graph_error) == (2, 1, 2, None)
+    assert [a["name"] for a in store.added] == ["c2:m01"]  # 다른 방은 그대로
+    from app.core.errors import NotFoundError
+
+    with pytest.raises(NotFoundError):
+        await conversations.get("u", c1.id)
+    # 삭제 뒤 검색 차단
+    assert await vector.retrieve(user_id="u", contact_id=boss.id, draft_text="수요일", situation="") == []
+    with pytest.raises(NotFoundError):
+        await svc.delete_conversation("someone-else", c2.id)
+
+
+async def test_graph_retriever_dedupes_facts_from_same_source() -> None:
+    contacts = InMemoryContactRepo()
+    boss = await contacts.create("u", "박지현", "superior")
+    t = datetime(2026, 10, 5, tzinfo=UTC)
+    store = FakeGraphStore(
+        refs={"e1": EpisodeRef("e1", "c1:m01", t), "e2": EpisodeRef("e2", "c1:m04", t)},
+        edges=[
+            _edge("a", "박지현이 주간보고 초안을 받았다", ["e1"]),
+            _edge("b", "김민수가 주간보고 초안을 공유했다", ["e1"]),  # 같은 출처 → 제외
+            _edge("c", "고객사 미팅이 금요일에 있다", ["e2"]),
+        ],
+    )
+    got = await GraphContextRetriever(store, contacts, top_k=4).retrieve(
+        user_id="u", contact_id=boss.id, draft_text="보고", situation=""
+    )
+    assert [e.id for e in got] == ["a", "c"]
 
 
 async def test_composite_merges_and_degrades() -> None:

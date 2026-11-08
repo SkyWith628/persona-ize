@@ -86,3 +86,7 @@ class GraphIngestService:
         if job_id is not None:
             await self._conversations.update_job_graph(user_id, job_id, "completed", done, None)
         return done
+
+    async def remove_episodes(self, user_id: str, names: list[str]) -> int:
+        """대화방 삭제 때 그 메시지들의 에피소드를 그래프에서 지운다."""
+        return await self._store.remove_episodes(user_id, names)

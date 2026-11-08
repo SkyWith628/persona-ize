@@ -197,6 +197,20 @@ async def test_rewrite_save_get_idempotency_feedback(repos) -> None:  # noqa: AN
             result=_result(),
         )
 
+    # D 검색기 버전 문자열은 64자를 넘는다 (E2E에서 500, 0004로 200자)
+    long_version = "knn-style-v1/st:intfloat/multilingual-e5-small:384:v1+graph-context-v1"
+    assert len(long_version) > 64
+    long_rec = await rewrites.save(
+        user_id=a,
+        contact_id=c.id,
+        persona_version_id=None,
+        draft_version=1,
+        input_hash="z" * 64,
+        idempotency_key=None,
+        result=_result().model_copy(update={"retrieval_version": long_version}),
+    )
+    assert (await rewrites.get(a, long_rec.id)).result.retrieval_version == long_version
+
     fb = Feedback(request_id=rec.id, accepted=False, edited_text="수정본", reason="너무 격식")
     assert await rewrites.save_feedback(a, fb) == fb
     assert await rewrites.save_feedback(a, Feedback(request_id=rec.id, accepted=True)) is not None  # 덮어쓰기

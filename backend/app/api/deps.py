@@ -4,7 +4,7 @@
 어디서도 요청 본문의 user_id를 신뢰하지 않는다 — 항상 이 의존성에서 받은 값을 쓴다.
 
 저장소는 `DATABASE_URL`이 있으면 PostgreSQL, 비어 있으면 인메모리다 (테스트·A/B 실험용).
-검색기: A/B는 없음, C는 벡터 kNN(문체), D는 아직 C와 같다 (3주차에 그래프 맥락을 더한다).
+검색기: A/B는 없음, C는 벡터 kNN(문체), D는 C + 그래프 사실 맥락(NEO4J_URI가 비면 D = C).
 """
 
 from __future__ import annotations

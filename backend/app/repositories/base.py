@@ -131,3 +131,10 @@ class ConversationRepo(Protocol):
     async def set_me_name(self, user_id: str, conversation_id: UUID, me_name: str | None) -> Conversation:
         """그래프 에피소드용 사용자 표시 이름을 바꾼다. 이미 수집된 에피소드는 바뀌지 않는다."""
         ...
+
+    async def delete_conversation(self, user_id: str, conversation_id: UUID) -> tuple[int, int]:
+        """대화방과 메시지·묶음·가져오기 작업을 지운다.
+
+        (지운 메시지 수, 지운 묶음 수). 없으면 NotFoundError.
+        """
+        ...

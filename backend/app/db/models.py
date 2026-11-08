@@ -92,9 +92,10 @@ class RewriteResultRow(Base):
     )
     result_text: Mapped[str] = mapped_column(Text, nullable=False)
     validation_status: Mapped[str] = mapped_column(String(16), nullable=False)  # passed | failed
-    model_version: Mapped[str] = mapped_column(String(64), nullable=False)
-    prompt_version: Mapped[str] = mapped_column(String(64), nullable=False)
-    retrieval_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    # 검색기 버전은 "knn-style-v1/st:intfloat/multilingual-e5-small:384:v1+graph-context-v1"처럼 길다 (0004)
+    model_version: Mapped[str] = mapped_column(String(200), nullable=False)
+    prompt_version: Mapped[str] = mapped_column(String(200), nullable=False)
+    retrieval_version: Mapped[str] = mapped_column(String(200), nullable=False)
     token_usage: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     latency_ms: Mapped[int] = mapped_column(Integer, nullable=False)
     # RewriteResult 전체 (보존 항목·검증 보고·근거 id 포함). 도메인 모델이 바뀌어도 열을 늘리지 않기 위해.

@@ -59,6 +59,13 @@ class GraphStore(Protocol):
 
     async def episode_refs(self, uuids: set[str]) -> dict[str, EpisodeRef]: ...
 
+    async def remove_episodes(self, group_id: str, names: list[str]) -> int:
+        """이름(`c1:m03`)으로 에피소드를 찾아 지운다.
+
+        그 에피소드만이 근거인 엣지·노드도 함께. 지운 수를 돌려준다.
+        """
+        ...
+
     async def close(self) -> None: ...
 
 
@@ -133,6 +140,22 @@ class GraphitiStore:
 
         nodes = await EpisodicNode.get_by_uuids(self._g.driver, sorted(uuids))
         return {n.uuid: EpisodeRef(uuid=n.uuid, name=n.name, valid_at=n.valid_at) for n in nodes}
+
+    async def remove_episodes(self, group_id: str, names: list[str]) -> int:
+        if not names:
+            return 0
+        result = await self._g.driver.execute_query(
+            "MATCH (e:Episodic {group_id: $group_id}) WHERE e.name IN $names RETURN e.uuid AS uuid",
+            group_id=group_id,
+            names=names,
+        )
+        records = result[0] if isinstance(result, tuple) else result.records
+        uuids = [r["uuid"] for r in records]
+        for uuid in uuids:
+            # 에피소드 + 그 에피소드만 언급한 엣지·노드를 지운다 (graphiti 구현).
+            # 다른 에피소드도 근거인 사실은 남는다.
+            await self._g.remove_episode(uuid)
+        return len(uuids)
 
     async def close(self) -> None:
         await self._g.close()

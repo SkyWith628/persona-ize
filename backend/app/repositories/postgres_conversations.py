@@ -8,7 +8,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 
 from app.core.errors import NotFoundError, VersionConflictError
@@ -320,3 +320,22 @@ class PostgresConversationRepo:
             row = await self._owned(s, user_id, conversation_id)
             row.me_name = me_name
         return _conversation(row)
+
+    async def delete_conversation(self, user_id: str, conversation_id: UUID) -> tuple[int, int]:
+        async with self._sessions.begin() as s:
+            conv = await self._owned(s, user_id, conversation_id)
+            messages = int(
+                await s.scalar(
+                    select(func.count()).select_from(MessageRow).where(MessageRow.conversation_id == conv.id)
+                )
+                or 0
+            )
+            episodes = int(
+                await s.scalar(
+                    select(func.count()).select_from(EpisodeRow).where(EpisodeRow.conversation_id == conv.id)
+                )
+                or 0
+            )
+            # messages·episodes·episode_messages·import_jobs는 FK ON DELETE CASCADE
+            await s.delete(conv)
+        return messages, episodes

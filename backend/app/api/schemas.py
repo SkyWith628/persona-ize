@@ -86,6 +86,7 @@ class ConversationOut(BaseModel):
     title: str
     source: str
     source_key: str
+    me_name: str | None
     created_at: datetime
 
 
@@ -95,6 +96,14 @@ class MessageOut(BaseModel):
     speaker_role: SpeakerRole
     sent_at: datetime
     text: str
+
+
+class DeletionOut(BaseModel):
+    conversation_id: UUID
+    messages: int
+    episodes: int
+    graph_episodes: int
+    graph_error: str | None
 
 
 class ImportJobOut(BaseModel):

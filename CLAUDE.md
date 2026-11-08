@@ -45,6 +45,9 @@ mode: work
 - 재부팅 뒤 Docker Desktop은 자동 실행되지 않는다. 테스트의 Postgres 항목이 전부 skip이면 Docker Desktop 실행 → `docker compose up -d postgres neo4j`
 - `graphiti_core`는 import 시 `load_dotenv()`로 .env 전체를 os.environ에 올린다 → `deps._build_graph`가 import 뒤 새로 생긴 환경변수를 지운다. 이걸 빼면 테스트의 `Settings(_env_file=None)`이 환경변수로 DATABASE_URL을 읽어 Postgres에 붙는다
 - `.env`의 NEO4J_URI는 2026-11-08 밤부터 로컬 `bolt://localhost:7687`. 1주차 스파이크 결과는 Aura에 남아 있고 그 URI는 `.env` 주석(`NEO4J_URI_AURA`)에 있다. 로컬 Neo4j 비밀번호는 컨테이너 생성 때의 NEO4J_PASSWORD와 같다
+- `DELETE /v1/conversations/{id}`는 그래프 에피소드(`remove_episode`) → DB CASCADE 순서로 동기 삭제하고 수를 돌려준다. 그래프 실패는 `graph_error`로 남고 DB는 지워진다
+- 미리보기(`preview_start`)는 WSL 배포판이 없어 실패한다(`.claude/launch.json`은 있음). E2E는 `cd backend && ../.venv/Scripts/python.exe -m uvicorn app.main:app --port 8001`로 직접 띄운다. 첫 요청은 e5 모델 로딩으로 10초 넘게 걸린다
+- DB 문자열 열 길이: `rewrite_results.*_version`은 200자(0004). D 검색기 버전 문자열이 64자를 넘어 500이 났었다. 새 버전 문자열을 만들면 열 길이를 확인한다
 - 가져오기 API 뒤 그래프 수집은 백그라운드(`asyncio.create_task`)라 응답의 `graph_status`는 pending이다. `GET /v1/imports/{id}`로 completed를 확인한다. 서버 프로세스가 죽으면 미수집분은 다음 가져오기나 `import_synthetic.py --graph`에서 이어서 들어간다
 - 보존 항목 추출은 규칙 기반이라 오탐이 있다. 규칙을 바꾸면 `evals/preserve_rules.md`도 같이 고친다
 - fake 프로바이더는 원문을 그대로 돌려준다 → 검증은 항상 통과. 실제 품질은 `--provider anthropic`으로만 본다. 2026-11-08 실측(5사례×A/B, Opus·Sonnet 5.5)은 `evals/results/2026-11-08-first-real-run.md`
