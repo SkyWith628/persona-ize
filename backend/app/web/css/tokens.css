@@ -86,7 +86,13 @@
   }
 }
 
+/* 고른 테마에 맞춰 브라우저 기본 부품(라디오·체크박스·스크롤바) 색도 바꾼다 */
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
 :root[data-theme="dark"] {
+  color-scheme: dark;
   --bg: #111318;
   --surface: #1a1d24;
   --surface-2: #22262f;

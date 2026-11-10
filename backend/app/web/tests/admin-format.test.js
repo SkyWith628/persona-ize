@@ -1,8 +1,8 @@
-// 관리자 화면 표시 규칙 검사. 실행: js.sh admin test backend/app/web/js/admin/format.test.js
+// 관리자 화면 표시 규칙 검사. 실행: js.sh <이름> test "backend/app/web/tests/*.test.js"
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { ApiError, readError } from "./api.js";
+import { ApiError, readError } from "../js/admin/api.js";
 import {
   CHECK_LABEL,
   REASON_LABEL,
@@ -21,7 +21,7 @@ import {
   rangeText,
   share,
   usd,
-} from "./format.js";
+} from "../js/admin/format.js";
 
 function overview(patch = {}) {
   return {

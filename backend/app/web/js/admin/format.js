@@ -1,4 +1,4 @@
-// 관리자 화면의 표시 규칙. DOM을 쓰지 않는 순수 함수만 둔다 (format.test.js가 node로 검사한다).
+// 관리자 화면의 표시 규칙. DOM을 쓰지 않는 순수 함수만 둔다 (tests/admin-format.test.js가 node로 검사한다).
 // 원칙: 표본이 0이면 0%가 아니라 "자료 없음", 숫자에는 단위, 모르는 값은 지어내지 않는다.
 
 const NUMBER = new Intl.NumberFormat("ko-KR");

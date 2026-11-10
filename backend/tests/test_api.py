@@ -212,7 +212,7 @@ def test_web_index_and_static(client: TestClient) -> None:
     (화면 구조가 바뀌어도 유효).
     """
     r = client.get("/")
-    assert r.status_code == 200 and "Persona_ize" in r.text
+    assert r.status_code == 200 and "Persona_ize" in r.text and "/static/js/main.js" in r.text
     refs = sorted(set(re.findall(r'(?:src|href)="(/static/[^"]+)"', r.text)))
     assert any(ref.endswith(".js") for ref in refs) and any(ref.endswith(".css") for ref in refs)
     for ref in refs:

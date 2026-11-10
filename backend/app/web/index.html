@@ -3,141 +3,56 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Persona_ize</title>
-  <link rel="stylesheet" href="/static/app.css" />
+  <meta name="color-scheme" content="light dark" />
+  <meta name="description" content="상대와 상황에 맞는 내 말투로 메시지를 다듬되, 날짜·약속 같은 사실은 바꾸지 않습니다. 자동으로 보내지 않습니다." />
+  <title>Persona_ize — 사실은 그대로, 말투만 상대에 맞게</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="/static/css/tokens.css" />
+  <link rel="stylesheet" href="/static/css/app.css" />
+  <link rel="stylesheet" href="/static/css/app-views.css" />
+  <script src="/static/js/theme-boot.js"></script>
+  <script type="module" src="/static/js/main.js"></script>
+  <!-- 모듈을 한꺼번에 미리 받는다(빌드가 없어 import를 따라가며 차례로 받으면 느리다).
+       js/ 아래 파일을 더하거나 빼면 이 목록도 고친다 — tests/shell.test.js가 어긋남을 잡는다. -->
+  <link rel="modulepreload" href="/static/js/api.js" />
+  <link rel="modulepreload" href="/static/js/lib/errors.js" />
+  <link rel="modulepreload" href="/static/js/lib/format.js" />
+  <link rel="modulepreload" href="/static/js/lib/importing.js" />
+  <link rel="modulepreload" href="/static/js/lib/model.js" />
+  <link rel="modulepreload" href="/static/js/lib/persona.js" />
+  <link rel="modulepreload" href="/static/js/lib/router.js" />
+  <link rel="modulepreload" href="/static/js/session.js" />
+  <link rel="modulepreload" href="/static/js/store.js" />
+  <link rel="modulepreload" href="/static/js/ui/chips-input.js" />
+  <link rel="modulepreload" href="/static/js/ui/clipboard.js" />
+  <link rel="modulepreload" href="/static/js/ui/combobox.js" />
+  <link rel="modulepreload" href="/static/js/ui/contact-dialog.js" />
+  <link rel="modulepreload" href="/static/js/ui/dialog.js" />
+  <link rel="modulepreload" href="/static/js/ui/dom.js" />
+  <link rel="modulepreload" href="/static/js/ui/parts.js" />
+  <link rel="modulepreload" href="/static/js/ui/result-card.js" />
+  <link rel="modulepreload" href="/static/js/ui/toast.js" />
+  <link rel="modulepreload" href="/static/js/views/compose.js" />
+  <link rel="modulepreload" href="/static/js/views/consent.js" />
+  <link rel="modulepreload" href="/static/js/views/contact-detail.js" />
+  <link rel="modulepreload" href="/static/js/views/contacts.js" />
+  <link rel="modulepreload" href="/static/js/views/conversations.js" />
+  <link rel="modulepreload" href="/static/js/views/data.js" />
+  <link rel="modulepreload" href="/static/js/views/history.js" />
+  <link rel="modulepreload" href="/static/js/views/import.js" />
+  <link rel="modulepreload" href="/static/js/views/landing.js" />
+  <link rel="modulepreload" href="/static/js/views/persona-editor.js" />
+  <link rel="modulepreload" href="/static/js/views/settings.js" />
+  <link rel="modulepreload" href="/static/js/views/shell.js" />
 </head>
 <body>
-  <header class="top">
-    <div>
-      <h1>Persona_ize</h1>
-      <p class="sub">상대·상황에 맞는 내 말투로 다듬되, 원문의 사실과 의도는 그대로.</p>
-    </div>
-    <div id="auth-box" class="auth">
-      <form id="auth-form" class="row">
-        <input id="auth-user" placeholder="이름 (영문·숫자 3~32자)" autocomplete="username" required />
-        <input id="auth-pass" type="password" placeholder="비밀번호 (8자 이상)" autocomplete="current-password" required />
-        <button type="submit" data-action="login">로그인</button>
-        <button type="button" data-action="register" class="ghost">가입</button>
-      </form>
-      <div id="auth-me" class="hidden">
-        <span id="me-name"></span>
-        <span id="usage" class="muted"></span>
-        <button id="pw-change" class="ghost">비밀번호 변경</button>
-        <button id="acct-delete" class="danger">계정 삭제</button>
-        <button id="logout" class="ghost">로그아웃</button>
-      </div>
-    </div>
-  </header>
-
-  <p id="flash" class="flash hidden"></p>
-
-  <main id="app" class="grid hidden">
-    <section class="col">
-      <h2>1. 상대</h2>
-      <p id="contact-empty" class="muted empty">아직 상대가 없습니다. 별칭과 관계를 넣고 추가하세요. 실명 대신 별칭을 써도 됩니다.</p>
-      <ul id="contact-list" class="list"></ul>
-      <form id="contact-form" class="row">
-        <input id="contact-alias" placeholder="별칭 (예: 박지현)" maxlength="50" required />
-        <select id="contact-rel">
-          <option value="superior">상사</option>
-          <option value="colleague">동료·동기</option>
-          <option value="subordinate">후배</option>
-          <option value="friend">친구</option>
-          <option value="family">가족</option>
-          <option value="partner">연인</option>
-          <option value="acquaintance">지인·거래처</option>
-        </select>
-        <button type="submit">추가</button>
-      </form>
-
-      <div id="persona-box" class="hidden">
-        <div class="row between">
-          <h2>2. 페르소나 <span id="persona-version" class="muted"></span></h2>
-          <button id="contact-delete" class="danger">이 상대 삭제</button>
-        </div>
-        <form id="persona-form" class="persona">
-          <label>격식 <output id="o-formality">3</output><input type="range" name="formality" min="1" max="5" value="3" /></label>
-          <label>친근함 <output id="o-friendliness">3</output><input type="range" name="friendliness" min="1" max="5" value="3" /></label>
-          <label>직접성 <output id="o-directness">3</output><input type="range" name="directness" min="1" max="5" value="3" /></label>
-          <label>길이
-            <select name="length_pref"><option value="shorter">짧게</option><option value="same" selected>원문만큼</option><option value="longer">길게</option></select>
-          </label>
-          <label>이모지
-            <select name="emoji"><option value="none" selected>없음</option><option value="rare">가끔</option><option value="often">자주</option></select>
-          </label>
-          <label>호칭 <input name="address_term" placeholder="예: 팀장님, 형" maxlength="30" /></label>
-          <label>선호 표현 <input name="preferred_phrases" placeholder="쉼표로 구분" /></label>
-          <label>금지 표현 <input name="forbidden_phrases" placeholder="예: ㅋㅋ, ㅠ" /></label>
-          <label>메모 <input name="notes" placeholder="예: 업무 얘기는 결론부터" maxlength="500" /></label>
-          <button type="submit">저장 (새 버전)</button>
-        </form>
-
-        <h2>3. 과거 대화 <span class="muted">(C·D 조건의 재료)</span></h2>
-        <p id="conv-empty" class="muted empty">대화방이 없습니다. 추가한 뒤 선택하면 메시지를 붙여 넣을 수 있습니다. 없어도 A·B 조건은 됩니다.</p>
-        <ul id="conv-list" class="list"></ul>
-        <form id="conv-form" class="row">
-          <input id="conv-title" placeholder="대화방 이름" maxlength="200" />
-          <input id="conv-me" placeholder="내 이름 (그래프용, 예: 김민수)" maxlength="50" />
-          <button type="submit">대화방 추가</button>
-        </form>
-        <form id="import-form" class="hidden">
-          <p class="muted">한 줄에 한 메시지: <code>2026-10-05 09:25 | 박지현 | 내용</code> (이름 대신 <code>me</code>/<code>contact</code>도 됨). 또는 JSON 배열.</p>
-          <textarea id="import-text" rows="6" placeholder="2026-10-05 09:25 | 박지현 | 민수씨, 개편은 언제까지 가능해요?&#10;2026-10-05 09:31 | 김민수 | 팀장님, 다음 주 수요일까지는 가능합니다."></textarea>
-          <div class="row">
-            <input id="import-me-name" placeholder="내 이름으로 쓸 화자 (예: 김민수)" />
-            <button type="submit">가져오기</button>
-          </div>
-          <p id="import-status" class="muted"></p>
-        </form>
-        <details id="msg-box" class="hidden">
-          <summary>이 대화방의 메시지 <span id="msg-count" class="muted"></span></summary>
-          <ul id="msg-list" class="msgs"></ul>
-        </details>
-      </div>
-    </section>
-
-    <section class="col">
-      <h2>4. 첨삭</h2>
-      <p id="rewrite-hint" class="muted empty">왼쪽에서 상대를 선택하면 첨삭할 수 있습니다. 결과는 자동으로 보내지 않습니다 — 복사해서 직접 보냅니다.</p>
-      <form id="rewrite-form" class="persona hidden">
-        <label>상황 <input name="situation" placeholder="예: 일정 지연 양해" maxlength="500" /></label>
-        <label>조건
-          <select name="condition">
-            <option value="B" selected>B 페르소나</option>
-            <option value="C">C +내 과거 표현</option>
-            <option value="D">D +그래프 맥락</option>
-            <option value="A">A 기준선(페르소나 없음)</option>
-          </select>
-        </label>
-        <label>원문 <textarea name="draft_text" rows="4" maxlength="2000" required placeholder="오늘 정리해서 내일 오전까지 보내드릴게요."></textarea></label>
-        <button type="submit" id="rewrite-submit">추천 받기</button>
-      </form>
-
-      <article id="result" class="result hidden">
-        <div class="row between">
-          <strong id="result-status"></strong>
-          <span id="result-meta" class="muted"></span>
-        </div>
-        <textarea id="result-text" rows="4"></textarea>
-        <div class="row">
-          <button id="fb-accept">적용 (복사)</button>
-          <button id="fb-edit" class="ghost">수정해서 적용</button>
-          <button id="fb-reject" class="ghost">거절</button>
-        </div>
-        <details open><summary>바꾼 이유</summary><ul id="result-reasons"></ul></details>
-        <details open><summary>주의</summary><ul id="result-warnings"></ul></details>
-        <details><summary>보존 항목·검증</summary><ul id="result-preserved"></ul><p id="result-validation" class="muted"></p></details>
-        <details><summary>참고한 과거 표현</summary><ul id="result-evidence"></ul></details>
-      </article>
-
-      <div id="history-box" class="hidden">
-        <h2>최근 첨삭 <span id="history-count" class="muted"></span></h2>
-        <p id="history-empty" class="muted empty">아직 이 상대에게 받은 추천이 없습니다.</p>
-        <ul id="history-list" class="list"></ul>
-      </div>
-    </section>
-  </main>
-
-  <script type="module" src="/static/app.js"></script>
+  <a class="skip-link" href="#main">본문으로 건너뛰기</a>
+  <div id="root">
+    <p class="boot-text">Persona_ize를 여는 중이에요…</p>
+  </div>
+  <div id="toasts" class="toasts" aria-live="polite" aria-relevant="additions"></div>
+  <noscript>
+    <p class="noscript">이 화면은 자바스크립트가 켜져 있어야 동작해요. 브라우저 설정에서 자바스크립트를 켠 뒤 새로 고쳐 주세요.</p>
+  </noscript>
 </body>
 </html>
