@@ -161,6 +161,9 @@ preflight() {
 	if [ "$(env_get USAGE_GLOBAL_DAILY_TOKEN_LIMIT 0)" = "0" ] && [ "$(env_get USAGE_GLOBAL_DAILY_REWRITE_LIMIT 0)" = "0" ]; then
 		warn "전체 사용량 차단기(USAGE_GLOBAL_DAILY_*)가 꺼져 있습니다 — 하루 비용 상한이 사용자별 한도 × 사용자 수가 됩니다."
 	fi
+	if [ "$(env_get GRAPH_INGEST_USER_MESSAGE_CAP 0)" = "0" ] && [ "$(env_get GRAPH_INGEST_DAILY_GLOBAL_CAP 0)" = "0" ]; then
+		warn "그래프 수집 상한(GRAPH_INGEST_*_CAP)이 둘 다 0(무제한)입니다 — 메시지 1건마다 모델 비용이 듭니다. API 키가 있으면 backend가 시작을 거부합니다(ALLOW_UNCAPPED_COSTS=true로만 통과)."
+	fi
 	if [ "$(uname -s)" = "Linux" ] && [ "$(stat -c %a "$ENV_FILE" 2>/dev/null || echo 600)" != "600" ]; then
 		warn "$ENV_FILE 권한이 600이 아닙니다 (chmod 600 권장 — 비밀 값이 들어 있습니다)."
 	fi

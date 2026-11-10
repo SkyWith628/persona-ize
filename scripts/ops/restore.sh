@@ -5,6 +5,7 @@
 #   scripts/ops/restore.sh <덤프 파일> --db <연습용 DB> --drop-after   # 행 수만 확인하고 그 DB를 지운다
 #   scripts/ops/restore.sh <덤프 파일>                    # 실제 복원: 백엔드를 멈추고 운영 DB를 덮어쓴 뒤 다시 띄운다
 #   --yes  확인 질문을 건너뛴다(자동화용)
+#   --no-backup  실제 복원 전에 지금 상태를 백업하지 않는다 (기본은 먼저 백업을 한 번 뜬다)
 #
 # <덤프 파일>은 백업 폴더(BACKUP_DIR, 기본 ./backups) 안의 파일 이름 또는 그 경로. 목록: scripts/ops/backup.sh --list
 # 실제 복원 뒤 백엔드가 시작하면서 `alembic upgrade head`를 돌리므로, 옛 스키마의 덤프도 최신 스키마로 올라온다.
@@ -12,7 +13,7 @@
 . "$(dirname "$0")/_lib.sh"
 require_env_file
 
-dump="" target="" yes="no" drop_after="no"
+dump="" target="" yes="no" drop_after="no" pre_backup="yes"
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--db)
@@ -25,6 +26,10 @@ while [ $# -gt 0 ]; do
 		;;
 	--drop-after)
 		drop_after="yes"
+		shift
+		;;
+	--no-backup)
+		pre_backup="no"
 		shift
 		;;
 	-*) die "모르는 옵션: $1" ;;
@@ -70,8 +75,12 @@ fi
 # ---- 실제 복원: 운영 DB를 덮어쓴다 ----
 [ "$drop_after" = "no" ] || die "--drop-after는 연습용 DB(--db)에만 씁니다."
 if [ "$yes" != "yes" ]; then
-	confirm "운영 DB '$live_db'의 현재 내용을 모두 지우고 '$file'로 되돌립니다. 되돌릴 수 없습니다.
-(지금 상태를 남기려면 먼저 scripts/ops/backup.sh 를 돌리세요.)" "$live_db"
+	confirm "운영 DB '$live_db'의 현재 내용을 모두 지우고 '$file'로 되돌립니다." "$live_db"
+fi
+if [ "$pre_backup" = "yes" ]; then
+	# 덤프를 잘못 골랐을 때 돌아올 곳을 남긴다. 실패하면 복원하지 않는다.
+	info "복원 전에 지금 상태를 백업합니다 (건너뛰려면 --no-backup)"
+	bash "$OPS_DIR/backup.sh" || die "복원 전 백업에 실패했습니다. 원인을 고치거나 --no-backup 으로 다시 실행하세요."
 fi
 info "백엔드를 멈춥니다 (DB 연결을 끊기 위해)"
 compose stop backend
