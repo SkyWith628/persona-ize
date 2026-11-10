@@ -4,9 +4,7 @@
 
 ## A. 지금 바로 할 수 있는 것 (팀장, 팀원 산출물 불필요)
 
-| # | 작업 | 왜 | 크기 |
-|---|---|---|---|
-| A1 | **API 크레딧 충전 + Console 비용 확인·기록** — 2026-11-09 01:30 그래프 수집 중 `credit balance is too low`(400)로 중단. 충전 전까지 Claude 호출(첨삭 anthropic·그래프 수집·run_eval --provider anthropic)은 전부 실패한다. 충전 뒤 `make demo-prepare`를 다시 돌리면 demo 그래프의 남은 21건이 들어간다 — 11/08~09 Opus ~90회, haiku 에피소드 ~260건의 실제 금액을 `evals/results/*.md` 비용 절에 적는다 | 사례 120개 × 4조건 × repeat 3 = 1,440회 예산을 잡으려면 1회 단가가 필요 | 10분 (사용자가 Console 열어야 함) |
+지금은 없다. A1(크레딧 충전·Console 비용 확인)은 11/10에 끝났다 — 누계 US$12.46, 결과는 `decisions.md` 11-10.
 
 운영 묶음(11/09 밤)은 끝났다 — 재시작 이어받기·`/healthz?deep=true`·CI Postgres·상대/계정 삭제·`usage_report`·`graph_reset`·`housekeeping`. 결과는 `decisions.md` 11-09 "운영 묶음 ①②".
 
