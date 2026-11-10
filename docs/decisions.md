@@ -200,3 +200,25 @@
 - 결과: 전부 추천, 재생성 0/10, recall 1.00(측정 가능한 E002·E004·E005). E005는 2/2 "다음 달(11월) 밥 약속과 같은 달" 주의 — v2 D는 달을 잇지 못했다. E002(금요일=고객사 미팅), E003(토요일=어머니 생신)도 2/2. "'어제'는 10/22" 같은 날짜 풀이 잡음은 0건.
 - 그대로인 것: E004 '파트장님' 호칭 주의(v2 D·v3 C에도 있음), E001 사과 표현 없음 주의, E002 본문의 '죄송하지만' 추가(v2 D·v3 C와 같음 — 월요일 안건 2의 허용 여부 결정 대상).
 - 환경: 이 PC의 Smart App Control이 켜짐(강제) 상태가 되어 호스트 venv의 sqlalchemy·torch DLL 로드가 차단된다. 평가는 backend 컨테이너에서 돌렸다(CLAUDE.md 함정 참고). 보안 설정은 건드리지 않았다.
+
+## 2026-11-11 배포 준비 ①: 리눅스 VM 한 대 + Docker Compose + Caddy, 다섯 갈래를 `feat/deploy-ready`로 통합
+- 방식: 계약서(설정 이름·API 모양·파일 소유)와 스키마 0008을 먼저 정하고, 에이전트 5개(infra·core·data·web·admin)가 git 워크트리에서 병렬로 만든 뒤 한 브랜치로 합쳤다. 이어 독립 검토 2개(보안·정확성)가 합친 코드를 읽고 재현 테스트로 지적했고, 그 수정까지 반영했다.
+- 결과: 운영 구성(`docker-compose.prod.yml` — caddy만 80/443 공개, backend·postgres·neo4j·backup은 내부 네트워크), 다단계 이미지(`prod` 비루트·e5 모델 내장·오프라인 / `dev`), `scripts/ops/`(deploy·rollback·backup·restore·run), `scripts/smoke_test.py`, `docs/deploy.md`. 로컬 리허설(가짜 모델, 운영 모드): 빌드 → 기동 → 스모크 17단계 56초.
+- 결정: 워커 1개(로그인 제한·요청 제한·그래프 잠금이 프로세스 메모리). 의존성은 `backend/constraints.txt`로 고정하고 `make lock`으로 갱신 — 고정 전에는 같은 날 만든 두 이미지의 anthropic이 2.6.0과 2.8.0이었다.
+- 확인: 개발 DB 복사본에서 0007 → 0008 마이그레이션, 실제 시연 데이터로 새 API·화면, 개발 Neo4j에 읽기 전용으로 붙여 `auto` → D 선택과 그래프 맥락 검색.
+- 남은 것: 실제 VM·도메인·Let's Encrypt, **실제 Claude 호출**(새 코드로는 가짜 모델만 돌렸다), GitHub Actions(`deploy` 잡·`release.yml`) 실행 확인.
+
+## 2026-11-11 배포 준비 ②: 운영 하드닝과 계정(core)
+- 결정: `APP_ENV=production`은 헤더 스텁·비Secure 쿠키·빈 DATABASE_URL·개발 기본 비밀번호·비용 상한이 꺼진 설정(`ALLOW_UNCAPPED_COSTS`로만 예외)에서 시작을 거부하고 `/docs`를 끈다. 미들웨어는 순수 ASGI(요청 id·접근 로그·CSP 등 보안 헤더·본문 상한·IP 요청 제한·Host 검사). 오류는 최상위 `code`·`message`로 통일하고 예전 `detail`은 남긴다(모바일·시연 화면 호환).
+- 결정: 비브라우저 클라이언트용 Bearer 토큰(`POST /v1/auth/token`) — 세션 토큰과 같은 것이고 CSRF는 Bearer로 찾았을 때만 건너뛴다. 가입은 초대 코드(`REGISTER_INVITE_CODE`)·동의(`REQUIRE_CONSENT`)를 요구할 수 있다. 아이디는 영문·숫자·`_`·`-`만, 대소문자만 다른 이름은 중복(main은 한글 아이디를 받았다 — 기존 계정의 로그인은 그대로).
+- 결정(통합): 관리자 판정은 `Settings.is_admin_name` 한 곳, 대소문자까지 일치. 운영에서는 관리자 이름을 화면 가입으로 만들 수 없고 서버에서 `scripts/reset_password.py --create`로 만든다(이름 선점 방지). `MAX_BODY_BYTES` 기본 8MB(한글 200만 자 ≈ 6MB라 3MB에서는 가져오기 글자 상한보다 먼저 걸렸다).
+
+## 2026-11-11 배포 준비 ③: 대화 가져오기와 API 확장(data)
+- 결과: `app/importers`(카카오톡 .txt 3변형·.csv, 텔레그램 `result.json`, 붙여넣기) → `POST /v1/imports/parse`(미리보기)·`…/imports/raw`(화자 지정·skip·keep_recent). 개인정보 패턴 가림은 API 경로에만. 그래프 수집 상한과 `graph_status: limited`. `condition: auto`, `adjust`, `channel`, 근거 원문 조회, 이력 삭제, 전체 차단기(429 `budget_exceeded`), 요약·내보내기, 규칙 기반 말투 제안.
+- 결정: 메시지 id는 `UTC 분 + 같은 분·같은 본문 순번 + 본문` 해시(화자 이름 제외 — 기기마다 `회원님`/실명으로 다르다). 근거(evidence)는 참조만 저장하고 조회 때 남아 있는 원문을 읽는다(대화를 지우면 근거에서도 사라진다). `auto`는 페르소나 없이도 가져온 대화가 있으면 C/D. 주기 작업이 켜져 있으면 그래프 미수집분을 상한 안에서 이어받는다.
+- 남은 것: **카카오톡 파서는 합성 픽스처 기준 — 실물 내보내기 샘플 검증 전**. 가림은 패턴 기반이라 이름·주소는 못 가린다. 가져오기는 요청 안에서 임베딩까지 끝낸다(수천 건이면 수십 초~몇 분) — 운영 예시는 한 번에 2,000건.
+
+## 2026-11-11 배포 준비 ④: 운영 대시보드(admin)와 PC 웹 앱(web)
+- 결정(admin): 집계는 요청 때마다 PostgreSQL에서 직접(집계 표 없음). 응답에 원문·첨삭 문장·자유 서술 없음, 사용자 id는 줄여서, 통과한 호출은 `admin_access_log`에. 토큰은 `usage_counters` 기준, 단가(`COST_*`)가 없으면 금액을 만들지 않는다. 표본이 0이면 비율은 null.
+- 결정(web): 빌드 없는 ES 모듈 + 해시 라우팅으로 다시 만들었다(이 PC에 node가 없고 React는 보류). 서버 문자열은 전부 text node(innerHTML 금지를 테스트로 강제), 초안은 탭 메모리에만, 브라우저 저장소에는 테마와 마지막 상대 id만. PC 범위는 브라우저 웹 앱 — 와이어프레임의 설치형 트레이 프로그램은 만들지 않았고 Bearer 토큰 API만 준비했다.
+- 남은 것: `/privacy`·`/terms`는 사실 설명 위주의 초안("확인 필요" 표시 있음) — 공개 전 검토. 실제 모델의 주의 문구·그래프 맥락이 새 화면에 나오는 모습은 가짜 모델로는 볼 수 없었다.

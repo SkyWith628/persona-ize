@@ -15,7 +15,12 @@ mode: work
 - 그래프 스파이크: `cd graph/graphiti_p0 && ../../.venv/Scripts/python.exe -m pytest -q` / `ingest.py --dry-run` / `--limit 5`
 - 서버: `cd backend && ../.venv/Scripts/python.exe -m uvicorn app.main:app --reload`
 - 운영: `scripts/usage_report.py [--days 7 --user <id> --csv out.csv]`(사용자·일 KST·조건별 호출·토큰), `scripts/graph_reset.py --user <username|id> [--conversation c1] [--dry-run|--yes] [--no-reingest]`(그래프 지우고 재수집, haiku 비용), `scripts/housekeeping.py`(만료 세션·오래된 작업·카운터). 깊은 헬스체크 `GET /healthz?deep=true`(503이면 DB/Neo4j 문제)
-- Windows 콘솔에서 한글 깨지면 `PYTHONUTF8=1`.
+- 호스트 venv를 못 쓰는 PC(아래 함정의 Smart App Control): `make test-docker [ARGS="tests/test_auth.py -k login"]` · `make lint-docker` — `test` 프로필 컨테이너(이미지 `dev` 타깃)에서 돈다. **test 서비스에는 `.env`를 넣지 않는다**
+- 화면 단위 테스트(node 22, 이 PC에는 node가 없어 Docker로): `MSYS_NO_PATHCONV=1 docker run --rm -v "<저장소>:/repo" -w /repo node:22-alpine node --experimental-default-type=module --test "backend/app/web/tests/*.test.js"` (디렉터리 인자는 실패한다 — 글롭으로)
+- 운영 배포([docs/deploy.md](docs/deploy.md)): `scripts/ops/deploy.sh`(백업 → 빌드 → 기동 → 스모크) · `rollback.sh` · `backup.sh` · `restore.sh` · `run.sh scripts/<스크립트>.py`(운영 스택 안에서 실행). `make prod-config|prod-up|prod-down|prod-logs|prod-ps|backup|smoke`. 스모크만: `python scripts/smoke_test.py --base-url https://<주소> [--insecure --invite-code …]`
+- 계정: `scripts/reset_password.py --username <이름> [--create]` — 비밀번호 재설정(세션 전부 폐기). 운영에서 관리자 계정은 `--create`로만 만든다
+- 의존성 버전 고정: `backend/constraints.txt`(Dockerfile·CI가 `pip -c`). 올릴 때는 줄을 지우고 빌드 → 테스트 → `make lock` (`docker/README.md`)
+- Windows 콘솔에서 한글 깨지면 `PYTHONUTF8=1`. Git Bash의 curl은 한글 JSON 본문을 CP949로 보내 400이 난다 → `--data-binary @파일`
 
 완료 기준: 위 테스트·lint 통과 + 동작 변경에는 테스트 동반. "됐다"고 말하기 전에 실제로 실행한다.
 
@@ -27,8 +32,12 @@ mode: work
 - `repositories/base.py` Protocol(비동기) ← `postgres.py`(기본, SQLAlchemy 2 + asyncpg) / `memory.py`(테스트·DATABASE_URL 비었을 때). `db/models.py` 테이블, `db/session.py` 엔진, 스키마는 `backend/migrations/`(Alembic)
 - `api/deps.py build_state`가 DATABASE_URL 유무로 저장소를 고른다. `/healthz`의 `storage`로 확인
 - 사용량 제어: `repositories/usage.py`(사용자·일 KST 카운터, Postgres는 원자적 UPSERT) → `RewriteService`가 모델 호출 전 요청 수를 예약하고 호출 뒤 토큰을 더한다. 한도는 `USAGE_DAILY_*`, 초과는 429 `usage_exceeded`, 조회는 `GET /v1/usage`(멱등 재요청은 세지 않음)
-- 인증(`api/deps.py current_user_id`): 세션 쿠키 `pi_session`(HttpOnly, SameSite=Lax) 우선, 쓰기 요청은 `X-CSRF-Token`(세션별 토큰, 로그인 응답·`/v1/auth/me`) 필수(403). 쿠키가 없으면 `AUTH_ALLOW_HEADER_STUB`일 때만 `X-User-Id` 헤더 — 개발·테스트·평가용, 배포에서는 false. 본문의 user_id는 절대 신뢰하지 않는다. 비밀번호는 stdlib scrypt(`core/security.py`), 세션 토큰은 해시만 저장(`users`·`sessions`, 0006). 로그인 실패 제한은 `LoginThrottle`(이름·IP, 프로세스 메모리, `AUTH_MAX_FAILURES`/`AUTH_LOCKOUT_MINUTES`), 비밀번호 변경은 다른 세션 전부 폐기
-- `backend/app/web/` 데모 화면(빌드 없는 정적 HTML/CSS/JS, 서버 `/`와 `/static`). 같은 출처에서 JSON API를 호출하고 세션 쿠키+CSRF를 쓴다. `apps/web/`(React)는 보류
+- 인증(`api/deps.py current_user_id`·`current_session`): `Authorization: Bearer`(비브라우저용, `POST /v1/auth/token`, CSRF 불필요 — Bearer가 틀리면 쿠키로 넘어가지 않고 401) → 세션 쿠키 `pi_session`(HttpOnly, SameSite=Lax, 쓰기 요청은 `X-CSRF-Token` 필수) → `AUTH_ALLOW_HEADER_STUB`일 때만 `X-User-Id` 헤더(개발·테스트·평가용, 운영은 거부). 본문의 user_id는 절대 신뢰하지 않는다. 비밀번호는 stdlib scrypt(`core/security.py`), 세션 토큰은 해시만 저장. 공개 가입은 `AuthService.signup`(초대 코드·동의·운영 모드의 관리자 이름 차단), `register`·`create_account`는 스크립트용 안쪽 단계. 인증 스키마는 `api/schemas_auth.py`. 관리자 판정은 `Settings.is_admin_name` 한 곳(대소문자까지 일치)
+- 플랫폼(`core/`): `guard.py` 운영 모드 검사(`APP_ENV=production`에서 위험 설정이면 시작 거부) · `middleware.py` 순수 ASGI 미들웨어(요청 id·접근 로그·보안 헤더·CORS·500 통일·Host 검사·요청 제한·본문 상한, 순서는 파일 머리말) · `http_errors.py` 오류 모양(최상위 `code`·`message`, 예전 `detail`도 유지) · `ratelimit.py` IP 요청 제한 · `logs.py` 요청 id·`LOG_LEVEL` · `periodic.py` 주기 작업(정리 + 그래프 미수집분 이어받기, `HOUSEKEEPING_INTERVAL_HOURS`)
+- 가져오기 파서(`importers/`): 형식 감지 + 카카오톡(.txt 안드로이드·iOS·PC, .csv)·텔레그램 `result.json`·붙여넣기 → 공통 결과 → `ImportService`. 개인정보 패턴 가림(`pii.py`)은 **API 경로에만**(평가·합성 적재 스크립트 결과는 그대로). 카카오톡은 합성 픽스처 기준 — 실물 샘플 검증 전
+- 관리자: `api/routes/admin.py`(접근 검사 401 → 403 → 503) → `services/admin_service.py`(기간·비율·비용·id 줄이기, 순수 함수) → `repositories/admin.py`(집계 SQL, PostgreSQL 전용). 화면 `web/admin.html` + `css/admin.css` + `js/admin.js` + `js/admin/*`
+- `backend/app/web/` PC 웹 앱(빌드 없는 ES 모듈, 해시 라우팅 `#/compose`·`#/contacts`·`#/import`·`#/history`·`#/data`·`#/settings`): `index.html`(셸) + `css/tokens.css`(디자인 토큰, 모든 화면이 먼저 불러온다)·`css/app*.css` + `js/{main,api,session,store}.js`·`js/lib/`(순수 로직)·`js/ui/`(부품)·`js/views/`(화면). 안내 문서 `privacy.html`·`terms.html`(`/privacy`·`/terms`). 테스트는 `web/tests/*.test.js`(HTTP로는 안 열린다). `proto.*`는 시연 프로토타입(모바일 쪽이 고친다 — 건드리지 않는다). `apps/web/`(React)는 보류, `apps/ios/`는 `design/iphone-mobile` 브랜치
+- 운영 구성: `backend/Dockerfile`(다단계: `prod` 비루트·e5 모델 내장·오프라인 / `dev` pytest·ruff) · `docker-compose.prod.yml`(caddy만 80/443 공개, 나머지는 내부 네트워크) · `docker/caddy/Caddyfile` · `docker/backup/` · `scripts/ops/` · `.env.production.example`
 - `graph/graphiti_p0/` 스파이크. `data/synthetic/`의 JSON을 읽는다
 
 ## 컨벤션
@@ -42,12 +51,21 @@ mode: work
 
 ## 함정
 - `ruff format`을 돌린 뒤 테스트. line-length 110
-- 화면 JS에서 `form.elements.length`는 컨트롤 개수다 → 페르소나 `length` 필드는 `name="length_pref"`. 클립보드 복사는 포커스 없으면 실패하므로 피드백 저장과 분리
+- 화면: 서버 문자열은 전부 text node로 넣는다(innerHTML 금지 — 테스트가 강제). 인라인 `<script>`·인라인 핸들러·외부 리소스 금지(CSP `script-src 'self'`). `js/`에 파일을 더하거나 빼면 `index.html`의 modulepreload 목록도 고친다(`shell.test.js`가 잡는다). 클립보드 복사는 포커스 없으면 실패하므로 피드백 저장과 분리
+- 정적 파일·화면 HTML은 `Cache-Control: no-cache`로 나가야 한다(미들웨어가 붙인다) — 없으면 모듈 버전이 섞여 화면이 뜨지 않는다
+- 여러 포트의 서버를 같은 `localhost`로 열면 `pi_session` 쿠키가 겹쳐 서로 로그아웃시킨다 → `web.localhost:8101`처럼 이름을 달리해 연다
 - 서버 시작 때 e5 임베더를 백그라운드로 워밍업한다(`_warm_up_embedder`). 로그 `embedder warmed up`이 뜨기 전 첫 C/D 요청은 10초쯤 걸릴 수 있다
 - `/v1/rewrites/usage`처럼 `/{request_id}` 뒤에 고정 경로를 붙이면 UUID 파싱 422가 난다 → 고정 경로는 별도 라우터(`/v1/usage`)
 - fake 프로바이더도 글자 수 기반 토큰 수를 보고한다(사용량 테스트용). 실제 토큰과 다르니 비용 계산엔 anthropic 결과만 쓴다
 - 설치 extra: `dev`(테스트·ruff), `db`(SQLAlchemy·asyncpg·pgvector·alembic, torch 없음 — CI가 이 조합으로 Postgres 통합 테스트를 돌린다), `embed`(sentence-transformers·torch), `graph`(graphiti). 로컬 개발은 `backend[dev,db,embed,graph]`
 - 저장소 메서드는 전부 `async`다(Postgres가 기준). 라우트·서비스에서 `await`를 빼먹으면 코루틴 객체가 그대로 응답에 들어간다
+- 워커는 **1개**가 전제다: 로그인 실패 제한·요청 제한·그래프 수집 잠금·진행 중 요청 집계가 프로세스 메모리에 있다. 프록시 뒤에서는 uvicorn `--proxy-headers`(운영 이미지가 넣는다) — 앱에서 `X-Forwarded-For`를 직접 읽지 않는다
+- 정규식은 `re`가 GIL을 놓지 않아 스레드로 옮겨도 서버 전체가 멈춘다. 사용자 입력에 도는 패턴에 `\s*`가 맞닿는 식의 중첩 반복을 두지 않는다(2026-11-11 보안 검토: 가림 패턴 하나로 30KB 요청에 23초 정지)
+- 라우트 함수 안에서 import한 타입을 인자 주석에 쓰면(`from __future__ import annotations`) FastAPI가 쿼리 인자로 보고 422를 낸다 → 모듈 맨 위에서 import
+- ruff E501은 한글을 2칸으로 센다(한글 주석은 55자쯤에서 줄바꿈)
+- 관리자 응답에 문장이 들어가는 필드를 더하지 않는다(`test_admin.py`의 표식 검사가 잡는다). `test_admin.py`는 표에 직접 INSERT한다 — 기본값 없는 NOT NULL 열을 더하면 `_add_*` 헬퍼도 고친다
+- `rewrite_requests.condition`은 `String(1)`이라 `auto`를 저장하면 안 된다(멱등 해시만 요청 값). `RewriteInput`에 선택 필드를 더할 때는 `_input_hash`에서 기본값이면 빼야 예전 해시가 유지된다
+- asyncpg는 timestamptz를 UTC로 돌려준다. 날짜·요일을 글자로 만들 때는 한국 시간으로 바꾼 뒤에(그래프 에피소드 본문, 프롬프트의 예시 날짜)
 - `backend/alembic.ini`는 ASCII만. alembic이 로케일 인코딩(cp949)으로 읽어 한글 주석이 있으면 UnicodeDecodeError
 - 스키마 변경은 `db/models.py`와 `migrations/versions/`를 함께 고친다. 자동 생성(`alembic revision --autogenerate`)은 결과를 꼭 읽고 커밋
 - `episodes.embedding`은 vector(384)로 고정(0002). 임베딩 모델을 바꾸면 새 마이그레이션 + `ImportService.reindex`. 테스트는 `embedding_provider="fake"`(conftest)라 torch를 안 올린다
@@ -56,7 +74,7 @@ mode: work
 - `graphiti_core`는 import 시 `load_dotenv()`로 .env 전체를 os.environ에 올린다 → `deps._build_graph`가 import 뒤 새로 생긴 환경변수를 지운다. 이걸 빼면 테스트의 `Settings(_env_file=None)`이 환경변수로 DATABASE_URL을 읽어 Postgres에 붙는다
 - `.env`의 NEO4J_URI는 2026-11-08 밤부터 로컬 `bolt://localhost:7687`. 1주차 스파이크 결과는 Aura에 남아 있고 그 URI는 `.env` 주석(`NEO4J_URI_AURA`)에 있다. 로컬 Neo4j 비밀번호는 컨테이너 생성 때의 NEO4J_PASSWORD와 같다
 - 삭제는 모두 동기이고 그래프 → DB 순서다: `DELETE /v1/conversations/{id}`(에피소드 `remove_episode`), `DELETE /v1/contacts/{id}`(대화방별 삭제 → 첨삭 이력 → 상대·페르소나 CASCADE), `DELETE /v1/auth/me`(비밀번호 재확인, 상대 전부 → group `DETACH DELETE` → 사용량·세션·사용자). 그래프 실패는 `graph_error(s)`로 남고 DB는 지워진다. 서비스는 `services/deletion_service.py`
-- 미리보기(`preview_start`)는 WSL 배포판이 없어 실패한다(`.claude/launch.json`은 있음). E2E는 `cd backend && ../.venv/Scripts/python.exe -m uvicorn app.main:app --port 8001`로 직접 띄운다. 첫 요청은 e5 모델 로딩으로 10초 넘게 걸린다
+- E2E는 컨테이너로 띄운다(`make up-all`, 또는 운영 구성 리허설 `docs/deploy.md` 14장). 호스트 venv의 uvicorn은 Smart App Control 때문에 이 PC에서 뜨지 않는다
 - DB 문자열 열 길이: `rewrite_results.*_version`은 200자(0004). D 검색기 버전 문자열이 64자를 넘어 500이 났었다. 새 버전 문자열을 만들면 열 길이를 확인한다
 - 가져오기 API 뒤 그래프 수집은 백그라운드(`asyncio.create_task`)라 응답의 `graph_status`는 pending이다. `GET /v1/imports/{id}`로 completed를 확인한다. 서버 프로세스가 죽으면 미수집분은 다음 서버 시작 때 `resume_all`이 이어받는다(`GRAPH_RESUME_ON_START`, 로그 `graph resume:`), 또는 다음 가져오기·`import_synthetic.py --graph`·`graph_reset.py`
 - 보존 항목 추출은 규칙 기반이라 오탐이 있다. 규칙을 바꾸면 `evals/preserve_rules.md`도 같이 고친다
@@ -67,6 +85,6 @@ mode: work
 - 원격: `github.com/SkyWith628/persona-ize`(비공개). `main` 직접 푸시는 팀장만, 나머지는 PR. 11/04 이전 원격 뼈대(`spikes/`)는 `graph/graphiti_p0/`로 대체됨
 - 평가셋 열 이름은 `docs/dataset-guide.md`가 기준. `evals/run_eval.py`·`scripts/validate_data_files.py`가 그 열을 읽으므로 열을 바꾸면 셋을 같이 고친다
 - 이 Windows 머신: Docker Desktop 4.98 + WSL 3.0.3 동작 확인(2026-11-08). 새 PC에서는 BIOS 가상화(SVM/VT-x) → `VirtualMachinePlatform`·WSL 기능 → `wsl --install --no-distribution` → 재부팅 순서가 필요했다(`docker/README.md`). node·gh는 없다
-- 개발은 `make up`(DB 두 개) + `make dev`(호스트 venv). 전체 컨테이너는 `make up-all` — backend 이미지 2.26GB, 빌드 2.5분, CPU torch, 시작 때 alembic upgrade (2026-11-09 검증, `docker/README.md`). `.env`의 `NEO4J_URI`는 아직 Aura(스파이크 데이터 보관). 로컬 Neo4j를 쓸 때는 `bolt://localhost:7687`로 바꾸고 `--reset` 여부를 확인한다
+- 개발은 `make up`(DB 두 개) + `make dev`(호스트 venv). 전체 컨테이너는 `make up-all` — backend 이미지는 다단계(`prod` 기본 3.0GB, 첫 빌드 3.5~5.5분, 코드만 바뀌면 몇 초), CPU torch, e5 모델 내장, 시작 때 alembic upgrade (`docker/README.md`)
 - API 비용은 구독과 별개. Console 사용량 한도 → `--limit 5` → 전체 순서
-- 2026-11-11부터 이 Windows PC는 Smart App Control(강제)이 서명 없는 `.pyd`를 막는다 — 호스트 venv에서 `import sqlalchemy`·`import torch`가 "애플리케이션 제어 정책에서 이 파일을 차단했습니다"로 실패(alembic·pytest·uvicorn·run_eval 모두). DB를 쓰는 명령은 컨테이너로: `MSYS_NO_PATHCONV=1 docker compose run --rm --no-deps -v "C:/Users/gkfkd/dev/persona-ize:/repo" -w /repo backend python evals/run_eval.py ...` (Git Bash, DATABASE_URL·NEO4J_URI는 compose가 서비스 이름으로 바꿔 준다). 서버는 `make up-all`
+- 2026-11-11부터 이 Windows PC는 Smart App Control(강제)이 서명 없는 `.pyd`를 막는다 — 호스트 venv에서 `import sqlalchemy`·`import torch`가 "애플리케이션 제어 정책에서 이 파일을 차단했습니다"로 실패(alembic·pytest·uvicorn·run_eval 모두). DB를 쓰는 명령은 컨테이너로: `MSYS_NO_PATHCONV=1 docker compose run --rm --no-deps -v "C:/Users/gkfkd/dev/persona-ize:/repo" -w /repo backend python evals/run_eval.py ...` (Git Bash, DATABASE_URL·NEO4J_URI는 compose가 서비스 이름으로 바꿔 준다). 서버는 `make up-all`, 테스트·lint는 `make test-docker`·`make lint-docker`. **`.env`가 들어간 컨테이너에서 pytest를 돌리지 않는다** — `DATABASE_URL`·`NEO4J_URI`·API 키가 환경변수로 새어 테스트가 실제 개발 DB·그래프에 붙고 가져오기 테스트가 haiku를 부른다
