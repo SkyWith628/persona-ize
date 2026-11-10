@@ -130,6 +130,7 @@ function panelHTML() {
   const pc = state.mode === "pc";
   const name = esc(state.contact?.alias || "");
   const head = `<div class="tool between"><button type="button" class="chip on" data-act="pick">${name}에게 맞게 ▾</button><button type="button" class="chip" data-act="close" aria-label="닫기">✕</button></div>`;
+  const key = (k) => (pc ? ` <kbd>${k}</kbd>` : "");
   if (state.stage === "pick") {
     const chips = state.contacts.map((c) => `<button type="button" class="chip ${c.id === state.contact.id ? "on" : ""}" data-contact="${esc(c.id)}">${esc(c.alias)} · ${esc(REL_LABEL[c.relationship_type] || c.relationship_type)}</button>`).join("");
     return `<div class="tool between"><b>누구에게 보내나요?</b><button type="button" class="chip" data-act="close" aria-label="닫기">✕</button></div><div class="tool">${chips}</div><p class="small">키보드는 대화 상대를 알 수 없어 직접 고릅니다. 마지막에 고른 상대가 기본값이 됩니다.</p>`;
@@ -138,12 +139,12 @@ function panelHTML() {
     return `${head}<div class="skel" role="status"><b>${name}에게 맞게 바꾸는 중…</b><i></i><i></i><i></i></div><p class="small">초안은 입력창에 그대로 있습니다.</p>`;
   }
   if (state.stage === "error") {
-    return `${head}<div class="notice"><span class="tag warn">만들지 못했어요</span><p>${esc(state.error)}</p><p>초안은 입력창에 그대로 있습니다.</p></div><div class="btns" style="margin-top:8px"><button type="button" class="btn" data-act="close">닫기</button><button type="button" class="btn pri" data-act="run">다시 시도</button></div>`;
+    return `${head}<div class="notice"><span class="tag warn">만들지 못했어요</span><p>${esc(state.error)}</p><p>초안은 입력창에 그대로 있습니다.</p></div><div class="btns" style="margin-top:8px"><button type="button" class="btn" data-act="close">닫기${key("Esc")}</button><button type="button" class="btn pri" data-act="run">다시 시도${key("R")}</button></div>`;
   }
   const r = state.rec.result;
   if (state.stage === "fallback") {
     const why = r.validation.violations.map((v) => `<li>${esc(v.detail)}</li>`).join("") || "<li>모델이 추천 문장을 만들지 못했습니다.</li>";
-    return `${head}<div class="notice"><span class="tag warn">초안을 그대로 뒀어요</span><p>사실을 지키지 못한 문장이라 추천하지 않았습니다.</p><ul>${why}</ul></div><div class="btns" style="margin-top:8px"><button type="button" class="btn" data-act="close">닫기</button><button type="button" class="btn pri" data-act="run">다시 만들기</button></div>`;
+    return `${head}<div class="notice"><span class="tag warn">초안을 그대로 뒀어요</span><p>사실을 지키지 못한 문장이라 추천하지 않았습니다.</p><ul>${why}</ul></div><div class="btns" style="margin-top:8px"><button type="button" class="btn" data-act="close">닫기${key("Esc")}</button><button type="button" class="btn pri" data-act="run">다시 만들기${key("R")}</button></div>`;
   }
   const out = state.editing
     ? `<textarea class="out" id="edit-text" aria-label="추천 문장 고치기">${esc(r.result_text)}</textarea>`
@@ -153,7 +154,6 @@ function panelHTML() {
   const shown = texts.filter((t) => !texts.some((o) => o !== t && o.includes(t))).map((text) => ({ text }));
   const facts = shown.map((p) => `<span class="tag ${r.result_text.includes(p.text) ? "ok" : ""}">${r.result_text.includes(p.text) ? "✓ " : ""}${esc(p.text)}</span>`).join("");
   const warns = r.warnings.length ? `<div class="warnbox"><b>확인해 주세요</b><ul>${r.warnings.map((w) => `<li>${esc(w)}</li>`).join("")}</ul></div>` : "";
-  const key = (k) => (pc ? ` <kbd>${k}</kbd>` : "");
   return `${head}${out}
     ${facts ? `<div class="facts" aria-label="지킨 항목">${facts}</div>` : ""}${warns}
     <div class="tool"><button type="button" class="chip" data-act="run">다시 만들기${key("R")}</button><button type="button" class="chip" data-act="edit">${state.editing ? "고치기 끝" : "직접 고치기"}</button></div>
@@ -259,10 +259,10 @@ document.addEventListener("keydown", (e) => {
   if (state.mode === "pc" && isHotkey(e)) { e.preventDefault(); run(); return; }
   if (state.stage === "idle") return;
   if (e.key === "Escape") { e.preventDefault(); close(); return; }
-  if (state.mode !== "pc" || state.stage !== "result" || state.editing || e.isComposing) return;
+  if (state.mode !== "pc" || !["result", "fallback", "error"].includes(state.stage) || state.editing || e.isComposing) return;
   if (e.target.closest?.("input, textarea, select")) return; // 입력 중인 글자는 가로채지 않는다
   if (e.target.closest?.("button") && e.key === "Enter" && e.target.dataset.act !== "insert") return; // 다른 버튼의 Enter는 그 버튼 몫
-  if (e.key === "Enter") { e.preventDefault(); insert(); }
+  if (e.key === "Enter") { if (state.stage === "result") { e.preventDefault(); insert(); } } // 원문 유지·오류 화면의 Enter는 포커스된 버튼 몫
   else if (e.key.toLowerCase() === "r" && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); run(); }
 });
 
