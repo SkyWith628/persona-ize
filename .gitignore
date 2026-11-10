@@ -1,7 +1,12 @@
-# 비밀정보
+# 비밀정보 (.env.production도 여기에 걸린다 — 예시 파일 두 개만 커밋)
 .env
 .env.*
 !.env.example
+!.env.production.example
+
+# 운영 산출물: DB 덤프(대화 원문이 들어 있다), 배포 기록
+backups/
+.deploy/
 
 # Python
 .venv/

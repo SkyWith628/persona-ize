@@ -1,0 +1,97 @@
+# Persona_ize 운영 프록시 (docker-compose.prod.yml의 caddy 서비스).
+#
+# {$이름}은 컨테이너 환경변수다 (compose가 .env.production에서 넘긴다).
+#   SITE_ADDRESS    서비스 주소. 도메인이면 Let's Encrypt 인증서를 자동 발급·갱신하고,
+#                   localhost나 IP면 Caddy 내부 CA로 자체 서명 인증서를 쓴다(브라우저 경고).
+#   ACME_EMAIL      인증서 발급 계정의 연락처(선택)
+#   MAX_BODY_BYTES  요청 본문 상한(바이트). 앱 설정 MAX_BODY_BYTES와 같은 값을 쓴다
+#   HSTS_MAX_AGE    Strict-Transport-Security max-age(초)
+#
+# 여기서 하는 일: HTTPS 종료와 http→https 리다이렉트, 압축, 본문 상한, HSTS, Server 헤더 제거, 접근 로그.
+# CSP·X-Frame-Options 같은 나머지 보안 헤더는 앱이 붙인다 — 여기서 중복해 넣지 않는다.
+# (80번 포트의 https 리다이렉트 응답은 Caddy가 자동으로 만드는 것이라 `Server: Caddy`가 남는다. 버전은 없다.)
+#
+# 고친 뒤 적용:  docker compose ... exec caddy caddy reload --config /etc/caddy/Caddyfile
+{
+	email "{$ACME_EMAIL}"
+
+	# DNS·방화벽을 시험하는 동안에는 아래 줄의 주석을 풀어 Let's Encrypt 시험 서버를 쓴다(발급 횟수 제한에
+	# 걸리지 않는다. 브라우저는 믿지 않는 인증서라 경고를 낸다). 확인이 끝나면 다시 주석 처리하고 caddy를 재시작한다.
+	# acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
+
+	# HTTP/3(UDP 443)는 끈다 — 방화벽에 UDP를 따로 열 필요가 없게.
+	servers {
+		protocols h1 h2
+	}
+}
+
+{$SITE_ADDRESS} {
+	encode zstd gzip
+
+	# 앱도 같은 상한(MAX_BODY_BYTES)으로 413을 낸다. 여기서는 본문을 끝까지 받기 전에 끊는다.
+	request_body {
+		max_size {$MAX_BODY_BYTES:3000000}
+	}
+
+	header {
+		# 처음 배포할 때는 HSTS_MAX_AGE를 작게(예: 300) 두고 https가 안정된 뒤 늘린다.
+		Strict-Transport-Security "max-age={$HSTS_MAX_AGE:31536000}"
+		# 어떤 서버·프록시를 쓰는지 응답에 적지 않는다.
+		-Server
+		-Via
+		# 응답을 쓰는 시점에 적용한다 — 앱이 같은 헤더를 보내도 하나만 남는다.
+		defer
+	}
+
+	reverse_proxy backend:8000 {
+		transport http {
+			# 유휴 연결은 60초만 재사용한다. 백엔드(uvicorn)의 유지 시간 75초보다 짧아야
+			# 백엔드가 먼저 끊은 연결로 요청을 보내 502가 나는 일이 없다.
+			keepalive 60s
+		}
+	}
+
+	# Caddy가 직접 만드는 오류(백엔드가 내려가 있음, 본문 초과)도 API와 같은 모양 {code, message}로 돌려준다.
+	handle_errors {
+		header {
+			-Server
+			Cache-Control "no-store"
+		}
+
+		@too_large expression `{err.status_code} == 413`
+		handle @too_large {
+			header Content-Type "application/json; charset=utf-8"
+			respond `{"code":"payload_too_large","message":"요청 본문이 너무 큽니다."}`
+		}
+
+		# 배포·재시작 중(보통 1분 안쪽)에 화면을 열었을 때
+		@page {
+			method GET
+			not path /v1/* /static/* /healthz
+		}
+		handle @page {
+			header Content-Type "text/html; charset=utf-8"
+			header Retry-After "10"
+			respond `<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="refresh" content="10"><title>잠시 뒤 다시 열립니다</title></head><body style="font-family:system-ui,sans-serif;max-width:32rem;margin:20vh auto;padding:0 1.5rem;line-height:1.6"><h1 style="font-size:1.25rem">서버를 점검하고 있습니다</h1><p>잠시 뒤 자동으로 다시 열립니다. 계속 이 화면이면 운영자에게 알려 주세요.</p></body></html>`
+		}
+
+		handle {
+			header Content-Type "application/json; charset=utf-8"
+			header Retry-After "10"
+			respond `{"code":"service_unavailable","message":"서버가 잠시 응답하지 않습니다. 잠시 뒤 다시 시도해 주세요."}`
+		}
+	}
+
+	# 접근 로그(JSON, 표준 출력 → docker logs). Cookie·Authorization 값은 Caddy가 기본으로 가린다.
+	# CSRF 토큰과 개발용 사용자 헤더도 남기지 않는다.
+	log {
+		output stdout
+		format filter {
+			wrap json
+			fields {
+				request>headers>X-Csrf-Token delete
+				request>headers>X-User-Id delete
+			}
+		}
+	}
+}

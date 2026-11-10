@@ -1,0 +1,18 @@
+# 빌드 컨텍스트(backend/)에서 이미지로 보내지 않을 것.
+# 캐시·바이트코드가 섞이면 `COPY app` 레이어가 매번 달라져 재빌드가 느려진다.
+**/__pycache__/
+**/*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+.venv/
+
+# 화면의 단위 테스트(node)는 서버가 /static으로 내보낼 이유가 없다
+app/web/tests/
+
+# 비밀 값은 이미지에 넣지 않는다 (환경변수로 준다)
+.env
+.env.*
+
+Dockerfile
+.dockerignore

@@ -1,0 +1,54 @@
+name: release
+
+# 태그(v*)를 푸시하면 운영 이미지(backend/Dockerfile의 prod 타깃)를 GHCR에 올린다.
+#   git tag v0.1.0 && git push origin v0.1.0
+#   → ghcr.io/<소유자>/<저장소>/backend:v0.1.0 (그리고 :sha-<커밋>)
+# 서버에서는 .env.production의 BACKEND_IMAGE를 그 주소로 바꾸고 `scripts/ops/deploy.sh --no-build`
+# (비공개 저장소면 서버에서 먼저 `docker login ghcr.io` — docs/deploy.md "레지스트리 이미지로 배포").
+#
+# 주의: 이 워크플로는 **실행 검증을 하지 못했다.** GitHub Actions에서만 돌고 로컬에서 돌릴 방법이 없었다
+# (YAML 문법만 확인, 2026-11-11). 처음 태그를 밀 때 Actions 탭에서 결과를 확인하고, 실패하면 여기부터 고친다.
+# - linux/amd64만 만든다. ARM 서버(Graviton, Ampere)는 서버에서 직접 빌드한다(미검증).
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 이미지 이름·태그·라벨. 저장소 이름의 대문자는 이 액션이 소문자로 바꾼다(GHCR은 소문자만 받는다).
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}/backend
+          tags: |
+            type=ref,event=tag
+            type=sha,format=short
+
+      - name: 빌드 후 푸시 (prod 타깃)
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          target: prod
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
