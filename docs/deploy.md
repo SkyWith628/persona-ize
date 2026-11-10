@@ -130,8 +130,14 @@ curl -sI "http://<도메인>/" | head -3               # 308 → https
 브라우저로 `https://<도메인>`을 열어 자물쇠(인증서)와 화면을 본다.
 
 ### 7단계 — 관리자 계정
-`ADMIN_USERNAMES`에 적은 **그 아이디로 지금 바로 가입한다**(화면에서, 초대 코드 입력). 아이디는 먼저 가입한 사람이
-가지므로, 미루면 다른 사람이 그 이름을 차지해 관리자가 될 수 있다. 가입 뒤 `https://<도메인>/admin`.
+관리자 여부는 아이디로만 정한다(`ADMIN_USERNAMES`와 대소문자까지 같아야 한다). 그래서 운영에서는 그 아이디를
+**화면 가입으로 만들 수 없게 막아 두었다**(다른 사람이 먼저 차지하는 것을 막으려고 — 시도하면 "이미 사용 중인 이름"으로 보인다).
+관리자 계정은 서버에서 만든다. 비밀번호는 물어본다(8자 이상):
+```bash
+scripts/ops/run.sh scripts/reset_password.py --username <관리자 아이디> --create
+```
+만든 뒤 `https://<도메인>`에서 그 아이디로 로그인하고 `https://<도메인>/admin`을 연다. 계정이 아직 없으면 backend가
+시작할 때 로그에 "관리자 계정이 아직 없습니다" 경고를 남긴다.
 
 비밀번호를 잊은 사용자는 운영자가 서버에서 재설정한다(이메일이 없어 자가 재설정이 없다):
 `scripts/ops/run.sh scripts/reset_password.py --username <이름>`
@@ -300,7 +306,7 @@ scripts/ops/run.sh scripts/graph_reset.py --user <이름> --dry-run
 - [ ] `APP_ENV=production`, `AUTH_ALLOW_HEADER_STUB=false`, `SESSION_COOKIE_SECURE=true` (compose가 기본으로 이 값을 넣는다)
 - [ ] DB·Neo4j 비밀번호가 새로 만든 값(개발용 `persona-dev-only`·`neo4j-dev-only` 아님)
 - [ ] `REGISTER_INVITE_CODE`가 있거나 가입이 닫혀 있다
-- [ ] `ADMIN_USERNAMES`의 아이디로 **직접 가입을 마쳤다**
+- [ ] `ADMIN_USERNAMES`의 계정을 서버에서 만들었다(7단계) — backend 시작 로그에 "관리자 계정이 아직 없습니다" 경고가 없다
 - [ ] Console 월 한도, 전체 차단기(`USAGE_GLOBAL_DAILY_*`), 그래프 상한(`GRAPH_INGEST_*`)이 0이 아니다
 - [ ] 방화벽: 들어오는 포트는 80·443(+SSH는 내 IP). `scripts/ops/compose.sh ps`에서 포트가 보이는 것은 caddy뿐
 - [ ] `curl -sI https://<도메인>/`에 `strict-transport-security`가 있고 `server`·`via`가 없다.
@@ -340,7 +346,7 @@ scripts/ops/run.sh scripts/graph_reset.py --user <이름> --dry-run
 | 브라우저가 인증서 오류, caddy 로그에 `could not get certificate` | DNS가 이 서버를 가리키는지(`dig +short`), 80·443이 밖에서 열려 있는지, 다른 프로그램이 80/443을 쓰지 않는지. 고친 뒤 `compose.sh restart caddy`. 반복 실패로 발급 횟수 제한에 걸리면 기다려야 한다. `logs caddy \| grep -i -E "acme\|obtain\|challenge"` |
 | 화면에 "서버를 점검하고 있습니다", API가 502 | backend가 내려가 있거나 뜨는 중. 1분 넘게 계속되면 `ps`·`logs backend` |
 | 로그인이 유지되지 않는다 | https가 아닌 주소로 열었다(세션 쿠키가 `Secure`). 13장 |
-| 가져오기가 413 | 본문이 `MAX_BODY_BYTES`(3MB)를 넘었다. 한글은 글자당 3바이트라 약 100만 자가 한계다. 늘리려면 이 값만 올린다(Caddy도 같은 값을 쓴다) |
+| 가져오기가 413 | 본문이 `MAX_BODY_BYTES`(기본 8MB)를 넘었다. 한글은 글자당 3바이트라 `MAX_IMPORT_CHARS` 200만 자가 약 6MB다. 늘리려면 이 값만 올린다(Caddy도 같은 값을 쓴다) |
 | 모든 요청이 400(Host 관련 오류) | `TRUSTED_HOSTS`에 접속한 도메인이 없다. 비워 두면 compose가 `SITE_ADDRESS`를 넣는다 |
 | backend 로그에 `Read-only file system` | 앱이 `/tmp` 밖에 쓰려 했다. 급하면 `BACKEND_READ_ONLY=false` 후 `up -d`, 그리고 어디에 쓰는지 고친다 |
 | 디스크가 찬다 | `docker system df`. 옛 이미지: `docker image prune -f`, 빌드 캐시: `docker builder prune -f`(다음 빌드가 처음부터 다시 돈다). 백업 보존 일수 확인 |

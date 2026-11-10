@@ -30,7 +30,7 @@
 
 	# 앱도 같은 상한(MAX_BODY_BYTES)으로 413을 낸다. 여기서는 본문을 끝까지 받기 전에 끊는다.
 	request_body {
-		max_size {$MAX_BODY_BYTES:3000000}
+		max_size {$MAX_BODY_BYTES:8000000}
 	}
 
 	header {

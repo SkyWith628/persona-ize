@@ -30,7 +30,7 @@ services:
       # 도메인이면 Let's Encrypt 자동 발급, localhost·IP면 Caddy 내부 CA(자체 서명)
       SITE_ADDRESS: ${SITE_ADDRESS:?SITE_ADDRESS(서비스 도메인)가 필요합니다. 예) persona.example.com}
       ACME_EMAIL: ${ACME_EMAIL:-}
-      MAX_BODY_BYTES: ${MAX_BODY_BYTES:-3000000}
+      MAX_BODY_BYTES: ${MAX_BODY_BYTES:-8000000}
       HSTS_MAX_AGE: ${HSTS_MAX_AGE:-31536000}
     volumes:
       - ./docker/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
