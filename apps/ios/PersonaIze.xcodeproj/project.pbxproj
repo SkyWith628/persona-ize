@@ -1,0 +1,458 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		0478ABC65A20EFFF015255FE /* KeyboardMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = A477A2B5C3ACD02D7F028452 /* KeyboardMessage.swift */; };
+		1BEE14D0D75C8C11D4B4D676 /* PersonaKeyboard.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = AB1AE5CAF335B93CE53F90D7 /* PersonaKeyboard.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		238F21182C1219B6C2BC2155 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = EF7BB4E1880DB646D5D3BA09 /* Assets.xcassets */; };
+		8CF9B06274D9CF74F9B9342F /* KeyboardMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = A477A2B5C3ACD02D7F028452 /* KeyboardMessage.swift */; };
+		9B70E05335D615D4C86E74B8 /* API.swift in Sources */ = {isa = PBXBuildFile; fileRef = 773518E568FD0C17A2B259C6 /* API.swift */; };
+		CE74257DE59EC0A74A7F07CC /* KeyboardController.swift in Sources */ = {isa = PBXBuildFile; fileRef = CACE38E6845FA3BA652D0016 /* KeyboardController.swift */; };
+		E3DF94799C566F25BE3F006B /* PersonaApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63C0760AE82A2E59E63C00B8 /* PersonaApp.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		56EA5DF02030F0ED5188F213 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 3E891787503FF9B7C1A7538D /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 89315CEE17A869112531BDB6;
+			remoteInfo = PersonaKeyboard;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		BDAAA6741DB86F9F4B3A8261 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				1BEE14D0D75C8C11D4B4D676 /* PersonaKeyboard.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		09688CC54F3A0C100BC6D1C5 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		12D5A4735F54EFA12C6A72CF /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		21D15657CF1892500780613C /* PersonaIze.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = PersonaIze.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		63C0760AE82A2E59E63C00B8 /* PersonaApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonaApp.swift; sourceTree = "<group>"; };
+		773518E568FD0C17A2B259C6 /* API.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = API.swift; sourceTree = "<group>"; };
+		A477A2B5C3ACD02D7F028452 /* KeyboardMessage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardMessage.swift; sourceTree = "<group>"; };
+		AB1AE5CAF335B93CE53F90D7 /* PersonaKeyboard.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = PersonaKeyboard.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		AB64B4FC4B755A0344DD0C95 /* App.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = App.entitlements; sourceTree = "<group>"; };
+		AF241E3315A6E054AA49B6FA /* Keyboard.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Keyboard.entitlements; sourceTree = "<group>"; };
+		CACE38E6845FA3BA652D0016 /* KeyboardController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardController.swift; sourceTree = "<group>"; };
+		EF7BB4E1880DB646D5D3BA09 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		11DE9CCABDCCB2A94B67456D /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				A477A2B5C3ACD02D7F028452 /* KeyboardMessage.swift */,
+			);
+			path = Shared;
+			sourceTree = "<group>";
+		};
+		40F7C4D42F5DD24D6FF51DE5 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				21D15657CF1892500780613C /* PersonaIze.app */,
+				AB1AE5CAF335B93CE53F90D7 /* PersonaKeyboard.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		56CDE9B66741ABD188B0DE7B = {
+			isa = PBXGroup;
+			children = (
+				95AF86B2BAFFB06DD99B87FF /* App */,
+				DF4DBE8D3454EF91B3B5D93E /* Keyboard */,
+				11DE9CCABDCCB2A94B67456D /* Shared */,
+				40F7C4D42F5DD24D6FF51DE5 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		95AF86B2BAFFB06DD99B87FF /* App */ = {
+			isa = PBXGroup;
+			children = (
+				773518E568FD0C17A2B259C6 /* API.swift */,
+				AB64B4FC4B755A0344DD0C95 /* App.entitlements */,
+				EF7BB4E1880DB646D5D3BA09 /* Assets.xcassets */,
+				12D5A4735F54EFA12C6A72CF /* Info.plist */,
+				63C0760AE82A2E59E63C00B8 /* PersonaApp.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		DF4DBE8D3454EF91B3B5D93E /* Keyboard */ = {
+			isa = PBXGroup;
+			children = (
+				09688CC54F3A0C100BC6D1C5 /* Info.plist */,
+				AF241E3315A6E054AA49B6FA /* Keyboard.entitlements */,
+				CACE38E6845FA3BA652D0016 /* KeyboardController.swift */,
+			);
+			path = Keyboard;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		89315CEE17A869112531BDB6 /* PersonaKeyboard */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 7F60BE40B289BF583FE07852 /* Build configuration list for PBXNativeTarget "PersonaKeyboard" */;
+			buildPhases = (
+				5367830CE7117ACC71621A00 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = PersonaKeyboard;
+			packageProductDependencies = (
+			);
+			productName = PersonaKeyboard;
+			productReference = AB1AE5CAF335B93CE53F90D7 /* PersonaKeyboard.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		F6396991FF8525220CBA804C /* PersonaIze */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 5D45F79015F653945319D7EE /* Build configuration list for PBXNativeTarget "PersonaIze" */;
+			buildPhases = (
+				6E32930E8245E15113E2B901 /* Sources */,
+				DA53131935601B7F16414802 /* Resources */,
+				BDAAA6741DB86F9F4B3A8261 /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				22BCA44BDFABA36E0D2A4303 /* PBXTargetDependency */,
+			);
+			name = PersonaIze;
+			packageProductDependencies = (
+			);
+			productName = PersonaIze;
+			productReference = 21D15657CF1892500780613C /* PersonaIze.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		3E891787503FF9B7C1A7538D /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					89315CEE17A869112531BDB6 = {
+						ProvisioningStyle = Automatic;
+					};
+					F6396991FF8525220CBA804C = {
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = 5648981D586730E59B8CAFD7 /* Build configuration list for PBXProject "PersonaIze" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 56CDE9B66741ABD188B0DE7B;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 40F7C4D42F5DD24D6FF51DE5 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				F6396991FF8525220CBA804C /* PersonaIze */,
+				89315CEE17A869112531BDB6 /* PersonaKeyboard */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		DA53131935601B7F16414802 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				238F21182C1219B6C2BC2155 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		5367830CE7117ACC71621A00 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				CE74257DE59EC0A74A7F07CC /* KeyboardController.swift in Sources */,
+				0478ABC65A20EFFF015255FE /* KeyboardMessage.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		6E32930E8245E15113E2B901 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				9B70E05335D615D4C86E74B8 /* API.swift in Sources */,
+				8CF9B06274D9CF74F9B9342F /* KeyboardMessage.swift in Sources */,
+				E3DF94799C566F25BE3F006B /* PersonaApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		22BCA44BDFABA36E0D2A4303 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 89315CEE17A869112531BDB6 /* PersonaKeyboard */;
+			targetProxy = 56EA5DF02030F0ED5188F213 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		0EE7DF6A4CAB9DF306EA431F /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = App/App.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				INFOPLIST_FILE = App/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(PERSONA_BUNDLE_ID)";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		5281A57C8DAB7A3660F4A1E2 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = Keyboard/Keyboard.entitlements;
+				INFOPLIST_FILE = Keyboard/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(PERSONA_BUNDLE_ID).keyboard";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		5FF508A33C5B10FAEB856626 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = Keyboard/Keyboard.entitlements;
+				INFOPLIST_FILE = Keyboard/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(PERSONA_BUNDLE_ID).keyboard";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		746F1DCBBE8D7CA951B10FBF /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MARKETING_VERSION = 1.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PERSONA_APP_GROUP = "group.$(PERSONA_BUNDLE_ID)";
+				PERSONA_BUNDLE_ID = com.skywith628.personaize;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		78BB6DB21BE0A4ADF6E009D0 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = App/App.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				INFOPLIST_FILE = App/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(PERSONA_BUNDLE_ID)";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		F982525E04F875B8ECF191ED /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MARKETING_VERSION = 1.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PERSONA_APP_GROUP = "group.$(PERSONA_BUNDLE_ID)";
+				PERSONA_BUNDLE_ID = com.skywith628.personaize;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		5648981D586730E59B8CAFD7 /* Build configuration list for PBXProject "PersonaIze" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F982525E04F875B8ECF191ED /* Debug */,
+				746F1DCBBE8D7CA951B10FBF /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		5D45F79015F653945319D7EE /* Build configuration list for PBXNativeTarget "PersonaIze" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0EE7DF6A4CAB9DF306EA431F /* Debug */,
+				78BB6DB21BE0A4ADF6E009D0 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		7F60BE40B289BF583FE07852 /* Build configuration list for PBXNativeTarget "PersonaKeyboard" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				5281A57C8DAB7A3660F4A1E2 /* Debug */,
+				5FF508A33C5B10FAEB856626 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 3E891787503FF9B7C1A7538D /* Project object */;
+}

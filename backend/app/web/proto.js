@@ -38,7 +38,14 @@ async function api(method, path, body, extraHeaders = {}) {
   return data;
 }
 
-function remember(id) { try { localStorage.setItem(LAST_CONTACT_KEY, id); } catch { /* 저장 못 해도 동작한다 */ } }
+function recentIds() {
+  try { return JSON.parse(localStorage.getItem(LAST_CONTACT_KEY + "_recent_" + state.me.username)) || []; }
+  catch { return []; }
+}
+function remember(id) { try {
+  localStorage.setItem(LAST_CONTACT_KEY + "_recent_" + state.me.username, JSON.stringify([id, ...recentIds().filter(previous => previous !== id)].slice(0, 3)));
+  localStorage.setItem(LAST_CONTACT_KEY, id);
+} catch { /* 저장 못 해도 동작한다 */ } }
 function recall() { try { return localStorage.getItem(LAST_CONTACT_KEY); } catch { return null; } }
 
 // ---------- 인증·초기 데이터 ----------
@@ -54,7 +61,7 @@ async function boot() {
   state.contacts = await api("GET", "/v1/contacts");
   const sel = $("#contact");
   sel.innerHTML = state.contacts.map((c) => `<option value="${esc(c.id)}">${esc(c.alias)} · ${esc(REL_LABEL[c.relationship_type] || c.relationship_type)}</option>`).join("");
-  if (!state.contacts.length) { $("#meta").textContent = "상대가 없습니다. 관리 화면에서 상대와 대화를 먼저 만드세요."; return; }
+  if (!state.contacts.length) { render(); $("#meta").textContent = "상대가 없습니다. 관리 화면에서 상대와 대화를 먼저 만드세요."; return; }
   await selectContact(state.contacts.find((c) => c.id === recall()) || state.contacts[0]);
   await loadUsage();
 }
@@ -77,14 +84,16 @@ async function loadUsage() {
   } catch { /* 표시용 */ }
 }
 
-async function selectContact(c) {
+async function selectContact(c, preserveDraft = false) {
   state.contact = c;
   state.requestSeq++; // 이전 상대에게 보낸 요청의 응답은 버린다
   remember(c.id);
   $("#contact").value = c.id;
   for (const el of document.querySelectorAll(".who")) el.textContent = c.alias;
   const draft = Object.entries(DEMO_DRAFTS).find(([name]) => c.alias.includes(name))?.[1] || "";
-  $("#m-input").value = draft; $("#p-input").value = draft;
+  if (!preserveDraft) { $("#m-input").value = draft; $("#p-input").value = draft; }
+  retryKey = null;
+  $("#meta").textContent = "";
   setStage("idle");
   await loadChat(c);
 }
@@ -99,6 +108,7 @@ async function loadChat(c) {
   if (state.contact !== c) return; // 그 사이 상대를 바꿨다
   const html = msgs.map((m) => `<div class="bub ${m.speaker_role === "me" ? "me" : ""}">${esc(m.text)}</div>`).join("");
   $("#m-chat").innerHTML = html; $("#p-chat").innerHTML = html;
+  $("#m-chat").scrollTop = $("#m-chat").scrollHeight;
 }
 
 // ---------- 패널 ----------
@@ -132,8 +142,11 @@ function panelHTML() {
   const head = `<div class="tool between"><button type="button" class="chip on" data-act="pick">${name}에게 맞게 ▾</button><button type="button" class="chip" data-act="close" aria-label="닫기">✕</button></div>`;
   const key = (k) => (pc ? ` <kbd>${k}</kbd>` : "");
   if (state.stage === "pick") {
-    const chips = state.contacts.map((c) => `<button type="button" class="chip ${c.id === state.contact.id ? "on" : ""}" data-contact="${esc(c.id)}">${esc(c.alias)} · ${esc(REL_LABEL[c.relationship_type] || c.relationship_type)}</button>`).join("");
-    return `<div class="tool between"><b>누구에게 보내나요?</b><button type="button" class="chip" data-act="close" aria-label="닫기">✕</button></div><div class="tool">${chips}</div><p class="small">키보드는 대화 상대를 알 수 없어 직접 고릅니다. 마지막에 고른 상대가 기본값이 됩니다.</p>`;
+    const chip = (c) => `<button type="button" class="chip ${c.id === state.contact.id ? "on" : ""}" data-contact="${esc(c.id)}">${esc(c.alias)} · ${esc(REL_LABEL[c.relationship_type] || c.relationship_type)}</button>`;
+    const recent = recentIds().map(id => state.contacts.find(c => c.id === id)).filter(Boolean);
+    const chips = recent.map(chip).join("");
+    const all = state.contacts.map(chip).join("");
+    return `<div class="tool between"><b>누구에게 보내나요?</b><button type="button" class="chip" data-act="close" aria-label="닫기">✕</button></div><b>최근 상대</b><div class="tool">${chips}</div><details><summary>전체 상대 (${state.contacts.length})</summary><div class="tool">${all}</div></details>`;
   }
   if (state.stage === "loading") {
     return `${head}<div class="skel" role="status"><b>${name}에게 맞게 바꾸는 중…</b><i></i><i></i><i></i></div><p class="small">초안은 입력창에 그대로 있습니다.</p>`;
@@ -162,6 +175,8 @@ function panelHTML() {
 }
 
 function render() {
+  $("#m-run").disabled = !state.contact || !$("#m-input").value.trim();
+  $("#m-pick").disabled = !state.contact;
   const open = state.stage !== "idle";
   $("#m-idle").classList.toggle("hidden", state.mode === "mobile" && open);
   $("#m-panel").classList.toggle("hidden", !(state.mode === "mobile" && open));
@@ -182,17 +197,31 @@ function describe(rec) {
   return `조건 ${rec.condition || "?"} · ${(r.latency_ms / 1000).toFixed(1)}초 · ${r.attempts}회 시도 · 참고한 과거 표현 ${r.evidence_ids.length}개${tokens}`;
 }
 
+let retryKey = null;
+
+function invalidateDraft() {
+  state.requestSeq++;
+  retryKey = null;
+  $("#meta").textContent = "";
+  setStage("idle");
+}
+
 async function run() {
+  if (state.stage === "loading") return;
   const draft = inputEl().value.trim();
   if (!state.contact) return;
   if (!draft) { setStage("error", { error: "입력창에 초안을 먼저 써 주세요." }); return; }
   const seq = ++state.requestSeq; // 늦게 도착한 이전 응답은 버린다
   $("#meta").textContent = "";
+  if (state.stage !== "error" || !retryKey) {
+    retryKey = Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, "0")).join("");
+  }
+  if (state.mode === "mobile") inputEl().blur();
   setStage("loading");
   try {
     const rec = await api("POST", "/v1/rewrites",
       { contact_id: state.contact.id, draft_text: draft, situation: $("#situation").value.trim(), condition: $("#condition").value },
-      { "Idempotency-Key": crypto.randomUUID() });
+      { "Idempotency-Key": retryKey });
     if (seq !== state.requestSeq) return;
     $("#meta").textContent = describe(rec);
     setStage(rec.result.status === "recommended" ? "result" : "fallback", { rec });
@@ -224,12 +253,12 @@ function close() {
 
 function onPanelClick(e) {
   const contactId = e.target.closest("[data-contact]")?.dataset.contact;
-  if (contactId) { selectContact(state.contacts.find((c) => c.id === contactId)).then(run); return; }
+  if (contactId) { selectContact(state.contacts.find((c) => c.id === contactId), true); return; }
   const act = e.target.closest("[data-act]")?.dataset.act;
   if (act === "close") close();
   else if (act === "run") run();
   else if (act === "insert") insert();
-  else if (act === "pick") setStage("pick");
+  else if (act === "pick") { state.requestSeq++; setStage("pick"); }
   else if (act === "edit") {
     if (state.editing) state.rec.result.result_text = $("#edit-text").value; // 화면 표시용 사본만 고친다
     state.editing = !state.editing; render();
@@ -246,8 +275,12 @@ $("#m-send").addEventListener("click", () => {
   if (!text) return;
   $("#m-chat").insertAdjacentHTML("beforeend", `<div class="bub sent">${esc(text)}</div>`);
   $("#m-input").value = "";
+  invalidateDraft();
+  $("#m-chat").scrollTop = $("#m-chat").scrollHeight;
 });
-$(".keys").innerHTML = "<i></i>".repeat(30);
+for (const selector of ["#m-input", "#p-input", "#situation", "#condition"]) {
+  $(selector).addEventListener("input", invalidateDraft);
+}
 
 // ---------- PC ----------
 $("#p-run").addEventListener("click", run);
