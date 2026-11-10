@@ -7,7 +7,6 @@
 | # | 작업 | 메모 |
 |---|---|---|
 | A1 | `feat/deploy-ready` → `main` 병합·푸시, 개발 스택을 새 이미지로 다시 띄우기(`make up-all` — 시작하면서 0008·0009 적용) | 원격의 `design/iphone-mobile`(아이폰 앱)과 겹치는 파일 없음 |
-| A2 | **실제 Claude로 확인**: 운영 구성에 실제 키를 넣고 시연 3장면 + 가져오기 → 그래프 수집 3건 → D 첨삭 (`scripts/ops/deploy.sh --smoke-full`) | 비용: Opus 10회 안쪽 + haiku 수집 몇 건. 새 코드로는 가짜 모델만 돌렸다. `adjust`·`auto`(페르소나 없음)의 새 프롬프트 문구도 이때 본다 |
 | A3 | 실제 서버 배포: VM(4GB+)·도메인·DNS → `docs/deploy.md` 3장 순서 | Let's Encrypt 발급, 리눅스에서의 클라이언트 IP(IPv6 포함), 작은 서버에서 가져오기 소요 시간 실측 |
 | A4 | 푸시 뒤 GitHub Actions 확인: `ci.yml`의 `deploy` 잡(운영 이미지 빌드 + 스택 기동 + 스모크), 태그 푸시 때 `release.yml` | 둘 다 로컬에서 실행 검증을 못 했다 |
 | A5 | 카카오톡 실물 내보내기(안드로이드·iOS·PC 각 1개)로 파서 검증 | 지금은 합성 픽스처 기준. 못 읽는 줄은 미리보기의 `skipped_lines`·`problems`로 드러난다 |
