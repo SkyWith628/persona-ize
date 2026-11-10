@@ -121,6 +121,11 @@ class AuthService:
         self._check_invite(invite_code, client_ip)
         if self._settings.require_consent and not consent:
             raise ConsentRequiredError("약관과 개인정보 처리 안내에 동의해야 가입할 수 있습니다.")
+        if self._settings.is_production and username.strip().lower() in self._settings.admin_username_set:
+            # 관리자 여부는 이름으로만 정하므로, 운영에서는 그 이름을 공개 가입으로 선점할 수 없게 한다.
+            # 관리자 계정은 서버에서 `scripts/reset_password.py --username <이름> --create`로 만든다.
+            # 응답은 이미 있는 이름과 구분되지 않게 한다 (관리자 이름을 알려 주지 않는다).
+            raise VersionConflictError("이미 사용 중인 이름입니다.")
         return await self.register(username, password, consent=consent)
 
     async def register(self, username: str, password: str, *, consent: bool = False) -> AuthResult:
@@ -256,7 +261,7 @@ class AuthService:
         )
 
     def is_admin(self, user: User) -> bool:
-        return user.username.lower() in self._settings.admin_username_set
+        return self._settings.is_admin_name(user.username)
 
     def consent_current(self, user: User) -> bool:
         """기록된 동의 버전이 지금 버전과 같은가 (동의한 적 없으면 False)."""

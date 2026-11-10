@@ -68,7 +68,8 @@ async def _resume_graph(container) -> None:  # noqa: ANN001
 async def _warn_missing_admins(container) -> None:  # noqa: ANN001
     """운영 모드: `ADMIN_USERNAMES`의 이름으로 가입된 계정이 없으면 알린다.
 
-    관리자 여부는 이름으로만 정한다. 가입이 열려 있으면 그 이름으로 먼저 가입한 사람이 관리자가 된다.
+    관리자 여부는 이름으로만 정한다. 운영에서는 그 이름을 공개 가입으로 만들 수 없으므로(선점 방지)
+    서버에서 스크립트로 만들어야 한다.
     """
     settings = container.settings
     try:
@@ -82,16 +83,10 @@ async def _warn_missing_admins(container) -> None:  # noqa: ANN001
         return
     if not missing:
         return
-    risk = (
-        "가입이 열려 있어 그 이름으로 먼저 가입한 사람이 관리자가 됩니다 — 지금 만들어 두세요."
-        if settings.auth_allow_register
-        else "가입이 닫혀 있어 화면에서는 만들 수 없습니다."
-    )
     log.warning(
-        "운영 설정 경고: 관리자 계정이 아직 없습니다(%s). %s "
-        "서버에서 `scripts/reset_password.py --username <이름> --create`로 만들 수 있습니다.",
+        "운영 설정 경고: 관리자 계정이 아직 없습니다(%s). 운영에서는 이 이름을 화면 가입으로 "
+        "만들 수 없습니다 — 서버에서 `scripts/reset_password.py --username <이름> --create`로 만드세요.",
         ", ".join(missing),
-        risk,
     )
 
 

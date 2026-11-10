@@ -109,10 +109,12 @@ def test_body_limit_by_content_length_and_by_actual_size() -> None:
     assert "content-length" not in streamed.request.headers
     assert streamed.status_code == 413 and streamed.json()["code"] == "payload_too_large"
 
-    # 기본 상한(3MB)에서는 큰 가져오기 본문도 통과한다 — 여기서는 검증 오류(422)까지 간다
+    # 기본 상한(8MB)에서는 큰 가져오기 본문도 통과한다 — 여기서는 검증 오류(422)까지 간다
     default = TestClient(create_app(_settings()))
     assert default.post("/v1/auth/login", content=b"x" * 400_000, headers=json_headers).status_code == 422
-    assert default.post("/v1/auth/login", content=b"x" * 3_000_001, headers=json_headers).status_code == 413
+    assert default.post("/v1/auth/login", content=b"x" * 3_000_001, headers=json_headers).status_code == 422
+    too_big = b"x" * (_settings().max_body_bytes + 1)
+    assert default.post("/v1/auth/login", content=too_big, headers=json_headers).status_code == 413
 
 
 @pytest.mark.anyio

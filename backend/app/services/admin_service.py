@@ -52,14 +52,8 @@ class AdminUnavailableError(DomainError):
 
 
 def is_admin_username(username: str, settings: Settings) -> bool:
-    """이 이름이 관리자인지. `ADMIN_USERNAMES`에 적힌 이름과 **대소문자까지** 같아야 한다.
-
-    계약의 규칙은 소문자로 바꿔 비교하는 것(`username.lower() in settings.admin_username_set`)인데, 가입은
-    대소문자를 구분해 유일성을 본다 — `admin`이 관리자일 때 누군가 `Admin`으로 가입하면 그 규칙을 통과한다.
-    그래서 여기서는 더 좁게 본다. 정확히 같은 이름은 소문자 비교도 통과하므로 계약의 조건은 그대로 지켜진다.
-    """
-    names = {part.strip() for part in settings.admin_usernames.split(",")}
-    return bool(username) and username in names
+    """이 이름이 관리자인지. 판정은 `Settings.is_admin_name` 한 곳이다 (대소문자까지 같아야 한다)."""
+    return settings.is_admin_name(username)
 
 
 def short_user_id(user_id: str) -> str:

@@ -202,8 +202,14 @@ def test_non_admin_gets_403_and_memory_storage_gets_503() -> None:
     )
     assert client.get("/v1/admin/overview").status_code == 403
 
-    # 진짜 관리자라도 인메모리 저장소에서는 집계할 곳이 없다
+    # 대소문자만 다른 이름이 이미 있으면 가입 단계에서 막힌다 (auth_service의 중복 규칙)
     client.cookies.clear()
+    assert (
+        client.post("/v1/auth/register", json={"username": "boss", "password": PASSWORD}).status_code == 409
+    )
+
+    # 진짜 관리자라도 인메모리 저장소에서는 집계할 곳이 없다
+    client = TestClient(create_app(_settings()))
     assert (
         client.post("/v1/auth/register", json={"username": "boss", "password": PASSWORD}).status_code == 201
     )

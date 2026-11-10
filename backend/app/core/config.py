@@ -80,7 +80,8 @@ class Settings(BaseSettings):
     # 요청 제한 (IP 기준, 프로세스 메모리). 0이면 끈다.
     rate_limit_per_minute: int = Field(0, ge=0, description="/v1/* 전체")
     rate_limit_auth_per_minute: int = Field(0, ge=0, description="로그인·가입·토큰 발급")
-    max_body_bytes: int = Field(3_000_000, gt=0, description="요청 본문 상한. 넘으면 413")
+    # 한글은 글자당 3바이트다 — MAX_IMPORT_CHARS(200만 자)의 원문이 본문 상한에 먼저 걸리지 않게 8MB.
+    max_body_bytes: int = Field(8_000_000, gt=0, description="요청 본문 상한. 넘으면 413")
     # 전체 사용자 합계 차단기 (하루, 사용량 날짜 기준). 0이면 끈다.
     usage_global_daily_rewrite_limit: int = Field(0, ge=0)
     usage_global_daily_token_limit: int = Field(0, ge=0)
@@ -112,7 +113,16 @@ class Settings(BaseSettings):
 
     @property
     def admin_username_set(self) -> frozenset[str]:
+        """관리자 이름의 소문자 집합 — 이름 선점 차단·경고처럼 '비슷한 이름'을 볼 때 쓴다."""
         return frozenset(name.lower() for name in self._split(self.admin_usernames))
+
+    def is_admin_name(self, username: str) -> bool:
+        """관리자인지 — `ADMIN_USERNAMES`에 적힌 이름과 **대소문자까지** 같아야 한다.
+
+        판정은 여기 한 곳이다(`AuthService.is_admin`, 관리자 API가 함께 쓴다). 대소문자만 다른 이름은
+        가입 때 중복으로 막지만, 그 규칙 이전에 만들어진 계정이 있어도 관리자가 되지 않게 좁은 쪽으로 본다.
+        """
+        return bool(username) and username in self._split(self.admin_usernames)
 
     @property
     def is_production(self) -> bool:

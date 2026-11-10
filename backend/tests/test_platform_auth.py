@@ -145,8 +145,12 @@ def test_consent_endpoint_records_current_version_and_notices_a_new_one() -> Non
 # ---------- 관리자 표시·이름 규칙 ----------
 
 
-def test_is_admin_follows_admin_usernames_ignoring_case() -> None:
-    client = _client(admin_usernames=" Minsu_Kim , boss ")
+def test_is_admin_follows_admin_usernames_exactly() -> None:
+    # 설정에 대소문자만 다르게 적으면 관리자가 아니다 (판정은 좁은 쪽으로 — Settings.is_admin_name)
+    near = _client(admin_usernames=" Minsu_Kim , boss ")
+    assert near.post("/v1/auth/register", json=CRED).json()["is_admin"] is False
+
+    client = _client(admin_usernames=" minsu_kim , boss ")
     assert client.post("/v1/auth/register", json=CRED).json()["is_admin"] is True
     assert client.get("/v1/auth/me").json()["is_admin"] is True
     assert client.post("/v1/auth/login", json=CRED).json()["is_admin"] is True
@@ -494,7 +498,7 @@ def _pg_name() -> str:
 def test_consent_sessions_and_bearer_on_postgres(pg_url: str) -> None:
     name, password = _pg_name(), "long-enough-pw"
     cred = {"username": name, "password": password}
-    settings = _settings(database_url=pg_url, admin_usernames=name.upper())
+    settings = _settings(database_url=pg_url, admin_usernames=name)
     with TestClient(create_app(settings)) as client:  # 한 이벤트 루프에서 (asyncpg 연결은 루프에 묶인다)
         reg = client.post("/v1/auth/register", json={**cred, "consent": True})
         assert reg.status_code == 201, reg.text
@@ -635,3 +639,28 @@ def test_reset_password_script_end_to_end_on_postgres(
     asyncio.run(_login_then_reset())
     code, out = run("third-password-3")
     assert code == 0 and "바꿨습니다" in out and "세션 0개" in out
+
+
+# ---------- 관리자 이름: 판정은 정확히 일치, 운영에서는 공개 가입으로 선점 불가 ----------
+
+
+def test_admin_flag_requires_the_exact_configured_name() -> None:
+    settings = _settings(admin_usernames="boss, Ops_Lead")
+    assert settings.is_admin_name("boss") and settings.is_admin_name("Ops_Lead")
+    assert not settings.is_admin_name("Boss") and not settings.is_admin_name("ops_lead")
+    assert not settings.is_admin_name("") and not _settings().is_admin_name("boss")
+
+
+def test_admin_names_cannot_be_taken_by_public_signup_in_production() -> None:
+    password = "long-enough-pw"
+    prod = AuthService(_settings(app_env="production", admin_usernames="boss"), InMemoryAuthRepo())
+    for name in ("boss", "Boss", " BOSS "):
+        with pytest.raises(VersionConflictError):  # 이미 있는 이름과 구분되지 않는 응답
+            asyncio.run(prod.signup(name, password))
+    assert asyncio.run(prod.signup("minsu_kim", password)).user.username == "minsu_kim"
+    # 운영자가 서버에서 만드는 길(scripts/reset_password.py --create)은 열려 있다
+    assert prod.is_admin(asyncio.run(prod.create_account("boss", password)))
+
+    # 개발 모드에서는 화면에서 바로 만들어 쓸 수 있다
+    dev = AuthService(_settings(admin_usernames="boss"), InMemoryAuthRepo())
+    assert dev.is_admin(asyncio.run(dev.signup("boss", password)).user)
