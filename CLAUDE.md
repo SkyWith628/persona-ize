@@ -65,7 +65,12 @@ mode: work
 - ruff E501은 한글을 2칸으로 센다(한글 주석은 55자쯤에서 줄바꿈)
 - 관리자 응답에 문장이 들어가는 필드를 더하지 않는다(`test_admin.py`의 표식 검사가 잡는다). `test_admin.py`는 표에 직접 INSERT한다 — 기본값 없는 NOT NULL 열을 더하면 `_add_*` 헬퍼도 고친다
 - `rewrite_requests.condition`은 `String(1)`이라 `auto`를 저장하면 안 된다(멱등 해시만 요청 값). `RewriteInput`에 선택 필드를 더할 때는 `_input_hash`에서 기본값이면 빼야 예전 해시가 유지된다
-- asyncpg는 timestamptz를 UTC로 돌려준다. 날짜·요일을 글자로 만들 때는 한국 시간으로 바꾼 뒤에(그래프 에피소드 본문, 프롬프트의 예시 날짜)
+- asyncpg는 timestamptz를 UTC로 돌려준다. 날짜·요일을 글자로 만들 때는 `local_time()`으로 한국 시간으로 바꾼 뒤에(그래프 에피소드 본문, 프롬프트의 예시 날짜)
+- 그래프 수집 상한은 지워지지 않는 카운터(`usage_counters.graph_episodes`, 0009) 기준이고 예산이 모자라면 최근 메시지부터 넣는다. 상한은 API 경로(`ingest_user`)에만 걸리고 합성 적재·평가(`ingest_pending`)와 `graph_reset.py`에는 안 걸린다
+- 문체 묶음은 내 연속 발화 6건·600자마다 나눈다. 프롬프트 예시는 하나 600자·문체 합계 2,400자·사실 맥락 합계 1,200자 상한 — 상한에 안 걸리는 데이터에서는 프롬프트가 예전과 글자까지 같아야 한다(평가 재현성)
+- 오류 기록(`import_jobs.error_message`·`graph_error`, 삭제 응답, 로그)에는 예외의 종류만 남긴다. 예외를 문자열로 찍지 말고 `exception_kind`/`core/safe_exc.py`를 쓴다(문장에 SQL 매개변수 = 대화 원문이 섞인다). DB 엔진은 `hide_parameters=True`
+- NUL·짝 없는 대리 문자가 든 입력은 전역 의존성(`core/text_guard.py`)이 저장 전에 422로 끝낸다. 가져오기의 대화 본문만 예외(가져오기 쪽이 `?`로 바꿔 읽는다)
+- Git Bash heredoc으로 파이썬을 넘길 때: `PYTHONUTF8=1`을 붙이고, 본문에 작은따옴표 세 개나 `\n`이 있으면 깨진다(파일로 써서 실행). `docker run`에 stdin을 넘기려면 `-i`
 - `backend/alembic.ini`는 ASCII만. alembic이 로케일 인코딩(cp949)으로 읽어 한글 주석이 있으면 UnicodeDecodeError
 - 스키마 변경은 `db/models.py`와 `migrations/versions/`를 함께 고친다. 자동 생성(`alembic revision --autogenerate`)은 결과를 꼭 읽고 커밋
 - `episodes.embedding`은 vector(384)로 고정(0002). 임베딩 모델을 바꾸면 새 마이그레이션 + `ImportService.reindex`. 테스트는 `embedding_provider="fake"`(conftest)라 torch를 안 올린다

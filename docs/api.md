@@ -44,7 +44,7 @@ curl -s -c cookie.txt -X POST localhost:8000/v1/auth/register -H "Content-Type: 
 | `PUT /v1/contacts/{id}/persona` `{settings, expected_version}` | 새 페르소나 버전. 현재 버전과 다르면 409 |
 | `GET /v1/contacts/{id}/persona` | 최신 버전 |
 | `GET /v1/contacts/{id}/persona/versions` | 버전 기록 (최신 먼저, 최대 50) |
-| `GET /v1/contacts/{id}/persona/suggestion` | 이 상대에게 보낸 **내 과거 메시지**로 추정한 말투 제안: `{based_on_messages, settings|null, signals: [{field, value, reason}]}`. 규칙 기반(모델 호출 없음), 저장하지 않는다 — 화면에서 사용자가 확인하고 저장한다 |
+| `GET /v1/contacts/{id}/persona/suggestion` | 이 상대에게 보낸 **내 과거 메시지**로 추정한 말투 제안: `{based_on_messages, settings|null, signals: [{field, value, reason}]}`. 규칙 기반(모델 호출 없음), 저장하지 않는다 — 화면에서 사용자가 확인하고 저장한다. 내 메시지가 5건 미만이면 `settings: null` |
 | `GET /v1/persona-defaults` | 관계 유형별 기본 페르소나 7종 |
 | `DELETE /v1/contacts/{id}` | **상대 삭제**. 그 상대의 대화방·메시지·묶음·그래프 에피소드·페르소나·첨삭 이력을 모두 지운다 (그래프 삭제가 실패해도 DB는 지우고 사유를 돌려준다) |
 
@@ -55,21 +55,24 @@ settings: `formality·friendliness·directness`(1~5), `length`(shorter/same/long
 | 메서드·경로 | 내용 |
 |---|---|
 | `POST /v1/imports/parse` `{format?, text, tz_offset_minutes?, chat_id?}` | **미리보기**(저장 없음). format: `auto`(기본)·`kakao`·`telegram`·`plain`·`json`. 응답: `{format, variant, title_hint, messages_total, max_messages, date_from, date_to, speakers: [{name, count, suggested_role}], sample(앞 20건), skipped_lines, system_lines, masked_pii, problems[], chats}` |
-| `POST /v1/conversations` `{contact_id, title?, source_key?, me_name?}` | 대화방. `me_name`은 그래프 수집에 쓰는 내 이름 |
+| `POST /v1/conversations` `{contact_id, title?, source_key?, me_name?}` | 대화방. `me_name`은 그래프 수집에 쓰는 내 이름(`회원님`·`나`·`me` 같은 자리표시 이름은 저장하지 않는다) |
 | `POST /v1/conversations/{id}/imports/raw` `{format?, text, speaker_map, tz_offset_minutes?, chat_id?, keep_recent?}` | **원문 가져오기**. `speaker_map`: `{"<이름>": "me"|"contact"|"skip"}` — 지도에 없는 화자가 있으면 422(이름 나열), `skip`은 그 화자 메시지를 버린다(단체방). `keep_recent`는 최근 N건만. 응답 202 + 작업 |
 | `POST /v1/conversations/{id}/imports` `{messages[], speaker_map?}` | JSON 메시지 가져오기(기존). 메시지: `{"id":"m01","speaker":"김민수","sent_at":"2026-10-05T09:31:00+09:00","text":"..."}` |
 | `GET /v1/imports/{job_id}` | 작업 상태 |
 | `GET /v1/conversations?contact_id=`, `GET /v1/conversations/{id}` | 목록·조회 |
-| `GET /v1/conversations/{id}/messages` | 메시지 목록 |
+| `GET /v1/conversations/{id}/messages?limit=` | 메시지 목록. `limit`(1~5000)을 주면 가장 최근 N건, 생략하면 전부 |
 | `GET /v1/conversations/{id}/stats` | `{messages, my_messages, episodes, graph_enabled, graph_ingested, graph_pending, graph_limited, first_message_at, last_message_at, latest_job}` — 가져오기 진행 표시용 |
 | `DELETE /v1/conversations/{id}` | 원문·묶음·그래프 에피소드 삭제. 이후 검색에 나오지 않는다 |
 
 - **지원 형식**: 카카오톡 내보내기(.txt — 안드로이드·iOS·PC, PC의 .csv), 텔레그램 Desktop 내보내기(`result.json` — 계정 전체 내보내기면 `chats` 목록이 오고 `chat_id`로 고른다), 붙여넣기(`날짜 시각 | 화자 | 내용`), JSON 배열. **카카오톡 파서는 합성 픽스처로만 검증했다(실물 내보내기 샘플 검증 전)** — 못 읽은 줄은 `skipped_lines`·`problems`로 드러난다.
-- 문체 묶음(임베딩)은 요청 안에서 끝난다(실제 e5로 메시지 수천 건이면 수십 초~몇 분). **그래프 수집은 백그라운드**: `graph_status` skipped(그래프 꺼짐) → pending → running → completed / failed / **limited**(수집 상한 도달 — 종료 상태, `graph_error`는 `user_cap` 또는 `daily_cap`).
+- 문체 묶음(임베딩)은 요청 안에서 끝난다(실제 e5로 메시지 수천 건이면 수십 초~몇 분. 본문이 같은 묶음은 다시 임베딩하지 않는다). 같은 대화방의 가져오기·삭제는 한 번에 하나씩 처리한다. **그래프 수집은 백그라운드**: `graph_status` skipped(그래프 꺼짐) → pending → running → completed / failed / **limited**(수집 상한 도달 — 종료 상태, `graph_error`는 `user_cap` 또는 `daily_cap`).
+- 그래프 수집 상한(`GRAPH_INGEST_USER_MESSAGE_CAP`·`GRAPH_INGEST_DAILY_GLOBAL_CAP`)은 지워지지 않는 하루 카운터로 센다 — 대화를 지워도 그날 쓴 예산은 돌아오지 않는다. 메시지 1건이 1이고 1,000자마다 1을 더 센다. 예산이 모자라면 **가장 최근 메시지부터** 넣는다. `limited`·`failed`였던 파일을 다시 올리면 예산이 있을 때 이어서 수집한다.
+- 작업의 `error_message`·`graph_error`와 삭제 응답의 `graph_error(s)`에는 예외의 **종류**만 남는다(예: `RuntimeError`, `DBAPIError(23505)`) — 문장에 대화 원문이 섞일 수 있어서.
 - 같은 내용을 다시 올리면 같은 작업을 돌려주고, 겹친 메시지는 건너뛴다. 메시지 id는 내용 기반(UTC 분 + 같은 분·같은 본문 순번 + 본문)이라 범위가 겹치는 내보내기를 올려도 중복 저장되지 않는다. `tz_offset_minutes`(기본 +540 = 한국 시간)를 바꾸면 id가 달라지므로 같은 대화는 같은 값으로 올린다.
 - 화자 지정을 잘못한 채 가져왔으면 대화방을 지우고 다시 가져온다(다시 올리면 전부 중복으로 건너뛴다).
 - `IMPORT_MASK_PII=true`(기본)면 API로 들어온 가져오기 본문에서 전화번호·이메일·주민등록번호·카드/계좌 번호 **모양**을 `[전화번호]`처럼 가려 저장한다. 패턴 기반이라 이름·주소는 가리지 못하고 표기가 다르면 놓칠 수 있다.
-- 한도: 본문 `MAX_BODY_BYTES`(8MB), 원문 `MAX_IMPORT_CHARS`(200만 자), 한 번에 `MAX_IMPORT_MESSAGES`(기본 5000, 운영 예시 2000)건, 사용자별 저장 한도(`MAX_*_PER_USER`).
+- 한도: 본문 `MAX_BODY_BYTES`(8MB), 원문 `MAX_IMPORT_CHARS`(200만 자), 한 번에 `MAX_IMPORT_MESSAGES`(기본 5000, 운영 예시 2000)건, 사용자별 저장 한도(`MAX_CONTACTS_PER_USER` 200·`MAX_CONVERSATIONS_PER_USER` 500·`MAX_MESSAGES_PER_USER` 50000 — 넘으면 아무것도 저장하지 않고 422 `quota_exceeded`). 메시지 한 건은 4,000자까지, `sent_at`은 1990~2100년.
+- 대화 본문의 깨진 글자(NUL, 짝 없는 대리 문자)는 `?`로 바꿔 읽는다. 이름·제목·메시지 id 같은 다른 칸에 있으면 422.
 
 ## 첨삭
 
@@ -78,15 +81,16 @@ settings: `formality·friendliness·directness`(1~5), `length`(shorter/same/long
 | `POST /v1/rewrites` `{contact_id, draft_text, situation?, condition?, adjust?, channel?, persona_version?}` + `Idempotency-Key` 헤더 | 추천 생성 |
 | `GET /v1/rewrites?contact_id=&limit=&before=` | 첨삭 이력 (최근 순, 최대 100). `before=<ISO 시각>`으로 다음 쪽 |
 | `GET /v1/rewrites/{id}` | 결과 조회 |
-| `GET /v1/rewrites/{id}/evidence` | 참고한 내 과거 표현의 **지금 남아 있는 원문**: `{items: [{id, source_message_ids, messages: [{speaker_role, sent_at, text}]}], missing}`. 결과에는 원문 사본을 저장하지 않으므로 대화방을 지우면 여기서도 사라진다 |
+| `GET /v1/rewrites/{id}/evidence` | 참고한 내 과거 표현의 **지금 남아 있는 원문**: `{items: [{id, source_message_ids, messages: [{speaker_role, sent_at, text}]}], missing, refs_recorded}`. 결과에는 원문 사본을 저장하지 않으므로 대화방을 지우면 여기서도 사라진다(`missing` = 원문이 전부 지워진 근거 수). 출처 참조를 남기기 전(2026-11-11 이전)의 결과는 `refs_recorded: false`, `items: []` |
 | `POST /v1/rewrites/{id}/feedback` `{accepted, edited_text?, reason?, reason_code?, consent_to_reuse?}` | 적용·수정·거절 피드백. `reason_code`: too_stiff·too_casual·too_servile·not_my_style·fact_changed·too_long·too_short·other |
 | `DELETE /v1/rewrites/{id}`, `DELETE /v1/rewrites?contact_id=` | 이력 한 건 / 상대별 전체 삭제 |
-| `GET /v1/usage` | 오늘(KST) 요청 수·토큰과 한도, 그래프 수집 수 |
+| `GET /v1/usage` | 오늘(KST) 요청 수·토큰과 한도. `graph_messages_ingested`(지금 그래프에 든 양과 오늘 넣은 양 중 큰 값)·`graph_message_cap` |
 
 - `condition`: `A`(기준선) · `B`(+페르소나, 기본값) · `C`(+내 과거 표현) · `D`(+그래프 맥락) · **`auto`** — 이 상대에 쓸 수 있는 가장 풍부한 조건을 고른다(그래프 수집분 있음 → D / 문체 묶음 있음 → C / 페르소나 있음 → B / 아니면 A). 응답의 `condition`은 실제 적용된 A~D. 직접 고른 B~D는 저장된 페르소나가 없으면 422, `auto`는 페르소나 없이도 가져온 대화가 있으면 C/D로 간다. `NEO4J_URI`가 비어 있으면 D = C.
 - `adjust`: `shorter`·`longer`·`more_formal`·`more_casual` — 이번 요청만 페르소나 위에 덮어쓴다(저장된 페르소나는 그대로).
 - `channel`: `web`(기본)·`mobile`·`desktop`·`api` — 관리자 화면의 채널 집계에 쓴다. 모바일 클라이언트는 `mobile`을 보낸다.
-- 같은 `Idempotency-Key`·같은 본문 재요청은 기존 결과를 돌려주고 사용량을 세지 않는다. 같은 키·다른 본문은 409.
+- 같은 `Idempotency-Key`·같은 본문 재요청은 기존 결과를 돌려주고 사용량을 세지 않는다(동시에 와도 모델은 한 번만 부른다). 같은 키·다른 본문은 409. 키는 128자까지.
+- 사용량: 요청 수는 모델을 부르기 전에 예약하고, 토큰 한도는 진행 중인 요청까지 합쳐 본다. 모델이 응답 없이 끝난 호출도 추정 입력 토큰을 사용량에 더한다(`token_usage.estimated_input_tokens`).
 
 응답: `{id, contact_id, condition, channel, created_at, feedback|null, result}`. `result`: `status`(recommended / fallback_original), `result_text`, `change_reasons[]`, `warnings[]`(모델이 적은 주의점 — 화면에 보여 준다), `evidence_ids[]`, `evidence_refs`, `adjust`, `preserved_items[]`, `validation`, `attempts`, `attempt_log[]`, `retrieval_version`, `token_usage`, `latency_ms`.
 서버는 초안 원문을 따로 저장하지 않는다. 다만 원문 유지(`fallback_original`) 결과의 `result_text`는 초안 그대로이고, `preserved_items`(초안에서 뽑은 날짜·수량 등)는 항상 결과에 남는다. `REWRITE_RETENTION_DAYS`가 0이 아니면 그 기간이 지난 이력은 주기 정리 때 지운다.
