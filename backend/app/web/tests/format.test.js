@@ -5,6 +5,7 @@ import {
   clip,
   countCodePoints,
   dayKey,
+  errorCode,
   formatBytes,
   formatDateTime,
   formatDay,
@@ -125,4 +126,15 @@ test("시각 표기(+09:00 · Z · +00:00)가 달라도 같은 시각으로 보�
   // 한국 시간 자정을 넘는 경우도 날짜가 어긋나지 않는다
   assert.equal(dayKey("2026-10-05T15:30:00Z", { offsetMinutes: 540 }), "2026-10-06");
   assert.equal(formatRange("2026-10-05T00:25:00Z", "2026-10-06T14:20:00+09:00", { offsetMinutes: 540 }), "2026-10-05 ~ 2026-10-06");
+});
+
+test("errorCode: 짧은 코드만 통과시키고 예외 문장은 버린다", () => {
+  assert.equal(errorCode("user_cap"), "user_cap");
+  assert.equal(errorCode(" AuthenticationError "), "AuthenticationError");
+  assert.equal(errorCode("neo4j.exceptions:ServiceUnavailable"), "neo4j.exceptions:ServiceUnavailable");
+  assert.equal(errorCode("Could not resolve authentication method. Expected one of api_key"), "");
+  assert.equal(errorCode("x".repeat(41)), "");
+  assert.equal(errorCode(""), "");
+  assert.equal(errorCode(null), "");
+  assert.equal(errorCode(undefined), "");
 });

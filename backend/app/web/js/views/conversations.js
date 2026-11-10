@@ -2,7 +2,7 @@
 
 import { api } from "../api.js";
 import { describeError } from "../lib/errors.js";
-import { dayKey, formatDateTime, formatDay, formatNumber, formatTime } from "../lib/format.js";
+import { dayKey, errorCode, formatDateTime, formatDay, formatNumber, formatTime } from "../lib/format.js";
 import { graphPhaseView } from "../lib/importing.js";
 import { buildHash } from "../lib/router.js";
 import { confirmDialog } from "../ui/dialog.js";
@@ -32,7 +32,8 @@ export async function deleteConversation(conv) {
       { kind: "ok" },
     );
     if (d.graph_error) {
-      toast(`지난 약속·사건 기록 일부는 지우지 못했어요(${d.graph_error}). 원문과 검색 자료는 지워졌어요.`, { kind: "warn", timeout: 0 });
+      const why = errorCode(d.graph_error);
+      toast(`지난 약속·사건 기록 일부는 지우지 못했어요${why ? `(${why})` : ""}. 원문과 검색 자료는 지워졌어요.`, { kind: "warn", timeout: 0 });
     }
     return true;
   } catch (err) {

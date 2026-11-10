@@ -148,6 +148,13 @@ export function initial(name) {
 }
 
 /** Mac 계열인지(단축키 표기 ⌘ / Ctrl). */
+// 서버가 준 오류 문자열 중 화면에 그대로 보여도 되는 것은 짧은 코드뿐이다(예: user_cap, AuthenticationError).
+// 문장으로 된 예외 메시지는 사용자에게 뜻이 없고 내부 사정이 섞일 수 있어 빈 문자열로 돌려준다.
+export function errorCode(value) {
+  const text = typeof value === "string" ? value.trim() : "";
+  return /^[A-Za-z0-9_.:-]{1,40}$/.test(text) ? text : "";
+}
+
 export function isMacLike(platform = "") {
   return /mac|iphone|ipad|ipod/i.test(String(platform));
 }

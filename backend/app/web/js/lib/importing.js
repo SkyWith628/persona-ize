@@ -1,7 +1,7 @@
 // 대화 가져오기의 순수 로직: 파일 인코딩 판별, 미리보기 모델, 화자 지정, 진행 상태.
 // 테스트: tests/importing.test.js
 
-import { countCodePoints, formatNumber, formatRange, percent } from "./format.js";
+import { countCodePoints, errorCode, formatNumber, formatRange, percent } from "./format.js";
 
 // 서버 기본값(계약 §3: MAX_IMPORT_CHARS, MAX_BODY_BYTES). 서버 설정이 다르면 서버가 413/422로 알려 준다 —
 // 여기 값은 큰 파일을 올려 보내기 전에 미리 막기 위한 안내용이다.
@@ -391,12 +391,13 @@ export function graphPhaseView(stats, job, { stalled = false } = {}) {
     case "completed":
       return { ...base, tone: "ok", title: "지난 약속·사건 정리 완료", detail: "이제 지난번에 약속한 내용과 겹치면 알려 드려요." };
     case "failed": {
-      const why = stats?.latest_job?.graph_error || job?.graph_error;
+      // 서버의 예외 문장은 보여 주지 않는다 — 짧은 코드일 때만 운영자에게 전할 수 있게 덧붙인다.
+      const why = errorCode(stats?.latest_job?.graph_error || job?.graph_error);
       return {
         ...base,
         tone: "bad",
         title: "지난 약속·사건 정리 중 문제가 생겼어요",
-        detail: `말투 맞추기는 그대로 쓸 수 있어요. 나중에 대화를 다시 가져오면 남은 부분을 이어서 정리해요.${why ? ` (오류: ${why})` : ""}`,
+        detail: `말투 맞추기는 그대로 쓸 수 있어요. 나중에 대화를 다시 가져오면 남은 부분을 이어서 정리해요.${why ? ` (오류 종류: ${why})` : ""}`,
       };
     }
     case "limited": {
