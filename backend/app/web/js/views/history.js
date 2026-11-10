@@ -2,8 +2,8 @@
 // 서버는 초안을 따로 저장하지 않는다 — 이력에는 결과만 있다(초안을 그대로 둔 경우에는 결과가 곧 초안).
 
 import { api } from "../api.js";
-import { isUnavailable } from "../lib/errors.js";
-import { formatDateTime, formatNumber } from "../lib/format.js";
+import { describeError, isUnavailable } from "../lib/errors.js";
+import { clip, formatDateTime, formatNumber } from "../lib/format.js";
 import { feedbackView, mergeHistory, statusView } from "../lib/model.js";
 import { buildHash } from "../lib/router.js";
 import { loadContacts } from "../session.js";
@@ -115,6 +115,8 @@ export function mountHistory(root, ctx) {
           {
             type: "button",
             class: "btn",
+            // 줄마다 같은 글자라, 읽는 이름에는 어느 결과인지(문장 앞부분·받은 때·조건) 붙인다
+            "aria-label": `${isOpen ? "접기" : "자세히"}: ${clip(rec.result.result_text, 30)} (${formatDateTime(rec.created_at)}, 조건 ${rec.condition || "?"})`,
             "aria-expanded": String(isOpen),
             "aria-controls": panelId,
             onClick: () => {
@@ -169,7 +171,7 @@ export function mountHistory(root, ctx) {
       renderList();
     } catch (err) {
       if (destroyed || mine !== token || err.status === 401) return;
-      setChildren(listBox, errorState(err.message, load));
+      setChildren(listBox, errorState(describeError(err), load));
     }
   }
 
@@ -180,13 +182,17 @@ export function mountHistory(root, ctx) {
       try {
         const list = await api.rewrites.list({ contactId: contactId || undefined, limit: PAGE, before: last.created_at });
         if (destroyed) return;
+        const firstNew = rows.length;
         const merged = mergeHistory(rows, list);
         rows = merged.rows;
         // 새로 붙은 게 없으면 끝이다(before를 아직 모르는 서버는 같은 목록을 다시 준다)
         hasMore = merged.added > 0 && (list || []).length >= PAGE;
         renderList();
+        // 목록을 다시 그리면 누른 버튼이 사라진다 — 새로 붙은 첫 줄(없으면 마지막 줄)로 포커스를 옮겨 읽던 자리를 잇는다
+        const toggles = listBox.querySelectorAll(".history-summary button");
+        (toggles[Math.min(firstNew, toggles.length - 1)] || root.querySelector("h1"))?.focus();
       } catch (err) {
-        if (err.status !== 401) toast(err.message || "더 불러오지 못했어요.", { kind: "error" });
+        if (err.status !== 401) toast(describeError(err, "더 불러오지 못했어요."), { kind: "error" });
       }
     });
   }
@@ -213,7 +219,7 @@ export function mountHistory(root, ctx) {
         target?.focus();
       } catch (err) {
         if (err.status === 401) return;
-        toast(isUnavailable(err) ? UNAVAILABLE_TOAST : err.message || "지우지 못했어요.", { kind: isUnavailable(err) ? "warn" : "error" });
+        toast(isUnavailable(err) ? UNAVAILABLE_TOAST : describeError(err, "지우지 못했어요."), { kind: isUnavailable(err) ? "warn" : "error" });
       }
     });
   }
@@ -235,7 +241,7 @@ export function mountHistory(root, ctx) {
         load();
       } catch (err) {
         if (err.status === 401) return;
-        toast(isUnavailable(err) ? UNAVAILABLE_TOAST : err.message || "지우지 못했어요.", { kind: isUnavailable(err) ? "warn" : "error" });
+        toast(isUnavailable(err) ? UNAVAILABLE_TOAST : describeError(err, "지우지 못했어요."), { kind: isUnavailable(err) ? "warn" : "error" });
       }
     });
   });

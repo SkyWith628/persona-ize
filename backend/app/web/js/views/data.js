@@ -2,7 +2,7 @@
 // 상대별 요약 표 · 대화방 삭제 · 내 데이터 내려받기 · 보관 기간 안내 · 계정 삭제.
 
 import { api } from "../api.js";
-import { isMissingEndpoint } from "../lib/errors.js";
+import { describeError, isMissingEndpoint } from "../lib/errors.js";
 import { formatDateTime, formatNumber } from "../lib/format.js";
 import { relLabel } from "../lib/model.js";
 import { buildHash } from "../lib/router.js";
@@ -53,7 +53,15 @@ function summaryTable(summary) {
             h("td", { class: "num" }, formatNumber(r.conversations)),
             h("td", { class: "num" }, `${formatNumber(r.messages)} (내 메시지 ${formatNumber(r.my_messages)})`),
             h("td", { class: "num" }, graph ? `${formatNumber(r.graph_ingested)} / ${formatNumber(r.messages)}` : "쓰지 않음"),
-            h("td", { class: "num" }, h("a", { href: buildHash("history", {}, { contact: r.contact_id }) }, `${formatNumber(r.rewrites)}건`)),
+            h(
+              "td",
+              { class: "num" },
+              h(
+                "a",
+                { href: buildHash("history", {}, { contact: r.contact_id }), "aria-label": `${r.alias} 첨삭 이력 ${formatNumber(r.rewrites)}건` },
+                `${formatNumber(r.rewrites)}건`,
+              ),
+            ),
             h("td", null, r.last_rewrite_at ? formatDateTime(r.last_rewrite_at) : "—"),
           ),
         ),
@@ -109,12 +117,16 @@ function conversationsSection() {
               h(
                 "div",
                 { class: "conv-actions" },
-                alias.has(conv.contact_id) ? h("a", { class: "btn", href: buildHash("contact", { id: conv.contact_id }) }, "대화 보기") : null,
+                // 대화방마다 같은 글자라, 읽는 이름에는 어느 대화방인지 붙인다
+                alias.has(conv.contact_id)
+                  ? h("a", { class: "btn", href: buildHash("contact", { id: conv.contact_id }), "aria-label": `${conv.title} 대화 보기` }, "대화 보기")
+                  : null,
                 h(
                   "button",
                   {
                     type: "button",
                     class: "btn btn-danger",
+                    "aria-label": `${conv.title} 대화방 삭제`,
                     onClick: async () => {
                       if (await deleteConversation(conv)) {
                         reload();
@@ -158,7 +170,7 @@ async function download(button) {
       toast("내 데이터 파일을 내려받았어요. 대화 원문이 들어 있으니 보관에 주의해 주세요.", { kind: "ok" });
     } catch (err) {
       if (err.status === 401) return;
-      toast(isMissingEndpoint(err) ? UNAVAILABLE_TOAST : err.message || "내려받지 못했어요.", { kind: isMissingEndpoint(err) ? "warn" : "error" });
+      toast(isMissingEndpoint(err) ? UNAVAILABLE_TOAST : describeError(err, "내려받지 못했어요."), { kind: isMissingEndpoint(err) ? "warn" : "error" });
     }
   });
 }
@@ -188,7 +200,8 @@ function deleteAccountDialog() {
           try {
             close(await api.deleteAccount(passEl.value));
           } catch (err) {
-            errorEl.textContent = err.message || "지우지 못했어요. 잠시 뒤 다시 시도해 주세요.";
+            errorEl.textContent =
+              err.status === 401 ? "비밀번호가 맞지 않아요." : describeError(err, "지우지 못했어요. 잠시 뒤 다시 시도해 주세요.");
             errorEl.hidden = false;
             passEl.focus();
             passEl.select();

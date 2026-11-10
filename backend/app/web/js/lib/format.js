@@ -108,6 +108,12 @@ export function countCodePoints(text) {
   return count;
 }
 
+/** 긴 글을 앞에서 max자(코드포인트 기준)까지만 남기고 "…"를 붙인다. 줄바꿈·연속 공백은 한 칸으로. */
+export function clip(text, max = 30) {
+  const chars = [...String(text ?? "").replace(/\s+/g, " ").trim()];
+  return chars.length <= max ? chars.join("") : `${chars.slice(0, max).join("").trimEnd()}…`;
+}
+
 /** 비율(0~1)을 0~100 정수로. 분모가 0이면 0. */
 export function percent(done, total) {
   const d = Number(done);

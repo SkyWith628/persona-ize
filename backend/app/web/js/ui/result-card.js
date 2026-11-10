@@ -4,7 +4,7 @@
 
 import { api } from "../api.js";
 import { formatDateTime, formatNumber } from "../lib/format.js";
-import { fallbackView, markSegments, metaLine, preservedChips, resultMeta } from "../lib/model.js";
+import { evidenceNotes, fallbackView, markSegments, metaLine, preservedChips, resultMeta } from "../lib/model.js";
 import { h, uid } from "./dom.js";
 import { loadInto, note } from "./parts.js";
 
@@ -91,7 +91,6 @@ const ROLE_LABEL = { me: "나", contact: "상대", graph: "정리된 사실" };
 
 function renderEvidence(data) {
   const items = Array.isArray(data?.items) ? data.items : [];
-  const missing = Number(data?.missing) || 0;
   const blocks = items.map((item) =>
     h(
       "li",
@@ -111,9 +110,12 @@ function renderEvidence(data) {
       ),
     ),
   );
+  // 원문을 못 보여 주는 까닭은 단정하지 않는다(지워졌을 수도, 근거 기록이 없던 때의 결과일 수도 있다)
+  const notes = evidenceNotes(data, blocks.length);
   return [
-    blocks.length ? h("ul", { class: "evidence-list" }, blocks) : note("지금 남아 있는 원문이 없어요."),
-    missing > 0 ? note(`지운 대화에서 온 표현 ${formatNumber(missing)}개는 보여 줄 수 없어요.`) : null,
+    blocks.length ? h("ul", { class: "evidence-list" }, blocks) : null,
+    notes.empty ? note(notes.empty) : null,
+    notes.missing ? note(notes.missing) : null,
   ];
 }
 
@@ -170,7 +172,7 @@ function technicalNode(meta) {
   return h(
     "details",
     { class: "fold" },
-    h("summary", null, "자세히"),
+    h("summary", null, "만든 과정 보기"),
     h(
       "dl",
       { class: "meta-list" },

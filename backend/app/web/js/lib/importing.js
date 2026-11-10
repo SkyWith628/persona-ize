@@ -3,10 +3,12 @@
 
 import { countCodePoints, formatNumber, formatRange, percent } from "./format.js";
 
-// 서버 기본값(계약 §3). 서버 설정이 다르면 서버가 413/422로 알려 준다 — 여기 값은 미리 막기 위한 안내용이다.
+// 서버 기본값(계약 §3: MAX_IMPORT_CHARS, MAX_BODY_BYTES). 서버 설정이 다르면 서버가 413/422로 알려 준다 —
+// 여기 값은 큰 파일을 올려 보내기 전에 미리 막기 위한 안내용이다.
 export const MAX_IMPORT_CHARS = 2_000_000;
-export const MAX_BODY_BYTES = 3_000_000;
-export const MAX_IMPORT_MESSAGES = 5000;
+export const MAX_BODY_BYTES = 8_000_000;
+// 한 번에 가져올 수 있는 메시지 수는 미리보기 응답의 max_messages를 쓴다. 응답에 없을 때(옛 서버)만 이 값.
+export const DEFAULT_MAX_MESSAGES = 5000;
 
 export const METHODS = [
   {
@@ -152,18 +154,28 @@ function nameMatches(a, b) {
 
 /**
  * 화자별 역할을 미리 채운다 → { 이름: "me" | "contact" | "skip" | null }.
- * ① 서버 추천값 ② 상대 이름과 일치하면 상대 ③ 화자가 둘이고 한쪽만 정해졌으면 나머지는 반대쪽.
+ * ① 서버 추천값 ② 이 상대의 다른 대화방에서 '나'였던 이름이면 나 ③ 상대 이름과 일치하면 상대
+ * ④ 화자가 둘이고 한쪽만 정해졌으면 나머지는 반대쪽.
  * 그래도 모르면 null로 두고 사용자가 고르게 한다(단체방 등).
+ *
+ * @param {Array<{name: string, suggested_role?: string}>} speakers
+ * @param {string} contactAlias 가져올 상대의 이름
+ * @param {Array<string|null>} [knownMeNames] 이 상대의 기존 대화방에 저장된 내 이름(me_name)
  */
-export function suggestRoles(speakers, contactAlias) {
+export function suggestRoles(speakers, contactAlias, knownMeNames = []) {
   const roles = {};
   const list = speakers || [];
   for (const sp of list) {
     const suggested = ["me", "contact", "skip"].includes(sp.suggested_role) ? sp.suggested_role : null;
     roles[sp.name] = suggested;
   }
-  if (contactAlias && !Object.values(roles).includes("contact")) {
-    const hit = list.filter((sp) => roles[sp.name] === null && nameMatches(sp.name, contactAlias));
+  const unassigned = () => list.filter((sp) => roles[sp.name] === null);
+  const mine = new Set((knownMeNames || []).filter(Boolean).map(squash));
+  for (const sp of unassigned()) {
+    if (mine.has(squash(sp.name))) roles[sp.name] = "me";
+  }
+  if (contactAlias) {
+    const hit = unassigned().filter((sp) => nameMatches(sp.name, contactAlias));
     if (hit.length === 1) roles[hit[0].name] = "contact";
   }
   if (list.length === 2) {
@@ -192,9 +204,20 @@ export function checkRoles(roles) {
   return { ok: true, error: null, warning };
 }
 
-/** '나'로 지정한 화자 중 메시지가 가장 많은 이름(대화방의 내 이름으로 쓴다). */
+// 내보내기 파일이 나를 가리킬 때 쓰는 자리표시 이름. 진짜 이름이 아니므로 대화방의 "내 이름"으로 쓰지 않는다.
+// (카카오톡 안드로이드는 나를 "회원님"으로 적는다. 붙여넣기 형식의 me/나도 같다.)
+const PLACEHOLDER_ME_NAMES = new Set(["회원님", "me", "나"]);
+
+export function isPlaceholderName(name) {
+  return PLACEHOLDER_ME_NAMES.has(squash(name));
+}
+
+/**
+ * 대화방에 저장할 "내 이름": '나'로 지정한 화자 중 진짜 이름이면서 메시지가 가장 많은 것.
+ * 자리표시 이름(회원님 등)뿐이면 null — 보내지 않는다(서버가 채우거나 비워 둔다).
+ */
 export function meName(speakers, roles) {
-  const mine = (speakers || []).filter((sp) => roles?.[sp.name] === "me");
+  const mine = (speakers || []).filter((sp) => roles?.[sp.name] === "me" && !isPlaceholderName(sp.name));
   mine.sort((a, b) => (b.count || 0) - (a.count || 0));
   return mine[0]?.name || null;
 }
@@ -206,26 +229,58 @@ export function keptMessages(speakers, roles) {
     .reduce((sum, sp) => sum + (sp.count || 0), 0);
 }
 
-/** "최근 N개만" 선택지. 메시지가 많을 때만 내놓는다. 한도를 넘으면 전체는 고를 수 없다. */
-export function keepRecentOptions(total) {
+/**
+ * "최근 N개만" 선택지. 메시지가 많을 때만 내놓는다.
+ * maxMessages는 서버가 한 번에 받는 수(미리보기 응답의 max_messages). 그보다 많으면 전체는 고를 수 없다(forced).
+ */
+export function keepRecentOptions(total, maxMessages = DEFAULT_MAX_MESSAGES) {
   const n = Number(total) || 0;
-  if (n <= 1000) return { needed: false, options: [], forced: false };
-  const options = [500, 1000, 3000, 5000].filter((v) => v < n && v <= MAX_IMPORT_MESSAGES);
-  return { needed: true, options, forced: n > MAX_IMPORT_MESSAGES };
+  const max = Number(maxMessages) > 0 ? Number(maxMessages) : DEFAULT_MAX_MESSAGES;
+  if (n <= Math.min(1000, max)) return { needed: false, options: [], forced: false, max };
+  const options = [...new Set([500, 1000, 3000, max])].filter((v) => v < n && v <= max).sort((a, b) => a - b);
+  return { needed: true, options, forced: n > max, max };
+}
+
+const CHAT_TYPE_LABEL = {
+  personal_chat: "1:1 대화",
+  private_group: "그룹",
+  private_supergroup: "그룹",
+  public_supergroup: "공개 그룹",
+  private_channel: "채널",
+  public_channel: "공개 채널",
+  saved_messages: "저장한 메시지",
+  bot_chat: "봇",
+};
+
+/** 텔레그램 대화 종류를 사람이 읽는 말로. 모르는 값은 그대로. */
+export function chatTypeLabel(type) {
+  return CHAT_TYPE_LABEL[type] || (type ? String(type) : "");
 }
 
 /** 미리보기 응답(계약 §4.4)을 화면용으로 정리한다. */
-export function previewView(preview, contactAlias = "") {
+export function previewView(preview, contactAlias = "", knownMeNames = []) {
   const p = preview || {};
   const speakers = Array.isArray(p.speakers) ? p.speakers : [];
+  // 텔레그램 "계정 전체 내보내기": 메시지 없이 대화 목록(chats)만 온다 → 하나를 골라 chat_id로 다시 읽는다
+  const chats = Array.isArray(p.chats)
+    ? p.chats.map((c) => ({
+        id: String(c.id),
+        name: String(c.name ?? ""),
+        typeLabel: chatTypeLabel(c.type),
+        messages: c.messages ?? 0,
+      }))
+    : null;
   return {
     formatLabel: formatLabel(p.format, p.variant),
     format: p.format || "auto",
     titleHint: p.title_hint || "",
     total: p.messages_total ?? 0,
+    chats,
+    needsChat: chats !== null,
+    maxMessages: Number(p.max_messages) > 0 ? Number(p.max_messages) : DEFAULT_MAX_MESSAGES,
     range: formatRange(p.date_from, p.date_to),
     speakers: speakers.map((sp) => ({ name: String(sp.name), count: sp.count ?? 0 })),
-    roles: suggestRoles(speakers, contactAlias),
+    roles: suggestRoles(speakers, contactAlias, knownMeNames),
     sample: (Array.isArray(p.sample) ? p.sample : []).map((m) => ({
       id: m.id,
       speaker: String(m.speaker ?? ""),
@@ -236,7 +291,7 @@ export function previewView(preview, contactAlias = "") {
     systemLines: p.system_lines ?? 0,
     maskedPii: p.masked_pii ?? 0,
     problems: Array.isArray(p.problems) ? p.problems.map(String) : [],
-    keepRecent: keepRecentOptions(p.messages_total),
+    keepRecent: keepRecentOptions(p.messages_total, p.max_messages),
   };
 }
 
@@ -260,30 +315,58 @@ export function stylePhaseView(job, stats) {
 
 const ACTIVE = new Set(["pending", "running"]);
 
-/** 통계(없으면 작업 응답)에서 사건 정리 상태를 정한다. 알 수 없으면 null. */
+/**
+ * 통계(없으면 작업 응답)에서 사건 정리 상태를 정한다. 알 수 없으면 null.
+ * 작업 기록의 상태(latest_job.graph_status)는 서버가 다시 시작되면 running·pending으로 남을 수 있으므로,
+ * 한도 표시(graph_limited)와 진행 수치(graph_ingested / messages)를 먼저 본다.
+ */
 export function graphStatus(stats, job) {
   if (stats) {
     if (stats.graph_enabled === false) return "skipped";
     if (stats.graph_limited) return "limited";
+    if (stats.messages > 0 && stats.graph_ingested >= stats.messages) return "completed";
     const fromJob = stats.latest_job?.graph_status;
     if (fromJob) return fromJob;
     if (stats.graph_pending > 0) return "running";
-    return stats.messages > 0 && stats.graph_ingested >= stats.messages ? "completed" : null;
+    return null;
   }
   return job?.graph_status || null;
+}
+
+/** 진행 수치가 이만큼(밀리초) 그대로면 더 읽지 않는다 — 서버가 다시 시작돼 작업 상태만 "진행 중"으로 남은 경우. */
+export const POLL_STALL_MS = 3 * 60 * 1000;
+
+/**
+ * 진행이 멈췄는지 따진다. prev는 앞서 돌려준 값(처음이면 null).
+ * 수치(graph_ingested / messages)가 바뀌면 시계를 새로 잡고, stallMs 동안 그대로면 stalled=true.
+ */
+export function trackProgress(prev, stats, now, stallMs = POLL_STALL_MS) {
+  const key = stats ? `${stats.graph_ingested ?? ""}/${stats.messages ?? ""}` : "";
+  if (!prev || prev.key !== key) return { key, since: now, stalled: false };
+  return { key, since: prev.since, stalled: now - prev.since >= stallMs };
 }
 
 /**
  * 2단계(지난 약속·사건 정리) 표시. 상태: skipped·pending·running·completed·failed·limited.
  * polling이 true인 동안 화면이 통계를 다시 읽는다.
  */
-export function graphPhaseView(stats, job) {
+export function graphPhaseView(stats, job, { stalled = false } = {}) {
   const status = graphStatus(stats, job);
   const done = stats?.graph_ingested ?? null;
   const total = stats?.messages ?? null;
   const count = done != null && total != null ? `${formatNumber(done)} / ${formatNumber(total)}` : "";
   const pct = done != null && total != null ? percent(done, total) : null;
   const base = { status, count, pct, polling: ACTIVE.has(status), tone: "" };
+  if (stalled && ACTIVE.has(status)) {
+    // 한동안 수치가 그대로다 — 더 읽지 않고, 나중에 다시 보라고 알린다
+    return {
+      ...base,
+      polling: false,
+      tone: "warn",
+      title: "지난 약속·사건 정리가 한동안 멈춰 있어요",
+      detail: "서버가 다시 시작됐을 수 있어요. 나중에 상대 화면에서 다시 확인해 주세요. 말투 맞추기는 그대로 쓸 수 있어요.",
+    };
+  }
   switch (status) {
     case "skipped":
       return {
@@ -316,13 +399,17 @@ export function graphPhaseView(stats, job) {
         detail: `말투 맞추기는 그대로 쓸 수 있어요. 나중에 대화를 다시 가져오면 남은 부분을 이어서 정리해요.${why ? ` (오류: ${why})` : ""}`,
       };
     }
-    case "limited":
-      return {
-        ...base,
-        tone: "warn",
-        title: "정리 한도에 닿아 여기까지만 정리했어요",
-        detail: "남은 메시지는 사건 정리에 쓰지 않아요. 내 과거 표현 찾기는 전부 동작해요.",
-      };
+    case "limited": {
+      // 끝난 상태다(더 읽어도 바뀌지 않는다). graph_error가 어느 한도인지 알려 준다: user_cap | daily_cap
+      const why = stats?.latest_job?.graph_error || job?.graph_error;
+      const detail =
+        why === "daily_cap"
+          ? "오늘 서비스 전체의 정리 한도에 닿았어요. 남은 메시지는 한도가 풀린 뒤에 이어서 정리해요. 내 과거 표현 찾기는 전부 동작해요."
+          : why === "user_cap"
+            ? "계정마다 정해진 정리 한도에 닿았어요. 남은 메시지는 사건 정리에 쓰지 않아요. 내 과거 표현 찾기는 전부 동작해요."
+            : "남은 메시지는 사건 정리에 쓰지 않아요. 내 과거 표현 찾기는 전부 동작해요.";
+      return { ...base, tone: "warn", title: "정리 한도에 닿아 여기까지만 정리했어요", detail };
+    }
     default:
       return {
         ...base,

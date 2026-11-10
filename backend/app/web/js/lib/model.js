@@ -1,7 +1,7 @@
 // 서버 응답 → 화면에 그릴 모양. DOM을 만지지 않는 순수 함수만 둔다(테스트: tests/model.test.js).
 
-import { hasFieldError } from "./errors.js";
-import { formatSeconds } from "./format.js";
+import { formatWait, hasFieldError } from "./errors.js";
+import { formatNumber, formatSeconds } from "./format.js";
 
 export const REL_LABEL = {
   superior: "상사",
@@ -254,13 +254,35 @@ export function mergeHistory(existing, incoming) {
   return { rows: [...existing, ...fresh], added: fresh.length };
 }
 
+// ---------- 참고한 과거 표현(근거) 안내 ----------
+
+/**
+ * GET /v1/rewrites/{id}/evidence 응답에서, 원문을 보여 주지 못하는 까닭을 문장으로.
+ * - refs_recorded === false: 근거 기록이 남기 전에 만든 결과다(지워진 것이 아니다).
+ * - missing > 0: 지금 원문을 보여 줄 수 없는 표현 수. 왜인지는 단정하지 않는다
+ *   (근거 기록이 없는 옛 결과도 전부 missing으로 온다). 기록이 있다고 서버가 알려 줄 때만 "지워졌을 수 있다"고 덧붙인다.
+ * 돌려주는 값: { empty, missing } — 각각 보여 줄 문장 또는 null.
+ */
+export function evidenceNotes(data, shown = 0) {
+  const missing = Number(data?.missing) || 0;
+  if (data?.refs_recorded === false) {
+    return { empty: null, missing: "이 결과는 근거 기록이 없어요. 어떤 표현을 참고했는지 지금은 보여 줄 수 없어요." };
+  }
+  let note = null;
+  if (missing > 0) {
+    note = `참고한 표현 ${formatNumber(missing)}개는 지금 원문을 보여 줄 수 없어요.`;
+    if (data?.refs_recorded === true) note += " 그 대화를 지웠을 수 있어요.";
+  }
+  return { empty: shown === 0 && !note ? "지금 보여 줄 수 있는 원문이 없어요." : null, missing: note };
+}
+
 // ---------- 첨삭 오류 안내 ----------
 
 /**
  * 첨삭 요청 실패 → 화면 안내. action은 "persona"(말투 설정으로) | "advanced"(조건 고르기) | "retry" | "login" | null.
  * 모든 경우에 초안은 입력란에 그대로 있다.
  */
-export function rewriteErrorView(err, { contact = null, condition = "auto" } = {}) {
+export function rewriteErrorView(err, { contact = null, condition = "auto", usage = null } = {}) {
   const status = err?.status ?? 0;
   const code = err?.code || "";
   const kept = "초안은 입력란에 그대로 있어요.";
@@ -279,7 +301,8 @@ export function rewriteErrorView(err, { contact = null, condition = "auto" } = {
         action: "advanced",
       };
     }
-    if (contact && contact.persona_version == null && condition !== "A") {
+    // 조건을 직접 고른 경우에만 해당한다 — 자동은 말투 설정이 없어도 서버가 쓸 수 있는 조건으로 진행한다
+    if (contact && contact.persona_version == null && ["B", "C", "D"].includes(condition)) {
       return {
         kind: "no_persona",
         title: `${contact.alias}에게 쓸 말투 설정이 아직 없어요`,
@@ -287,14 +310,21 @@ export function rewriteErrorView(err, { contact = null, condition = "auto" } = {
         action: "persona",
       };
     }
+    // 저장 한도(상대·대화방·메시지 수)를 넘은 경우: 서버 문장에 안내가 들어 있다
+    if (code === "quota_exceeded") return { kind: "quota", title: "저장할 수 있는 한도를 넘었어요", body: err.message, action: null };
     return { kind: "invalid", title: "입력을 확인해 주세요", body: err.message, action: null };
   }
   if (status === 429) {
     if (code === "usage_exceeded") {
+      // 어느 한도에 닿았는지는 알고 있는 오늘 사용량으로 말한다(모르면 서버 문장을 그대로 쓴다)
+      const u = usageView(usage);
+      let what = err.message;
+      if (u && u.rewriteLimit > 0 && u.rewrites >= u.rewriteLimit) what = `오늘 첨삭 요청 한도(${formatNumber(u.rewriteLimit)}회)를 모두 썼어요.`;
+      else if (u && u.tokenLimit > 0 && u.tokens >= u.tokenLimit) what = "오늘 모델 사용량 한도를 모두 썼어요.";
       return {
         kind: "usage",
         title: "오늘 쓸 수 있는 만큼 다 썼어요",
-        body: `${err.message} 한도는 한국 시간 자정에 새로 시작돼요. ${kept}`,
+        body: `${what} 한도는 한국 시간 자정에 새로 시작돼요. ${kept}`,
         action: null,
       };
     }
@@ -306,11 +336,18 @@ export function rewriteErrorView(err, { contact = null, condition = "auto" } = {
         action: null,
       };
     }
-    const wait = err.retryAfter ? `${err.retryAfter}초 뒤에` : "잠시 뒤에";
+    const wait = err.retryAfter ? `${formatWait(err.retryAfter)} 뒤에` : "잠시 뒤에";
     return { kind: "rate", title: "요청이 너무 잦아요", body: `${wait} 다시 시도해 주세요. ${kept}`, action: "retry" };
   }
-  if (status === 503) {
-    return { kind: "model", title: "지금은 문장을 만들 수 없어요", body: `${kept} 잠시 뒤 다시 시도해 주세요.`, action: "retry" };
+  if (status === 502 || status === 503 || status === 504) {
+    // 모델 장애(503 model_unavailable)이거나, 서버를 다시 띄우는 중이라 프록시가 대신 답한 경우(502~504 + Retry-After)
+    const wait = err.retryAfter ? `${formatWait(err.retryAfter)}쯤 뒤에` : "잠시 뒤";
+    return {
+      kind: code === "model_unavailable" ? "model" : "unavailable",
+      title: "지금은 문장을 만들 수 없어요",
+      body: `${kept} ${wait} 다시 시도해 주세요.`,
+      action: "retry",
+    };
   }
   if (status === 404) {
     return { kind: "missing", title: "이 상대를 찾을 수 없어요", body: "다른 곳에서 지웠을 수 있어요. 상대를 다시 골라 주세요.", action: null };
@@ -371,8 +408,10 @@ export function usageView(usage) {
     remaining: usage.remaining_rewrites ?? Math.max((usage.rewrite_limit ?? 0) - (usage.rewrites ?? 0), 0),
     tokens,
     tokenLimit: usage.token_limit ?? 0,
-    graphIngested: usage.graph_messages_ingested ?? null,
-    graphCap: usage.graph_message_cap ?? null,
+    // 지난 약속·사건 정리에 들어간 내 메시지 수. 상한 0은 "제한 없음"이다. 쓴 적도 상한도 없으면 보여 주지 않는다.
+    graphIngested: usage.graph_messages_ingested ?? 0,
+    graphCap: usage.graph_message_cap > 0 ? usage.graph_message_cap : null,
+    showGraph: (usage.graph_messages_ingested ?? 0) > 0 || (usage.graph_message_cap ?? 0) > 0,
     exhausted: (usage.rewrite_limit ?? 0) > 0 && (usage.rewrites ?? 0) >= usage.rewrite_limit,
   };
 }

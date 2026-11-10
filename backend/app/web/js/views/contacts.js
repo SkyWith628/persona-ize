@@ -62,7 +62,7 @@ export function mountContacts(root, ctx) {
                     "a",
                     { class: "row-link", href: buildHash("contact", { id: c.id }) },
                     h("span", { class: "avatar", "aria-hidden": "true" }, initial(c.alias)),
-                    h("span", null, c.alias),
+                    c.alias,
                   ),
                 ),
                 h("td", null, relLabel(c.relationship_type)),
@@ -72,7 +72,12 @@ export function mountContacts(root, ctx) {
                   null,
                   row ? `대화방 ${formatNumber(row.conversations)}개 · 메시지 ${formatNumber(row.messages)}개` : h("span", { class: "muted" }, "—"),
                 ),
-                h("td", { class: "cell-actions" }, h("a", { class: "btn", href: buildHash("compose", {}, { contact: c.id }) }, "첨삭하기")),
+                h(
+                  "td",
+                  { class: "cell-actions" },
+                  // 줄마다 같은 글자라, 읽는 이름에는 누구의 것인지 붙인다
+                  h("a", { class: "btn", href: buildHash("compose", {}, { contact: c.id }), "aria-label": `${c.alias} 첨삭하기` }, "첨삭하기"),
+                ),
               );
             }),
           ),

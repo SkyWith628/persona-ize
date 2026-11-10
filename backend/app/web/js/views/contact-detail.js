@@ -1,7 +1,7 @@
 // 상대 상세(#/contacts/:id): 말투 설정(페르소나) → 과거 대화 → 이름·관계 → 삭제.
 
 import { api } from "../api.js";
-import { isUnavailable } from "../lib/errors.js";
+import { describeError, isUnavailable } from "../lib/errors.js";
 import { formatNumber, initial, josa } from "../lib/format.js";
 import { REL_LABEL, REL_ORDER, relLabel } from "../lib/model.js";
 import { buildHash } from "../lib/router.js";
@@ -50,7 +50,7 @@ function infoSection(contact, onChanged) {
         onChanged(updated);
       } catch (err) {
         if (err.status === 401) return;
-        errorEl.textContent = isUnavailable(err) ? "이름·관계 고치기는 지금 쓸 수 없어요." : err.message || "저장하지 못했어요.";
+        errorEl.textContent = isUnavailable(err) ? "이름·관계 고치기는 지금 쓸 수 없어요." : describeError(err, "저장하지 못했어요.");
         errorEl.hidden = false;
       }
     });
@@ -102,7 +102,7 @@ function dangerSection(contact, navigate) {
       }
       navigate(buildHash("contacts"));
     } catch (err) {
-      if (err.status !== 401) toast(err.message || "지우지 못했어요.", { kind: "error" });
+      if (err.status !== 401) toast(describeError(err, "지우지 못했어요."), { kind: "error" });
     }
   };
   return h(

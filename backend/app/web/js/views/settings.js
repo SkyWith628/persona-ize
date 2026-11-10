@@ -1,6 +1,7 @@
 // 설정(#/settings): 비밀번호 변경, 로그인된 기기, 화면 테마, 단축키 안내, 동의 정보·문서, 오늘 사용량·한도.
 
 import { api } from "../api.js";
+import { describeError } from "../lib/errors.js";
 import { formatDateTime, formatNumber, isMacLike } from "../lib/format.js";
 import { usageView } from "../lib/model.js";
 import { refreshUsage } from "../session.js";
@@ -44,7 +45,9 @@ function passwordSection() {
         newEl.value = "";
         againEl.value = "";
       } catch (err) {
-        fail(err.message || "바꾸지 못했어요. 잠시 뒤 다시 시도해 주세요.", err.status === 401 ? curEl : null);
+        // 지금 비밀번호가 틀린 경우(401)는 로그아웃시키지 않고 이 칸에서 알려 준다
+        if (err.status === 401) fail("지금 비밀번호가 맞지 않아요.", curEl);
+        else fail(describeError(err, "바꾸지 못했어요. 잠시 뒤 다시 시도해 주세요."), null);
       }
     });
   };
@@ -58,7 +61,16 @@ function passwordSection() {
       "form",
       { class: "stack-form", novalidate: true, onSubmit },
       // 비밀번호 관리자가 어느 계정인지 알 수 있게 아이디를 함께 둔다
-      h("input", { type: "text", class: "sr-only", autocomplete: "username", value: store.me?.username || "", readOnly: true, tabIndex: -1, "aria-hidden": "true" }),
+      h("input", {
+        type: "text",
+        class: "sr-only",
+        autocomplete: "username",
+        value: store.me?.username || "",
+        readOnly: true,
+        tabIndex: -1,
+        "aria-hidden": "true",
+        "aria-label": "아이디",
+      }),
       h("div", { class: "field" }, h("label", { for: curId }, "지금 비밀번호"), curEl),
       h("div", { class: "field" }, h("label", { for: newId }, "새 비밀번호"), newEl, h("p", { class: "hint" }, "8자 이상")),
       h("div", { class: "field" }, h("label", { for: againId }, "새 비밀번호 확인"), againEl),
@@ -72,6 +84,7 @@ function passwordSection() {
 
 function sessionsSection() {
   const box = h("div");
+  const titleEl = h("h2", { class: "section-title", tabIndex: -1 }, "로그인된 기기");
   const reload = loadInto(box, {
     lines: 2,
     load: () => api.sessions(),
@@ -110,9 +123,10 @@ function sessionsSection() {
                     const out = await api.logoutAll();
                     toast(`다른 기기 ${formatNumber(out?.revoked_sessions ?? 0)}곳에서 로그아웃했어요.`, { kind: "ok" });
                     reload();
+                    titleEl.focus(); // 목록을 다시 그리면 누른 버튼이 사라지므로 구획 제목으로
                   } catch (err) {
                     if (err.status === 401) return;
-                    toast(err.unavailable ? UNAVAILABLE_TOAST : err.message || "로그아웃하지 못했어요.", { kind: err.unavailable ? "warn" : "error" });
+                    toast(err.unavailable ? UNAVAILABLE_TOAST : describeError(err, "로그아웃하지 못했어요."), { kind: err.unavailable ? "warn" : "error" });
                   }
                 });
               },
@@ -127,7 +141,7 @@ function sessionsSection() {
   return h(
     "section",
     { class: "card section" },
-    h("h2", { class: "section-title" }, "로그인된 기기"),
+    titleEl,
     h("p", { class: "section-lead" }, "이 계정으로 로그인된 곳이에요. 기기 이름은 저장하지 않아 로그인한 시각으로 보여 줘요."),
     box,
   );
@@ -224,7 +238,7 @@ function usageSection() {
           h("p", { class: "usage-line" }, h("strong", null, "모델 사용량(토큰)"), ` ${formatNumber(u.tokens)} / ${formatNumber(u.tokenLimit)}`),
           meter(u.tokens, u.tokenLimit, "오늘 모델 사용량"),
         ),
-        u.graphIngested != null
+        u.showGraph
           ? h(
               "div",
               { class: "usage-block" },

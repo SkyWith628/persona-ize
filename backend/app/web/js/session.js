@@ -12,7 +12,11 @@ function entered(me) {
   store.setSession(me);
 }
 
-/** 앱 시작: 서버 설정과 로그인 여부를 확인한다. 둘 다 실패해도 첫 화면은 뜬다. */
+/**
+ * 앱 시작: 서버 설정과 로그인 여부를 확인한다.
+ * 로그인하지 않았으면(401) 첫 화면으로 간다. 서버가 답하지 못해 로그인 여부를 알 수 없으면(연결 실패·429·5xx)
+ * store.bootError에 까닭을 남긴다 — 로그인돼 있던 사람에게 로그인 화면을 보여 주지 않기 위해서다.
+ */
 export async function boot() {
   const [config, me] = await Promise.allSettled([api.authConfig(), api.me()]);
   if (config.status === "fulfilled" && config.value) store.setConfig(config.value);
@@ -20,8 +24,13 @@ export async function boot() {
     store.setConfig(null);
     if (!isMissingEndpoint(config.reason)) store.config.error = true; // 서버 연결 문제일 수 있다
   }
+  store.bootError = null;
   if (me.status === "fulfilled" && me.value) entered(me.value);
-  else store.setSession(null);
+  else {
+    store.setSession(null);
+    const reason = me.status === "rejected" ? me.reason : null;
+    if (reason && reason.status !== 401 && !isMissingEndpoint(reason)) store.bootError = reason;
+  }
   return store.me;
 }
 

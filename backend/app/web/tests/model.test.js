@@ -15,6 +15,7 @@ import {
   pushRecent,
   recentContacts,
   resultMeta,
+  evidenceNotes,
   rewriteErrorView,
   statusView,
   usageView,
@@ -248,6 +249,12 @@ test("첨삭 오류: 429 세 가지를 따로 안내한다", () => {
   const usage = rewriteErrorView(err(429, { code: "usage_exceeded", message: "오늘 첨삭 요청 한도(200회)를 모두 썼습니다." }));
   assert.equal(usage.kind, "usage");
   assert.match(usage.body, /200회/);
+  // 오늘 사용량을 알면 어느 한도인지 화면의 말투로 알려 준다
+  const e429 = err(429, { code: "usage_exceeded", message: "오늘 첨삭 요청 한도(3회)를 모두 썼습니다. 내일 다시 시도하세요." });
+  const counted = rewriteErrorView(e429, { usage: { rewrites: 42, rewrite_limit: 3, input_tokens: 10, output_tokens: 1, token_limit: 400000 } });
+  assert.equal(counted.body, "오늘 첨삭 요청 한도(3회)를 모두 썼어요. 한도는 한국 시간 자정에 새로 시작돼요. 초안은 입력란에 그대로 있어요.");
+  const tokens = rewriteErrorView(e429, { usage: { rewrites: 5, rewrite_limit: 200, input_tokens: 399990, output_tokens: 20, token_limit: 400000 } });
+  assert.match(tokens.body, /^오늘 모델 사용량 한도를 모두 썼어요\./);
   const budget = rewriteErrorView(err(429, { code: "budget_exceeded", message: "서비스 전체 한도" }));
   assert.equal(budget.kind, "budget");
   assert.match(budget.body, /내일/);
@@ -305,6 +312,55 @@ test("사용량 표시", () => {
   assert.equal(u.tokens, 6100);
   assert.equal(u.exhausted, false);
   assert.equal(u.graphCap, null);
+  assert.equal(u.showGraph, false, "사건 정리를 쓴 적도 상한도 없으면 보여 주지 않는다");
   assert.equal(usageView({ rewrites: 200, rewrite_limit: 200 }).exhausted, true);
   assert.equal(usageView(null), null);
+  // 계약 §4.5: graph_message_cap 0은 제한 없음
+  const g = usageView({ rewrites: 1, rewrite_limit: 200, graph_messages_ingested: 38, graph_message_cap: 0 });
+  assert.deepEqual([g.graphIngested, g.graphCap, g.showGraph], [38, null, true]);
+  const capped = usageView({ rewrites: 1, rewrite_limit: 200, graph_messages_ingested: 0, graph_message_cap: 300 });
+  assert.deepEqual([capped.graphIngested, capped.graphCap, capped.showGraph], [0, 300, true]);
+});
+
+test("첨삭 오류: 자동 조건에서 난 다른 422는 말투 설정 탓으로 돌리지 않는다", () => {
+  const e = err(422, { code: "invalid_input", message: "상황 설명은 500자 이내여야 합니다." });
+  const v = rewriteErrorView(e, { contact: CONTACT, condition: "auto" });
+  assert.equal(v.kind, "invalid");
+  assert.equal(v.body, "상황 설명은 500자 이내여야 합니다.");
+});
+
+test("첨삭 오류: 서버를 다시 띄우는 중(프록시 502~504)이면 기다릴 시간을 알려 준다", () => {
+  const v = rewriteErrorView(err(502, { code: "service_unavailable", message: "배포 중" }, "10"));
+  assert.equal(v.kind, "unavailable");
+  assert.match(v.body, /10초쯤 뒤에 다시 시도/);
+  assert.match(v.body, /초안은 입력란에 그대로/);
+  assert.equal(v.action, "retry");
+  assert.equal(rewriteErrorView(err(503, { code: "model_unavailable", message: "모델 장애" })).kind, "model");
+  assert.equal(rewriteErrorView(err(504, null)).kind, "unavailable");
+});
+
+test("근거 원문 안내: 못 보여 주는 까닭을 단정하지 않는다", () => {
+  // 근거 기록이 없던 때의 결과는 전부 missing으로 온다 — "지웠다"고 말하지 않는다
+  const old = evidenceNotes({ items: [], missing: 2 }, 0);
+  assert.equal(old.missing, "참고한 표현 2개는 지금 원문을 보여 줄 수 없어요.");
+  assert.doesNotMatch(old.missing, /지운|지웠|지워/);
+  assert.equal(old.empty, null);
+  // 서버가 "근거 기록 없음"을 알려 주면 그대로 말한다
+  const noRefs = evidenceNotes({ items: [], missing: 2, refs_recorded: false }, 0);
+  assert.match(noRefs.missing, /근거 기록이 없어요/);
+  // 기록이 있는데 원문이 없으면 지웠을 "수 있다"까지만
+  const gone = evidenceNotes({ items: [], missing: 1, refs_recorded: true }, 0);
+  assert.match(gone.missing, /지웠을 수 있어요/);
+  // 다 보여 줄 수 있으면 아무 말도 하지 않는다
+  assert.deepEqual(evidenceNotes({ items: [{}], missing: 0 }, 1), { empty: null, missing: null });
+  assert.equal(evidenceNotes({ items: [], missing: 0 }, 0).empty, "지금 보여 줄 수 있는 원문이 없어요.");
+});
+
+test("첨삭 오류: 도메인 422는 details 없이 code·message만 온다", () => {
+  const quota = rewriteErrorView(err(422, { code: "quota_exceeded", message: "저장할 수 있는 메시지 수(20,000개)를 넘었습니다." }));
+  assert.equal(quota.kind, "quota");
+  assert.equal(quota.body, "저장할 수 있는 메시지 수(20,000개)를 넘었습니다.");
+  const plain = rewriteErrorView(err(422, { code: "invalid_input", message: "초안이 비어 있습니다." }), { condition: "auto" });
+  assert.equal(plain.kind, "invalid");
+  assert.equal(plain.body, "초안이 비어 있습니다.");
 });

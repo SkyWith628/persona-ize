@@ -1,10 +1,11 @@
 // Persona_ize PC 웹 앱의 시작점. 빌드 없는 ES 모듈 + 해시 라우팅(#/compose 등).
 // 로그인 상태에 따라 첫 화면 → 동의 → 앱 셸(화면들) 중 하나를 그린다.
 
+import { describeError } from "./lib/errors.js";
 import { DEFAULT_ROUTE, buildHash, matchRoute } from "./lib/router.js";
 import { boot, leave } from "./session.js";
 import { store } from "./store.js";
-import { h } from "./ui/dom.js";
+import { busy, h } from "./ui/dom.js";
 import { skeleton } from "./ui/parts.js";
 import { mountCompose } from "./views/compose.js";
 import { mountConsent } from "./views/consent.js";
@@ -28,7 +29,7 @@ const VIEWS = {
 };
 
 const root = document.getElementById("root");
-let mode = null; // "landing" | "consent" | "app"
+let mode = null; // "landing" | "consent" | "app" | "error"
 let shell = null;
 let cleanup = null; // 지금 화면의 정리 함수
 
@@ -84,13 +85,50 @@ function renderRoute() {
   }
 }
 
+/**
+ * 시작할 때 서버가 답하지 못해 로그인 여부를 알 수 없을 때의 화면.
+ * 로그인 화면을 보여 주면 "로그아웃됐다"고 오해하므로, 까닭과 다시 시도만 보여 준다. 주소(#/…)는 그대로 둔다.
+ */
+function mountBootError(err) {
+  document.title = "Persona_ize";
+  const retry = h(
+    "button",
+    {
+      type: "button",
+      class: "btn btn-primary",
+      onClick: (e) =>
+        busy(e.currentTarget, "다시 확인하는 중…", async () => {
+          await boot();
+          render();
+        }),
+    },
+    "다시 시도",
+  );
+  const title = h("h1", { class: "page-title", tabIndex: -1 }, "지금은 Persona_ize를 열 수 없어요");
+  root.replaceChildren(
+    h(
+      "main",
+      { class: "boot-error", id: "main" },
+      title,
+      h("p", { role: "alert" }, describeError(err)),
+      h("p", { class: "muted" }, "서버가 답하지 않아 로그인 상태를 확인하지 못했어요. 로그인돼 있었다면 그대로예요."),
+      h("div", { class: "form-actions" }, retry),
+    ),
+  );
+  title.focus({ preventScroll: true });
+  return () => {};
+}
+
 function render() {
   unmountView();
   if (shell) {
     shell.destroy();
     shell = null;
   }
-  if (!store.me) {
+  if (store.bootError && !store.me) {
+    mode = "error";
+    cleanup = mountBootError(store.bootError);
+  } else if (!store.me) {
     mode = "landing";
     cleanup = mountLanding(root);
   } else if (store.needsConsent()) {

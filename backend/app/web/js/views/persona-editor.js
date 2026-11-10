@@ -4,7 +4,7 @@
 //  - "과거 대화 기준 제안"은 근거와 함께 보여 주고, 적용은 사용자가 누를 때만. 저장은 따로.
 
 import { api } from "../api.js";
-import { isMissingEndpoint } from "../lib/errors.js";
+import { describeError, isMissingEndpoint } from "../lib/errors.js";
 import { formatDateTime, formatNumber } from "../lib/format.js";
 import {
   EMOJI_OPTIONS,
@@ -17,6 +17,7 @@ import {
   settingsEqual,
   signalMatches,
   signalView,
+  suggestionState,
 } from "../lib/persona.js";
 import { buildHash } from "../lib/router.js";
 import { invalidateContacts } from "../session.js";
@@ -37,7 +38,8 @@ function choiceField({ legend, sub = "", options, value, columns, onChange }) {
   const el = h(
     "fieldset",
     { class: "field choice" },
-    h("legend", null, legend, sub ? h("span", { class: "legend-sub" }, sub) : null),
+    // 제목과 설명 사이의 빈칸은 읽는 이름("격식 얼마나 격식을 차리나요?")이 붙지 않게 하려는 것
+    h("legend", null, legend, sub ? [" ", h("span", { class: "legend-sub" }, sub)] : null),
     h(
       "div",
       { class: `seg seg-${columns}` },
@@ -49,6 +51,8 @@ function choiceField({ legend, sub = "", options, value, columns, onChange }) {
           name,
           id: inputId,
           value: String(o.value),
+          // 묶음마다 같은 글자("보통")가 있어, 읽는 이름에는 어느 항목인지 붙인다("친근함: 보통")
+          "aria-label": `${legend}: ${o.label}`,
           checked: String(o.value) === String(value),
           onChange: () => {
             show(o.value);
@@ -185,6 +189,13 @@ export function mountPersonaEditor(box, { contact, persona: initial, onSaved = n
   function updateDirty() {
     const dirty = !settingsEqual(readForm(), base);
     versionTag.textContent = persona ? `v${persona.version}` : "아직 없음";
+    if (!conflictEl.hidden && conflictEl.querySelector("button")) {
+      // 다른 곳에서 먼저 저장된 상태: 아래 저장 버튼 대신 안내 상자의 두 가지 중에서 고른다
+      dirtyEl.textContent = "위 안내에서 어떻게 할지 골라 주세요.";
+      saveBtn.textContent = "저장";
+      saveBtn.disabled = true;
+      return;
+    }
     if (!persona) {
       dirtyEl.textContent = "아직 저장한 말투 설정이 없어요. 값을 확인하고 저장하면 v1이 돼요.";
       saveBtn.textContent = "저장해서 v1 만들기";
@@ -215,7 +226,7 @@ export function mountPersonaEditor(box, { contact, persona: initial, onSaved = n
       return true;
     } catch (err) {
       if (err.status === 409) await showConflict();
-      else if (err.status !== 401) toast(err.message || "저장하지 못했어요.", { kind: "error" });
+      else if (err.status !== 401) toast(describeError(err, "저장하지 못했어요."), { kind: "error" });
       return false;
     }
   }
@@ -227,7 +238,6 @@ export function mountPersonaEditor(box, { contact, persona: initial, onSaved = n
     } catch {
       latest = null;
     }
-    const mine = readForm();
     setChildren(
       conflictEl,
       h("p", { class: "conflict-title" }, h("span", { "aria-hidden": "true" }, "! "), "다른 곳에서 먼저 저장했어요"),
@@ -264,8 +274,8 @@ export function mountPersonaEditor(box, { contact, persona: initial, onSaved = n
                 type: "button",
                 class: "btn",
                 onClick: async (e) => {
-                  persona = latest; // 최신 버전을 기준으로 내 값을 다시 저장한다
-                  await busy(e.currentTarget, "저장하는 중…", () => save(mine));
+                  persona = latest; // 최신 버전을 기준으로, 지금 화면에 있는 내 값을 다시 저장한다
+                  await busy(e.currentTarget, "저장하는 중…", () => save());
                 },
               },
               `내 변경으로 덮어쓰기 (새 버전 v${latest.version + 1})`,
@@ -274,6 +284,7 @@ export function mountPersonaEditor(box, { contact, persona: initial, onSaved = n
         : null,
     );
     conflictEl.hidden = false;
+    updateDirty();
     conflictEl.querySelector("button")?.focus();
   }
 
@@ -291,7 +302,7 @@ export function mountPersonaEditor(box, { contact, persona: initial, onSaved = n
         toast("관계 기본값을 불러왔어요. 저장을 눌러야 반영돼요.", { kind: "info" });
       } catch (err) {
         if (err.status === 401) return;
-        toast(isMissingEndpoint(err) ? UNAVAILABLE_TOAST : err.message, { kind: isMissingEndpoint(err) ? "warn" : "error" });
+        toast(isMissingEndpoint(err) ? UNAVAILABLE_TOAST : describeError(err), { kind: isMissingEndpoint(err) ? "warn" : "error" });
       }
     });
   }
@@ -308,12 +319,22 @@ export function mountPersonaEditor(box, { contact, persona: initial, onSaved = n
   function renderSuggestion(data) {
     const count = Number(data?.based_on_messages) || 0;
     const signals = (Array.isArray(data?.signals) ? data.signals : []).filter((s) => signalView(s).usable);
-    if (!count || !signals.length) {
+    const state = suggestionState(data);
+    const importLink = () =>
+      h("a", { class: "btn", href: buildHash("import", {}, { contact: contact.id }), "aria-label": `${contact.alias} 대화 가져오기` }, "대화 가져오기");
+    if (state === "none") {
+      return emptyState("이 상대에게 보낸 내 메시지가 아직 없어요", "대화를 가져오면 내 말투를 읽어 제안해 드려요.", importLink());
+    }
+    if (state === "few") {
+      // 표본이 적으면 우연한 말버릇을 말투로 읽기 쉽다 — 제안하지 않는다
       return emptyState(
-        count ? "지금 설정을 바꿀 만한 뚜렷한 특징을 찾지 못했어요" : "이 상대에게 보낸 내 메시지가 아직 없어요",
-        count ? `내 메시지 ${formatNumber(count)}개를 봤어요.` : "대화를 가져오면 내 말투를 읽어 제안해 드려요.",
-        count ? null : h("a", { class: "btn", href: buildHash("import", {}, { contact: contact.id }) }, "대화 가져오기"),
+        "과거 대화가 더 쌓이면 제안해 드려요",
+        `지금은 내 메시지가 ${formatNumber(count)}개뿐이라 말투를 읽기에 모자라요.`,
+        importLink(),
       );
+    }
+    if (state === "same") {
+      return emptyState("지금 설정을 바꿀 만한 뚜렷한 특징을 찾지 못했어요", `내 메시지 ${formatNumber(count)}개를 봤어요.`);
     }
     const current = readForm();
     return [
@@ -335,7 +356,12 @@ export function mountPersonaEditor(box, { contact, persona: initial, onSaved = n
             h("p", { class: "signal-reason" }, h("span", { class: "muted" }, "근거: "), v.reason || "근거 설명이 없어요."),
             same
               ? tag("지금 설정과 같아요")
-              : h("button", { type: "button", class: "btn", onClick: () => applySuggestion([sig]) }, "적용"),
+              : h(
+                  "button",
+                  // 제안마다 같은 글자라, 읽는 이름에는 무엇을 적용하는지 붙인다
+                  { type: "button", class: "btn", "aria-label": `${v.fieldLabel} ${v.valueLabel} 적용`, onClick: () => applySuggestion([sig]) },
+                  "적용",
+                ),
           );
         }),
       ),
@@ -407,6 +433,8 @@ export function mountPersonaEditor(box, { contact, persona: initial, onSaved = n
                 {
                   type: "button",
                   class: "btn",
+                  // 버전마다 같은 글자라, 읽는 이름에는 몇 번째 버전인지 붙인다
+                  "aria-label": `이 버전으로 되돌리기 (v${v.version})`,
                   onClick: async (e) => {
                     const button = e.currentTarget;
                     const dirty = persona && !settingsEqual(readForm(), base);
@@ -424,7 +452,7 @@ export function mountPersonaEditor(box, { contact, persona: initial, onSaved = n
                         accept(saved, `v${v.version} 설정으로 되돌렸어요 (새 버전 v${saved.version}).`);
                       } catch (err) {
                         if (err.status === 409) await showConflict();
-                        else if (err.status !== 401) toast(err.message || "되돌리지 못했어요.", { kind: "error" });
+                        else if (err.status !== 401) toast(describeError(err, "되돌리지 못했어요."), { kind: "error" });
                       }
                     });
                   },

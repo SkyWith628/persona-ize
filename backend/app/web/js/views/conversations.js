@@ -1,6 +1,7 @@
 // 과거 대화: 대화방 목록 → 메시지 보기, 대화방 삭제. 상대 상세 화면과 내 데이터 화면이 함께 쓴다.
 
 import { api } from "../api.js";
+import { describeError } from "../lib/errors.js";
 import { dayKey, formatDateTime, formatDay, formatNumber, formatTime } from "../lib/format.js";
 import { graphPhaseView } from "../lib/importing.js";
 import { buildHash } from "../lib/router.js";
@@ -19,7 +20,7 @@ export async function deleteConversation(conv) {
   const ok = await confirmDialog({
     title: `'${conv.title}' 대화방을 지울까요?`,
     message: "이 대화방에서 가져온 것이 모두 지워져요. 되돌릴 수 없어요.",
-    bullets: ["메시지 원문", "말투 검색에 쓰는 묶음과 임베딩", "이 대화방에서 정리한 지난 약속·사건 기록"],
+    bullets: ["메시지 원문", "말투 검색에 쓰는 자료(메시지 묶음과 검색용 값)", "이 대화방에서 정리한 지난 약속·사건 기록"],
     confirmLabel: "대화방 지우기",
     danger: true,
   });
@@ -35,7 +36,7 @@ export async function deleteConversation(conv) {
     }
     return true;
   } catch (err) {
-    if (err.status !== 401) toast(err.message || "지우지 못했어요.", { kind: "error" });
+    if (err.status !== 401) toast(describeError(err, "지우지 못했어요."), { kind: "error" });
     return false;
   }
 }
@@ -147,6 +148,8 @@ export function mountConversations(box, { contact }) {
           {
             type: "button",
             class: "btn",
+            // 대화방마다 같은 글자라, 읽는 이름에는 어느 대화방인지 붙인다
+            "aria-label": `${conv.title} ${isOpen ? "대화 접기" : "대화 보기"}`,
             "aria-expanded": String(isOpen),
             onClick: () => {
               openId = isOpen ? null : conv.id;
@@ -172,6 +175,7 @@ export function mountConversations(box, { contact }) {
                 {
                   type: "button",
                   class: "btn btn-danger",
+                  "aria-label": `${conv.title} 대화방 삭제`,
                   onClick: async () => {
                     if (await deleteConversation(conv)) {
                       if (openId === conv.id) openId = null;
@@ -198,7 +202,7 @@ export function mountConversations(box, { contact }) {
       emptyState(
         "아직 가져온 대화가 없어요",
         "없어도 말투 설정만으로 쓸 수 있어요. 대화를 가져오면 내가 실제로 쓴 표현까지 참고해요.",
-        h("a", { class: "btn", href: buildHash("import", {}, { contact: contact.id }) }, "대화 가져오기"),
+        h("a", { class: "btn", href: buildHash("import", {}, { contact: contact.id }), "aria-label": `${contact.alias} 대화 가져오기` }, "대화 가져오기"),
       ),
     render,
   });
@@ -209,7 +213,12 @@ export function mountConversations(box, { contact }) {
       "div",
       { class: "section-head" },
       h("h2", { class: "section-title", tabIndex: -1 }, "과거 대화"),
-      h("div", { class: "section-actions" }, h("a", { class: "btn", href: buildHash("import", {}, { contact: contact.id }) }, "대화 가져오기")),
+      // 왼쪽 메뉴의 '대화 가져오기'와 달리 이 상대를 골라 둔 채로 간다 — 읽는 이름으로 구분한다
+      h(
+        "div",
+        { class: "section-actions" },
+        h("a", { class: "btn", href: buildHash("import", {}, { contact: contact.id }), "aria-label": `${contact.alias} 대화 가져오기` }, "대화 가져오기"),
+      ),
     ),
     h("p", { class: "section-lead" }, "이 상대와 나눈 대화예요. 내 메시지에서 말투를 읽고, 상대 메시지는 앞뒤 맥락으로만 써요."),
     listBox,

@@ -12,6 +12,7 @@ import {
   settingsEqual,
   signalMatches,
   signalView,
+  suggestionState,
   stepLabel,
 } from "../js/lib/persona.js";
 
@@ -79,6 +80,9 @@ test("설정 비교는 빈 값의 표기 차이를 무시한다", () => {
 test("한 줄 요약", () => {
   const line = describeSettings({ formality: 5, friendliness: 2, directness: 3, address_term: "지현 팀장님", forbidden_phrases: ["ㅋㅋ", "ㅠ"] });
   assert.equal(line, "격식 아주 격식 있게 · 친근함 조금 거리 있게 · 직접성 보통 · 길이 초안만큼 · 이모지 안 써요 · 호칭 지현 팀장님 · 금지 2개");
+  // 메모만 다른 버전도 구분된다
+  assert.match(describeSettings({ notes: "업무 얘기는 결론부터" }), / · 메모 있음$/);
+  assert.doesNotMatch(describeSettings({ notes: "  " }), /메모/);
 });
 
 test("제안 신호를 화면용으로 바꾼다", () => {
@@ -135,4 +139,28 @@ test("표현 칩 입력: 쉼표로 여러 개, 중복·한도·길이 검사", (
   assert.deepEqual(long.list, []);
   assert.match(long.error, /40자까지/);
   assert.deepEqual(addPhrases([], "  ", 20), { list: [], error: null });
+});
+
+test("제안: 표본이 적으면 보여 주지 않는다", () => {
+  assert.equal(suggestionState({ based_on_messages: 0, signals: [] }), "none");
+  assert.equal(suggestionState(null), "none");
+  // 내 메시지가 다섯 개에 못 미치면 신호가 있어도 믿지 않는다
+  assert.equal(suggestionState({ based_on_messages: 4, settings: {}, signals: SUGGESTION.signals }), "few");
+  // 서버가 표본이 적다고 settings: null을 준 경우
+  assert.equal(suggestionState({ based_on_messages: 12, settings: null, signals: [] }), "few");
+  assert.equal(suggestionState({ based_on_messages: 5, settings: {}, signals: SUGGESTION.signals }), "ok");
+  assert.equal(suggestionState({ based_on_messages: 30, settings: {}, signals: [] }), "same");
+  assert.equal(suggestionState({ based_on_messages: 30, settings: {}, signals: [{ field: "mood", value: 3 }] }), "same");
+});
+
+test("제안 값은 숫자와 글자가 섞여 온다", () => {
+  assert.equal(signalView({ field: "formality", value: "4" }).value, 4);
+  assert.equal(signalView({ field: "formality", value: 4 }).valueLabel, signalView({ field: "formality", value: "4" }).valueLabel);
+  assert.ok(signalMatches({ formality: 4 }, { field: "formality", value: "4" }));
+  // 숫자로 볼 수 없는 값은 쓰지 않는다
+  for (const bad of [true, "", "  ", null, undefined, "높음", 9]) {
+    assert.equal(signalView({ field: "formality", value: bad }).usable, false, String(bad));
+  }
+  assert.equal(signalView({ field: "emoji", value: "none" }).usable, true);
+  assert.equal(signalView({ field: "emoji", value: 0 }).usable, false);
 });

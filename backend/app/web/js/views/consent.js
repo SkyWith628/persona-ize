@@ -1,5 +1,6 @@
 // 동의 화면: 로그인했는데 서버가 동의를 요구하고(require_consent) 지금 버전에 동의한 기록이 없을 때 먼저 받는다.
 
+import { describeError } from "../lib/errors.js";
 import { acceptConsent, logout } from "../session.js";
 import { store } from "../store.js";
 import { busy, h, uid } from "../ui/dom.js";
@@ -27,7 +28,7 @@ export function mountConsent(root) {
         if (err.status === 401) return;
         errorEl.textContent = err.unavailable
           ? "지금은 동의를 기록할 수 없어요. 잠시 뒤 다시 시도해 주세요."
-          : err.message || "동의를 기록하지 못했어요. 잠시 뒤 다시 시도해 주세요.";
+          : describeError(err, "동의를 기록하지 못했어요. 잠시 뒤 다시 시도해 주세요.");
         errorEl.hidden = false;
       }
     });

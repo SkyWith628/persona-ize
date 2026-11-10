@@ -3,7 +3,7 @@
 // 자동 전송은 없다: 복사까지만 하고 전송은 사용자가 직접 한다.
 
 import { api } from "../api.js";
-import { isAbort } from "../lib/errors.js";
+import { describeError, isAbort } from "../lib/errors.js";
 import { countCodePoints, formatNumber, initial, isMacLike, uuid4, withJosa } from "../lib/format.js";
 import {
   ADJUSTS,
@@ -50,6 +50,7 @@ const fresh = () => ({
   error: null,
   notice: null,
   editing: false,
+  editText: null, // 직접 고치는 중인 글자 — 카드를 다시 그려도(이유 고르기 등) 남도록 둔다
   feedback: null, // { accepted, edited, reasonCode, saved }
   rejectOpen: false,
 });
@@ -61,7 +62,7 @@ store.on("user-changed", () => {
 /** 다른 화면에서 "이 상대로 첨삭하기"를 눌렀을 때 미리 골라 둔다. */
 export function presetContact(contactId) {
   if (mem.contactId !== contactId) {
-    Object.assign(mem, { contactId, stage: "idle", rec: null, error: null, feedback: null, editing: false, notice: null });
+    Object.assign(mem, { contactId, stage: "idle", rec: null, error: null, feedback: null, editing: false, editText: null, notice: null });
   }
 }
 
@@ -171,6 +172,7 @@ export function mountCompose(root, ctx) {
         notice: null,
         feedback: null,
         editing: false,
+        editText: null,
         rejectOpen: false,
       });
       renderOutput();
@@ -226,6 +228,8 @@ export function mountCompose(root, ctx) {
             {
               type: "button",
               class: "chip chip-contact",
+              // 이름과 관계가 따로 나뉜 조각이라, 읽는 이름은 "최유진 (친구)"처럼 한 번에 준다
+              "aria-label": `${c.alias} (${relLabel(c.relationship_type)})`,
               "aria-pressed": String(c.id === mem.contactId),
               onClick: () => selectContact(c.id),
             },
@@ -394,7 +398,7 @@ export function mountCompose(root, ctx) {
     const mine = seq;
     if (controller) controller.abort();
     controller = new AbortController();
-    Object.assign(mem, { stage: "loading", error: null, notice: null, editing: false, rejectOpen: false, feedback: null });
+    Object.assign(mem, { stage: "loading", error: null, notice: null, editing: false, editText: null, rejectOpen: false, feedback: null });
     renderRunButton(true);
     renderOutput();
     announce(`${contact.alias}에게 맞게 바꾸는 중이에요.`);
@@ -427,7 +431,7 @@ export function mountCompose(root, ctx) {
     } catch (err) {
       if (isAbort(err) || mine !== seq || destroyed) return;
       if (err.status === 401) return; // 로그인 화면으로 넘어간다(초안은 메모리에 남는다)
-      mem.error = rewriteErrorView(err, { contact, condition });
+      mem.error = rewriteErrorView(err, { contact, condition, usage: store.usage });
       mem.stage = "error";
       if (mem.error.action === "advanced") mem.advancedOpen = true;
       announce(`${mem.error.title}. ${mem.error.body}`);
@@ -495,7 +499,7 @@ export function mountCompose(root, ctx) {
     try {
       await api.rewrites.feedback(rec.id, { accepted: false, reason_code: code });
     } catch (err) {
-      if (err.status !== 401) toast(err.message || "기록하지 못했어요.", { kind: "error" });
+      if (err.status !== 401) toast(describeError(err, "기록하지 못했어요."), { kind: "error" });
       return;
     }
     if (mem.rec !== rec || destroyed) return;
@@ -508,13 +512,14 @@ export function mountCompose(root, ctx) {
 
   function closeResult() {
     cancelInFlight();
-    Object.assign(mem, { stage: "idle", rec: null, error: null, notice: null, editing: false, rejectOpen: false, feedback: null });
+    Object.assign(mem, { stage: "idle", rec: null, error: null, notice: null, editing: false, editText: null, rejectOpen: false, feedback: null });
     renderOutput();
     draftEl.focus();
   }
 
   function toggleEdit(on) {
     mem.editing = on;
+    if (!on) mem.editText = null; // 취소하면 고치던 글자는 버린다
     renderOutput();
     if (on && editEl) {
       editEl.focus();
@@ -665,7 +670,10 @@ export function mountCompose(root, ctx) {
         class: "textarea result-edit",
         rows: 5,
         spellcheck: "false",
-        value: rec.result.result_text,
+        value: mem.editText ?? rec.result.result_text,
+        onInput: (e) => {
+          mem.editText = e.currentTarget.value;
+        },
       });
       body = h("div", { class: "field" }, h("label", { for: editId }, "문장 고치기"), editEl);
     } else {
@@ -862,7 +870,7 @@ export function mountCompose(root, ctx) {
       await loadContacts();
     } catch (err) {
       if (destroyed || err.status === 401) return;
-      setChildren(pickerBox, errorState(err.message, start));
+      setChildren(pickerBox, errorState(describeError(err), start));
       return;
     }
     if (destroyed) return;

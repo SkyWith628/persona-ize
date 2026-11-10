@@ -2,6 +2,7 @@
 // 이름과 관계만 받고, 서버가 관계 유형 기본값으로 말투 설정 v1을 함께 만든다(use_default_persona).
 
 import { api } from "../api.js";
+import { describeError } from "../lib/errors.js";
 import { REL_LABEL, REL_ORDER } from "../lib/model.js";
 import { invalidateContacts, loadContacts } from "../session.js";
 import { openDialog } from "./dialog.js";
@@ -50,7 +51,7 @@ export function addContactDialog({ alias = "" } = {}) {
             await loadContacts().catch(() => null);
             close(contact);
           } catch (err) {
-            errorEl.textContent = err.message || "추가하지 못했어요. 잠시 뒤 다시 시도해 주세요.";
+            errorEl.textContent = describeError(err, "추가하지 못했어요. 잠시 뒤 다시 시도해 주세요.");
             errorEl.hidden = false;
           }
         });

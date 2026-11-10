@@ -3,8 +3,8 @@
 // 저장 안내는 실제 동작 그대로: 계정에 저장되고, 검색·사건 정리에 쓰이고, 언제든 지울 수 있다.
 
 import { api } from "../api.js";
-import { isMissingEndpoint, isUnavailable } from "../lib/errors.js";
-import { countCodePoints, formatBytes, formatDateTime, formatNumber, initial, josa, localOffsetMinutes } from "../lib/format.js";
+import { describeError, isMissingEndpoint, isUnavailable } from "../lib/errors.js";
+import { countCodePoints, formatBytes, formatDateTime, formatNumber, initial, josa } from "../lib/format.js";
 import {
   METHODS,
   ROLE_OPTIONS,
@@ -17,6 +17,7 @@ import {
   meName,
   previewView,
   stylePhaseView,
+  trackProgress,
 } from "../lib/importing.js";
 import { relLabel } from "../lib/model.js";
 import { buildHash } from "../lib/router.js";
@@ -25,9 +26,20 @@ import { store } from "../store.js";
 import { addContactDialog } from "../ui/contact-dialog.js";
 import { busy, h, setChildren, uid } from "../ui/dom.js";
 import { emptyState, errorState, meter, note, pageHead, skeleton, unavailable } from "../ui/parts.js";
+import { toast } from "../ui/toast.js";
 
 const STEPS = ["상대", "방법", "미리보기", "가져오기"];
 const NEW_CONVERSATION = "__new__";
+
+// 서버가 대화를 저장하고 있는 동안(요청이 끝나기 전)의 표시. 화면을 떠났다 돌아와도 같은 대화를 또 올리지 않게 모듈에 둔다.
+// { alias, done: Promise<void> }
+let running = null;
+
+/** 가져오는 중에 창을 닫거나 새로 고치려 하면 브라우저가 한 번 더 묻게 한다. */
+function warnBeforeLeave(e) {
+  e.preventDefault();
+  e.returnValue = "";
+}
 
 export function mountImport(root, ctx) {
   let destroyed = false;
@@ -39,7 +51,7 @@ export function mountImport(root, ctx) {
     file: null, // { name, size, encoding, chars, replaced }
     fileText: "",
     pasted: "",
-    sent: null, // 미리보기에 보낸 { format, text, tz }
+    sent: null, // 미리보기에 보낸 { format, text } (+ 텔레그램 전체 내보내기면 chat_id)
     view: null, // previewView 결과
     roles: {},
     keepRecent: null,
@@ -183,6 +195,33 @@ export function mountImport(root, ctx) {
     );
   }
 
+  /** 미리보기 응답을 화면 상태에 담는다(처음 읽었을 때와, 텔레그램에서 대화를 고른 뒤에 함께 쓴다). */
+  function applyPreview(preview, c) {
+    // 이 상대의 기존 대화방에서 '나'였던 이름을 알려 주면, 같은 이름은 미리 '나'로 골라 둔다
+    st.view = previewView(
+      preview,
+      c.alias,
+      st.existing.map((conv) => conv.me_name),
+    );
+    st.roles = { ...st.view.roles };
+    const keep = st.view.keepRecent;
+    st.keepRecent = keep.forced ? keep.options[keep.options.length - 1] : null;
+    const sameTitle = st.existing.find((conv) => st.view.titleHint && conv.title === st.view.titleHint);
+    st.target = sameTitle ? sameTitle.id : st.existing.length === 1 ? st.existing[0].id : NEW_CONVERSATION;
+    st.title = st.view.titleHint || `${c.alias}${josa(c.alias, "과/와")}의 대화`;
+    st.agreed = false;
+  }
+
+  /** 원문을 읽지 못했을 때 보여 줄 문장. 413은 서버(또는 앞단 프록시)가 본문 크기로 거절한 것이다. */
+  function parseErrorMessage(error) {
+    if (error.status === 413) {
+      return st.method === "paste"
+        ? "붙여 넣은 대화가 너무 길어요. 기간을 나눠 여러 번에 걸쳐 가져와 주세요."
+        : "파일이 너무 커요. 기간을 나눠 내보낸 뒤 다시 올려 주세요.";
+    }
+    return describeError(error, "대화를 읽지 못했어요.");
+  }
+
   // ---------- ② 방법 ----------
   async function readFile(file, infoEl, err) {
     showError(err, "");
@@ -315,7 +354,9 @@ export function mountImport(root, ctx) {
         showError(err, problem);
         return;
       }
-      const sent = { format: method.format, text, tz_offset_minutes: localOffsetMinutes() };
+      // tz_offset_minutes는 보내지 않는다(서버 기본값 = 한국 시간). 메시지 id가 시각으로 정해지므로,
+      // 같은 파일을 다른 시간대 값으로 올리면 전부 새 메시지로 저장돼 중복된다.
+      const sent = { format: method.format, text };
       await busy(nextBtn, "읽는 중…", async () => {
         try {
           const [preview, existing] = await Promise.all([
@@ -324,14 +365,8 @@ export function mountImport(root, ctx) {
           ]);
           if (destroyed) return;
           st.sent = sent;
-          st.view = previewView(preview, c.alias);
-          st.roles = { ...st.view.roles };
-          st.keepRecent = st.view.keepRecent.forced ? st.view.keepRecent.options[st.view.keepRecent.options.length - 1] : null;
           st.existing = Array.isArray(existing) ? existing : [];
-          const sameTitle = st.existing.find((conv) => st.view.titleHint && conv.title === st.view.titleHint);
-          st.target = sameTitle ? sameTitle.id : st.existing.length === 1 ? st.existing[0].id : NEW_CONVERSATION;
-          st.title = st.view.titleHint || `${c.alias}와의 대화`;
-          st.agreed = false;
+          applyPreview(preview, c);
           go(3);
         } catch (error) {
           if (destroyed || error.status === 401) return;
@@ -340,10 +375,8 @@ export function mountImport(root, ctx) {
               unavailableBox,
               unavailable("대화 가져오기는 지금 쓸 수 없어요", "서버에서 준비되면 여기서 바로 가져올 수 있어요. 저장된 것은 없어요."),
             );
-          } else if (error.status === 413) {
-            showError(err, "파일이 너무 커요. 기간을 나눠 내보낸 뒤 다시 올려 주세요.");
           } else {
-            showError(err, error.message || "대화를 읽지 못했어요.");
+            showError(err, parseErrorMessage(error));
           }
         }
       });
@@ -398,12 +431,112 @@ export function mountImport(root, ctx) {
     renderInput();
   }
 
+  // ---------- ③-0 텔레그램 계정 전체 내보내기: 대화 고르기 ----------
+  function renderChatChooser(c, v) {
+    const err = errorLine();
+    const name = uid("chat");
+    const squash = (s) => String(s).replace(/\s+/g, "").toLowerCase();
+    const alias = squash(c.alias);
+    const usable = v.chats.filter((ch) => ch.messages > 0);
+    // 상대 이름과 같은 대화가 있으면 미리 골라 둔다
+    let chosen = usable.find((ch) => squash(ch.name) && (squash(ch.name).includes(alias) || alias.includes(squash(ch.name))))?.id || null;
+    const nextBtn = h("button", { type: "submit", class: "btn btn-primary" }, "이 대화 미리보기");
+
+    const onSubmit = async (e) => {
+      e.preventDefault();
+      showError(err, "");
+      if (!chosen) {
+        showError(err, "가져올 대화를 하나 골라 주세요.");
+        body.querySelector(".option input:not(:disabled)")?.focus();
+        return;
+      }
+      const sent = { ...st.sent, chat_id: chosen };
+      await busy(nextBtn, "읽는 중…", async () => {
+        try {
+          const preview = await api.imports.parse(sent);
+          if (destroyed) return;
+          st.sent = sent;
+          applyPreview(preview, c);
+          renderPreviewStep();
+          body.querySelector("h2")?.focus();
+        } catch (error) {
+          if (destroyed || error.status === 401) return;
+          showError(err, parseErrorMessage(error));
+        }
+      });
+    };
+
+    setChildren(
+      body,
+      h(
+        "form",
+        { class: "card section", novalidate: true, onSubmit },
+        stepTitle("어느 대화를 가져올까요?"),
+        h(
+          "p",
+          { class: "section-lead" },
+          "텔레그램 계정 전체를 내보낸 파일이에요. ",
+          h("strong", null, c.alias),
+          `${josa(c.alias, "과/와")} 나눈 대화 하나를 골라 주세요. 고르지 않은 대화는 저장하지 않아요.`,
+        ),
+        usable.length
+          ? h(
+              "fieldset",
+              { class: "option-list option-scroll" },
+              h("legend", { class: "sr-only" }, "가져올 대화"),
+              v.chats.map((ch) => {
+                const inputId = uid("ch");
+                const empty = ch.messages <= 0;
+                return h(
+                  "div",
+                  { class: ["option", empty ? "is-disabled" : ""] },
+                  h("input", {
+                    type: "radio",
+                    id: inputId,
+                    name,
+                    value: ch.id,
+                    checked: ch.id === chosen,
+                    disabled: empty,
+                    onChange: () => {
+                      chosen = ch.id;
+                      showError(err, "");
+                    },
+                  }),
+                  h(
+                    "label",
+                    { for: inputId },
+                    h("span", { class: "option-title" }, ch.name || "(이름 없는 대화)"),
+                    h(
+                      "span",
+                      { class: "option-desc" },
+                      [ch.typeLabel, empty ? "메시지 없음" : `메시지 ${formatNumber(ch.messages)}개`].filter(Boolean).join(" · "),
+                    ),
+                  ),
+                );
+              }),
+            )
+          : emptyState("가져올 수 있는 대화가 없어요", v.problems[0] || "내보내기 파일에 메시지가 든 대화가 없어요."),
+        err,
+        h(
+          "div",
+          { class: "form-actions" },
+          usable.length ? nextBtn : null,
+          h("button", { type: "button", class: "btn", onClick: () => go(2) }, "이전"),
+        ),
+      ),
+    );
+  }
+
   // ---------- ③ 미리보기 ----------
   function renderPreviewStep() {
     const c = contact();
     const v = st.view;
     if (!c || !v) {
       go(c ? 2 : 1);
+      return;
+    }
+    if (v.needsChat) {
+      renderChatChooser(c, v);
       return;
     }
     const err = errorLine();
@@ -457,6 +590,8 @@ export function mountImport(root, ctx) {
                 id: inputId,
                 name: group,
                 value: opt.value,
+                // 사람마다 같은 세 가지라, 읽는 이름에는 누구의 것인지 붙인다("회원님: 나")
+                "aria-label": `${sp.name}: ${opt.label}`,
                 checked: st.roles[sp.name] === opt.value,
                 onChange: () => {
                   st.roles[sp.name] = opt.value;
@@ -498,9 +633,9 @@ export function mountImport(root, ctx) {
           "p",
           { class: "hint" },
           keep.forced
-            ? "한 번에 가져올 수 있는 양보다 많아서 최근 대화만 가져와요. "
+            ? `한 번에 ${formatNumber(keep.max)}개까지 가져올 수 있어서 최근 대화만 가져와요. `
             : "메시지가 많아요. 최근 대화만 가져와도 말투는 충분히 읽을 수 있어요. ",
-          "지난 약속·사건 정리는 메시지 하나에 10~15초쯤 걸려요.",
+          "지난 약속·사건 정리를 쓰는 서버라면 메시지 하나에 10~15초쯤 걸려요.",
         ),
       );
     }
@@ -586,9 +721,12 @@ export function mountImport(root, ctx) {
         v.skippedLines > 0
           ? h("p", { class: "note note-warn" }, `읽지 못해 건너뛴 줄이 ${formatNumber(v.skippedLines)}줄 있어요. 그 줄은 저장되지 않아요.`)
           : null,
-        v.maskedPii > 0
-          ? note(`전화번호·이메일 같은 개인정보 모양 ${formatNumber(v.maskedPii)}건은 가린 채로 저장해요.`)
-          : null,
+        // 가림은 모양이 정해진 것만 한다 — "모두 가려진다"로 읽히지 않게 한계를 함께 적는다
+        note(
+          v.maskedPii > 0
+            ? `전화번호·이메일·주민등록번호·카드/계좌 번호처럼 모양이 정해진 ${formatNumber(v.maskedPii)}건은 가린 채로 저장해요. 이름·주소는 가리지 못하고, 표기가 다르면 놓칠 수 있어요.`
+            : "자동으로 가린 곳은 없어요. 가리는 대상은 전화번호·이메일·주민등록번호·카드/계좌 번호 모양뿐이고, 이름·주소는 가리지 못해요.",
+        ),
         v.problems.length
           ? h(
               "div",
@@ -606,6 +744,11 @@ export function mountImport(root, ctx) {
         h("p", { class: "hint" }, "내 메시지에서 말투를 읽어요. 단체방이라면 다른 사람은 '제외'로 두세요."),
         h("div", { class: "speaker-list" }, speakerRows),
         rolesWarn,
+        h(
+          "p",
+          { class: "hint" },
+          "꼭 확인해 주세요. 나와 상대를 바꿔서 가져오면 다시 올려도 고쳐지지 않아요(같은 메시지는 건너뛰어요). 그럴 때는 그 대화방을 지우고 다시 가져와야 해요.",
+        ),
 
         h("h3", { class: "section-sub" }, `앞부분 ${formatNumber(v.sample.length)}개`),
         sampleBox,
@@ -666,9 +809,11 @@ export function mountImport(root, ctx) {
     const graphBox = h("div", { class: "phase" });
     let lastStatus;
 
+    let progress = null; // 진행 수치가 얼마나 오래 그대로인지(trackProgress)
     const update = (stats, statsMissing = false) => {
       const style = stylePhaseView(job, stats);
-      const graph = graphPhaseView(stats, job);
+      if (stats) progress = trackProgress(progress, stats, Date.now());
+      const graph = graphPhaseView(stats, job, { stalled: Boolean(progress?.stalled) });
       setChildren(
         styleBox,
         h("p", { class: "phase-title" }, h("span", null, h("span", { "aria-hidden": "true" }, "✓ "), style.title)),
@@ -698,14 +843,20 @@ export function mountImport(root, ctx) {
         "section",
         { class: "card section" },
         stepTitle(nothingNew ? "새로 저장한 메시지가 없어요" : "가져왔어요"),
-        nothingNew ? note("이미 가져온 대화와 같은 내용이에요. 전에 저장한 메시지는 그대로 있어요.") : null,
+        nothingNew
+          ? note([
+              "이미 가져온 대화와 같은 내용이라 건너뛰었어요. 전에 저장한 메시지는 그대로 있어요. 나와 상대를 잘못 정해서 다시 올린 거라면, ",
+              c ? h("a", { href: buildHash("contact", { id: c.id }) }, "상대 화면") : "상대 화면",
+              "에서 그 대화방을 지운 뒤 다시 가져와 주세요.",
+            ])
+          : null,
         styleBox,
         graphBox,
         h(
           "div",
           { class: "form-actions" },
           h("a", { class: "btn btn-primary", href: buildHash("compose", {}, { contact: c?.id }) }, "첨삭하러 가기"),
-          c ? h("a", { class: "btn", href: buildHash("contact", { id: c.id }) }, "페르소나 확인하기") : null,
+          c ? h("a", { class: "btn", href: buildHash("contact", { id: c.id }) }, "말투 설정 확인하기") : null,
           h(
             "button",
             {
@@ -726,7 +877,10 @@ export function mountImport(root, ctx) {
     return update;
   }
 
-  /** 사건 정리가 끝날 때까지 통계를 다시 읽는다(처음엔 4초마다, 2분 뒤부터 10초마다). 화면을 떠나면 멈춘다. */
+  /**
+   * 사건 정리가 끝날 때까지 통계를 다시 읽는다(처음엔 4초마다, 2분 뒤부터 10초마다). 화면을 떠나면 멈춘다.
+   * 진행 수치가 몇 분째 그대로면 update가 false를 돌려줘 여기서 멈춘다(서버가 다시 시작된 경우 등).
+   */
   function poll(update, conversationId, count = 0) {
     if (destroyed) return;
     pollTimer = setTimeout(
@@ -764,43 +918,72 @@ export function mountImport(root, ctx) {
         { class: "card section" },
         stepTitle("가져오는 중이에요"),
         skeleton(3, "대화를 저장하고 말투를 읽는 중이에요"),
-        h("p", { class: "muted" }, "메시지가 많으면 조금 걸려요. 이 창을 그대로 두세요."),
+        h("p", null, "대화가 길면 몇 분 걸릴 수 있어요. 이 창을 닫지 마세요."),
+        h("p", { class: "muted" }, "끝나면 이 자리에 결과가 나타나요."),
       ),
     );
     let conversationId = st.target === NEW_CONVERSATION ? null : st.target;
     let created = false;
+    // 서버는 이 요청 안에서 저장과 말투 분석을 끝낸다 — 끝날 때까지 같은 대화를 또 올리지 못하게 표시해 둔다
+    let finish;
+    running = { alias: c.alias, done: new Promise((resolve) => (finish = resolve)) };
+    window.addEventListener("beforeunload", warnBeforeLeave);
+    const release = () => {
+      window.removeEventListener("beforeunload", warnBeforeLeave);
+      running = null;
+      finish();
+    };
     try {
       if (!conversationId) {
-        const conv = await api.conversations.create({
-          contact_id: c.id,
-          title: st.title.trim() || null,
-          source: st.method,
-          me_name: meName(v.speakers, st.roles),
-        });
+        const create = { contact_id: c.id, title: st.title.trim() || null, source: st.method };
+        // 내 이름은 진짜 이름일 때만 보낸다 — 카카오톡 안드로이드의 "회원님" 같은 자리표시는 보내지 않는다
+        const mine = meName(v.speakers, st.roles);
+        if (mine) create.me_name = mine;
+        const conv = await api.conversations.create(create);
         conversationId = conv.id;
         created = true;
       }
-      const payload = { format: v.format, text: st.sent.text, speaker_map: { ...st.roles }, tz_offset_minutes: st.sent.tz_offset_minutes };
+      const payload = { format: v.format, text: st.sent.text, speaker_map: { ...st.roles } };
+      if (st.sent.chat_id != null) payload.chat_id = st.sent.chat_id; // 텔레그램 계정 전체 내보내기에서 고른 대화
       if (st.keepRecent) payload.keep_recent = st.keepRecent;
       const job = await api.conversations.importRaw(conversationId, payload);
-      if (destroyed) return;
+      release();
+      if (destroyed) {
+        // 화면을 떠난 사이에 끝났다 — 결과는 한 줄로 알린다
+        toast(`${c.alias}의 대화를 가져왔어요 — 메시지 ${formatNumber(job?.imported ?? 0)}개.`, { kind: "ok" });
+        return;
+      }
       st.target = conversationId; // 같은 화면에서 다시 시도해도 대화방을 또 만들지 않는다
       const update = mountProgress(job);
       body.querySelector("h2")?.focus();
       poll(update, conversationId);
     } catch (error) {
-      if (created && conversationId) api.conversations.remove(conversationId).catch(() => {}); // 빈 대화방을 남기지 않는다
-      if (destroyed || error.status === 401) return;
+      // 서버가 답하지 못한 경우(연결 끊김·프록시 시간 초과)는 저장이 아직 진행 중일 수 있다 — 대화방을 지우지 않는다.
+      // 다시 시도하면 같은 대화방에 이어서 올리고, 이미 저장된 메시지는 서버가 건너뛴다.
+      const unsure = [0, 502, 503, 504].includes(error.status);
+      if (unsure && conversationId) st.target = conversationId;
+      else if (created && conversationId) api.conversations.remove(conversationId).catch(() => {}); // 빈 대화방을 남기지 않는다
+      release();
+      if (error.status === 401) return;
+      if (destroyed) {
+        toast(`${c.alias}의 대화를 가져오지 못했어요. '대화 가져오기'에서 다시 시도해 주세요.`, { kind: "error", timeout: 0 });
+        return;
+      }
       const missing = isUnavailable(error);
       setChildren(
         body,
         h(
           "section",
           { class: "card section" },
-          stepTitle("가져오지 못했어요"),
+          stepTitle(unsure ? "끝났는지 확인하지 못했어요" : "가져오지 못했어요"),
           missing
             ? unavailable("대화 가져오기는 지금 쓸 수 없어요", "서버에서 준비되면 다시 시도해 주세요. 저장된 것은 없어요.")
-            : errorState(error.message || "잠시 뒤 다시 시도해 주세요.", () => go(4)),
+            : errorState(
+                unsure
+                  ? "서버의 답을 받지 못했어요. 서버가 아직 저장하고 있을 수 있어요. 잠시 뒤 '다시 시도'를 누르면 이미 저장된 메시지는 건너뛰고 이어서 가져와요."
+                  : parseErrorMessage(error),
+                () => go(4),
+              ),
           h(
             "div",
             { class: "form-actions" },
@@ -815,6 +998,25 @@ export function mountImport(root, ctx) {
   // ---------- 시작 ----------
   const start = () => {
     renderStepper();
+    if (running) {
+      // 화면을 떠났다 돌아왔는데 앞서 시작한 가져오기가 아직 서버에서 돌고 있다 — 끝날 때까지 새로 시작하지 못하게 한다
+      const waiting = running;
+      setChildren(
+        body,
+        h(
+          "section",
+          { class: "card section" },
+          stepTitle("가져오는 중이에요"),
+          skeleton(3, "대화를 저장하고 말투를 읽는 중이에요"),
+          h("p", null, `${waiting.alias}의 대화를 아직 가져오고 있어요. 대화가 길면 몇 분 걸릴 수 있어요. 이 창을 닫지 마세요.`),
+          h("p", { class: "muted" }, "끝나면 다른 대화를 가져올 수 있어요."),
+        ),
+      );
+      waiting.done.then(() => {
+        if (!destroyed) start();
+      });
+      return;
+    }
     setChildren(body, h("div", { class: "card section" }, skeleton(3)));
     loadContacts()
       .then(() => {
@@ -827,7 +1029,7 @@ export function mountImport(root, ctx) {
       })
       .catch((error) => {
         if (destroyed || error.status === 401) return;
-        setChildren(body, errorState(error.message, start));
+        setChildren(body, errorState(describeError(error), start));
       });
   };
   start();

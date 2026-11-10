@@ -1,9 +1,13 @@
 // 첫 화면(로그아웃 상태). 2초 안에 가치가 전달되는 예시 + 약속 세 가지 + 로그인·가입.
 // 가입 폼은 서버 설정(/v1/auth/config)에 따라 달라진다: 가입 닫힘이면 숨기고, 초대 코드 칸, 동의 체크.
 
+import { describeError } from "../lib/errors.js";
 import { login, register } from "../session.js";
 import { store } from "../store.js";
 import { busy, h, setChildren, uid } from "../ui/dom.js";
+
+// 가입 이름 규칙(서버 auth_service와 같다): 영문·숫자·_·- 3~32자. 한글은 받지 않는다.
+const USERNAME_RULE = /^[A-Za-z0-9_-]{3,32}$/;
 
 // 예시는 꾸민 것이다(실제 인물·대화가 아님). 같은 초안이 상대에 따라 달라지고 날짜·약속은 그대로 남는 모습.
 const EXAMPLE = {
@@ -125,6 +129,10 @@ function authCard() {
       const username = userEl.value.trim();
       const password = passEl.value;
       if (username.length < 3) return fail("아이디는 3자 이상이어야 해요.", userEl);
+      // 가입할 때만 모양을 본다(서버 규칙과 같다). 로그인은 예전에 만든 이름도 그대로 보내 서버가 판단하게 둔다.
+      if (isRegister && !USERNAME_RULE.test(username)) {
+        return fail("아이디는 영문·숫자·밑줄(_)·붙임표(-)만 3~32자로 쓸 수 있어요.", userEl);
+      }
       if (!password) return fail("비밀번호를 입력해 주세요.", passEl);
       if (isRegister) {
         if (password.length < 8) return fail("비밀번호는 8자 이상이어야 해요.", passEl);
@@ -144,13 +152,12 @@ function authCard() {
           }
         } catch (err) {
           // 오류는 폼 안에: 잘못된 비밀번호(401), 잠금(429), 이미 있는 이름(409), 초대 코드(403), 동의(422) 등
-          let message = err.message || "잠시 뒤 다시 시도해 주세요.";
-          if (err.status === 429 && err.retryAfter && !/\d+\s*초/.test(message)) {
-            message += ` ${err.retryAfter}초 뒤에 다시 시도해 주세요.`;
-          }
+          let message = describeError(err);
+          if (err.status === 401) message = "아이디나 비밀번호가 맞지 않아요.";
+          if (err.status === 409) message = "이미 쓰고 있는 아이디예요. 다른 아이디를 골라 주세요.";
           if (err.code === "invalid_invite") message = "초대 코드가 맞지 않아요. 받은 코드를 다시 확인해 주세요.";
           if (err.code === "consent_required") message = "안내를 확인하고 동의해야 가입할 수 있어요.";
-          fail(message, err.status === 401 ? passEl : null);
+          fail(message, err.status === 401 ? passEl : err.status === 409 ? userEl : null);
           passEl.value = "";
           if (pass2El) pass2El.value = "";
         }
@@ -170,6 +177,8 @@ function authCard() {
               {
                 type: "button",
                 class: "segmented-item",
+                // 아래 제출 버튼("로그인")과 이름이 겹치지 않게 한다
+                "aria-label": `${label} 화면`,
                 "aria-pressed": String(mode === value),
                 onClick: () => {
                   if (mode === value) return;
@@ -197,7 +206,9 @@ function authCard() {
           { class: "field" },
           h("label", { for: userId }, "아이디"),
           userEl,
-          isRegister ? h("p", { class: "hint" }, "영문·숫자 3~32자. 이메일이 아니어도 돼요.") : null,
+          isRegister
+            ? h("p", { class: "hint" }, "영문·숫자·_·- 로 3~32자(한글은 쓸 수 없어요). 대문자·소문자만 다른 아이디는 같은 아이디로 봐요.")
+            : null,
         ),
         h(
           "div",

@@ -129,6 +129,7 @@ export function describeSettings(raw) {
   if (s.address_term) parts.push(`호칭 ${s.address_term}`);
   if (s.forbidden_phrases.length) parts.push(`금지 ${s.forbidden_phrases.length}개`);
   if (s.preferred_phrases.length) parts.push(`선호 ${s.preferred_phrases.length}개`);
+  if (s.notes) parts.push("메모 있음"); // 메모만 다른 버전도 구분되게
   return parts.join(" · ");
 }
 
@@ -146,7 +147,9 @@ const FIELD_LABEL = {
 
 function signalValue(field, value) {
   if (SCALE_FIELDS.includes(field)) {
-    const n = clampStep(value, null);
+    // 서버는 단계를 숫자로도 글자("4")로도 준다. 그 밖의 값(true, 빈 글자 등)은 받지 않는다
+    const numeric = typeof value === "number" || (typeof value === "string" && value.trim() !== "");
+    const n = numeric ? clampStep(value, null) : null;
     return n === null ? null : n;
   }
   if (field === "length") return LENGTHS.includes(value) ? value : null;
@@ -157,6 +160,21 @@ function signalValue(field, value) {
     return list.length ? list : null;
   }
   return null; // 메모 등 그 밖의 항목은 제안으로 덮어쓰지 않는다
+}
+
+/** 내 메시지가 이보다 적으면 말투를 읽기에 표본이 모자란다고 보고 제안을 보여 주지 않는다. */
+export const MIN_SUGGESTION_MESSAGES = 5;
+
+/**
+ * 제안 응답을 어떻게 보여 줄지: "none"(내 메시지 없음) · "few"(표본이 적음) · "same"(바꿀 것 없음) · "ok".
+ * 서버가 표본이 적다고 settings: null을 주는 경우도 "few"다.
+ */
+export function suggestionState(data) {
+  const count = Number(data?.based_on_messages) || 0;
+  if (count <= 0) return "none";
+  if (data?.settings === null || count < MIN_SUGGESTION_MESSAGES) return "few";
+  const usable = (Array.isArray(data?.signals) ? data.signals : []).some((s) => signalView(s).usable);
+  return usable ? "ok" : "same";
 }
 
 /** 제안 신호 한 건을 화면 표시용으로. 모르는 항목·범위 밖 값이면 usable=false. */

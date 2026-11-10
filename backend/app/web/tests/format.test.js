@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  clip,
   countCodePoints,
   dayKey,
   formatBytes,
@@ -102,4 +103,26 @@ test("uuid4는 randomUUID가 없어도 v4 모양을 만든다", () => {
   assert.match(id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
   assert.equal(uuid4({ randomUUID: () => "fixed" }), "fixed");
   assert.notEqual(uuid4(), uuid4());
+});
+
+test("긴 글 줄이기", () => {
+  assert.equal(clip("짧은 글"), "짧은 글");
+  assert.equal(clip("가나다라마바사", 3), "가나다…");
+  assert.equal(clip("줄이\n바뀌는   글", 30), "줄이 바뀌는 글");
+  assert.equal(clip("좋아요 😊😊😊", 5), "좋아요 😊…"); // 이모지를 반으로 자르지 않는다
+  assert.equal(clip(null), "");
+});
+
+test("시각 표기(+09:00 · Z · +00:00)가 달라도 같은 시각으로 보여 준다", () => {
+  // 같은 순간: 미리보기 표본은 +09:00, 저장된 메시지는 Z, 내려받은 파일은 +00:00으로 온다
+  const forms = ["2026-10-05T09:25:00+09:00", "2026-10-05T00:25:00Z", "2026-10-05T00:25:00+00:00", "2026-10-05T00:25:00.000000Z"];
+  const opts = { offsetMinutes: 540, now: new Date("2026-11-11T00:00:00Z") };
+  for (const f of forms) {
+    assert.equal(formatDateTime(f, opts), "10월 5일 09:25", f);
+    assert.equal(dayKey(f, { offsetMinutes: 540 }), "2026-10-05", f);
+    assert.equal(formatTime(f, { offsetMinutes: 540 }), "09:25", f);
+  }
+  // 한국 시간 자정을 넘는 경우도 날짜가 어긋나지 않는다
+  assert.equal(dayKey("2026-10-05T15:30:00Z", { offsetMinutes: 540 }), "2026-10-06");
+  assert.equal(formatRange("2026-10-05T00:25:00Z", "2026-10-06T14:20:00+09:00", { offsetMinutes: 540 }), "2026-10-05 ~ 2026-10-06");
 });

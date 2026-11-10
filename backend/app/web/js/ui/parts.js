@@ -1,6 +1,6 @@
 // 여러 화면이 함께 쓰는 조각: 제목 줄, 태그, 불러오는 중·빈 상태·오류 상태, 진행 막대.
 
-import { isAbort, isUnavailable } from "../lib/errors.js";
+import { describeError, isAbort, isUnavailable } from "../lib/errors.js";
 import { percent } from "../lib/format.js";
 import { h, setChildren } from "./dom.js";
 
@@ -121,7 +121,7 @@ export function loadInto(box, opts) {
       } else if (err.status === 401) {
         setChildren(box, null); // 로그인 화면으로 넘어간다
       } else {
-        setChildren(box, errorState(err.message || "잠시 뒤 다시 시도해 주세요.", run));
+        setChildren(box, errorState(describeError(err), run));
       }
       return;
     }

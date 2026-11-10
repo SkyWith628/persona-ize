@@ -14,16 +14,6 @@ html {
   text-size-adjust: 100%;
 }
 
-/* 테마를 직접 고르면 브라우저 기본 부품(라디오·체크박스·스크롤바·선택 목록)도 그 테마를 따르게 한다.
-   tokens.css의 color-scheme: light dark 는 시스템 설정을 따르므로, 고른 테마와 어긋날 수 있다. */
-:root[data-theme="light"] {
-  color-scheme: light;
-}
-
-:root[data-theme="dark"] {
-  color-scheme: dark;
-}
-
 body {
   margin: 0;
   min-height: 100vh;
@@ -134,12 +124,31 @@ code {
   top: var(--space-3);
 }
 
+/* 위 여백은 padding으로 준다 — margin이면 body 밖으로 밀려 나와(여백 겹침) 화면이 그만큼 세로로 스크롤된다 */
 .boot,
 .boot-text {
   max-width: 420px;
-  margin: 20vh auto 0;
-  padding: 0 var(--space-5);
+  margin: 0 auto;
+  padding: 20vh var(--space-5) 0;
   color: var(--muted);
+}
+
+.boot-error {
+  max-width: 520px;
+  margin: 0 auto;
+  padding: 18vh var(--space-5) 0;
+}
+
+.boot-error .page-title {
+  margin-bottom: var(--space-3);
+}
+
+.boot-error p {
+  margin: 0 0 var(--space-2);
+}
+
+.boot-error .form-actions {
+  margin-top: var(--space-4);
 }
 
 .noscript {

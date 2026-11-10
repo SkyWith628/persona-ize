@@ -19,6 +19,7 @@ export const store = {
   contacts: null, // 아직 안 불렀으면 null
   usage: null,
   notice: null, // 첫 화면에 한 번 보여 줄 안내({ text, tone })
+  bootError: null, // 시작할 때 로그인 여부를 확인하지 못한 까닭(서버 연결 실패·일시 차단·서버 오류). 로그아웃과 구분한다
 
   on(event, fn) {
     if (!listeners.has(event)) listeners.set(event, new Set());

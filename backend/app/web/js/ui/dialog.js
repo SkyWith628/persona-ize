@@ -23,13 +23,25 @@ export function openDialog({ title, render, danger = false, size = "" }) {
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const titleId = uid("dlg");
     let result;
+    let done = false;
     const dialog = h("dialog", {
       class: ["dialog", danger ? "dialog-danger" : "", size ? `dialog-${size}` : ""],
       "aria-labelledby": titleId,
     });
+    const finish = () => {
+      if (done) return;
+      done = true;
+      openCount -= 1;
+      dialog.remove();
+      if (opener && opener.isConnected) opener.focus();
+      resolve(result);
+    };
+    // 화면에서 닫을 때는 곧바로 마무리한다. 브라우저의 close 이벤트는 다음 화면 그리기 때 오는데,
+    // 탭이 가려져 있으면 한참 늦어져서 "확인"을 누른 뒤의 일(삭제 요청 등)이 그만큼 미뤄지기 때문이다.
     const close = (value) => {
       result = value;
-      dialog.close();
+      if (dialog.open) dialog.close();
+      finish();
     };
     const body = h("div", { class: "dialog-body" }, render({ close, dialog }));
     dialog.append(h("h2", { class: "dialog-title", id: titleId }, title), body);
@@ -55,12 +67,8 @@ export function openDialog({ title, render, danger = false, size = "" }) {
     dialog.addEventListener("cancel", (e) => {
       if (dialog.querySelector('[aria-busy="true"]')) e.preventDefault();
     });
-    dialog.addEventListener("close", () => {
-      openCount -= 1;
-      dialog.remove();
-      if (opener && opener.isConnected) opener.focus();
-      resolve(result);
-    });
+    // Esc처럼 브라우저가 닫은 경우는 close 이벤트로 마무리한다
+    dialog.addEventListener("close", finish);
 
     document.body.append(dialog);
     openCount += 1;

@@ -47,8 +47,8 @@ export async function request(method, path, opts = {}) {
   }
 
   if (res.ok && opts.raw) return res;
-  if (res.status === 204) return null;
 
+  // 본문이 없는 204도 끝까지 읽는다 — 읽지 않고 버리면 브라우저가 그 요청을 "중단됨"으로 기록한다
   const text = await res.text();
   let data = null;
   if (text) {

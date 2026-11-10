@@ -3,19 +3,23 @@ import { test } from "node:test";
 
 import {
   MAX_IMPORT_CHARS,
+  chatTypeLabel,
   checkRoles,
   checkSize,
   decodeBytes,
   encodingLabel,
   formatLabel,
+  POLL_STALL_MS,
   graphPhaseView,
   graphStatus,
+  isPlaceholderName,
   keepRecentOptions,
   keptMessages,
   meName,
   previewView,
   stylePhaseView,
   suggestRoles,
+  trackProgress,
   utf8Bytes,
 } from "../js/lib/importing.js";
 
@@ -108,10 +112,14 @@ test("보내기 전 크기 확인: 빈 내용·글자 수·본문 크기", () =>
   assert.match(checkSize("   "), /비어/);
   assert.equal(checkSize(SAMPLE), null);
   assert.match(checkSize("a".repeat(MAX_IMPORT_CHARS + 1)), /글자가 너무 많아요/);
-  // 한글은 3바이트: 글자 수 한도 안이어도 본문 크기 한도를 넘는다
-  const korean = "가".repeat(1_100_000);
-  assert.equal(utf8Bytes(korean), 3_300_000);
-  assert.match(checkSize(korean), /파일이 너무 커요/);
+  // 한글은 3바이트지만 본문 상한(8MB) 안이다: 100만 자 = 3MB
+  const korean = "가".repeat(1_000_000);
+  assert.equal(utf8Bytes(korean), 3_000_000);
+  assert.equal(checkSize(korean), null);
+  // 글자 수 한도 안이어도 4바이트 글자뿐이면 본문 크기 한도를 넘는다
+  const emoji = "😊".repeat(MAX_IMPORT_CHARS);
+  assert.equal(utf8Bytes(emoji), 8_000_000);
+  assert.match(checkSize(emoji), /파일이 너무 커요/);
 });
 
 // 계약 §4.4: POST /v1/imports/parse 응답 예시
@@ -146,6 +154,47 @@ test("미리보기 응답을 화면용으로 정리한다", () => {
   assert.deepEqual(v.problems, ["3번째 줄을 읽지 못했습니다."]);
   assert.equal(v.keepRecent.needed, false);
   assert.match(v.range, /^\d{4}-\d{2}-\d{2} ~ \d{4}-\d{2}-\d{2}$/);
+});
+
+test("미리보기: 한 번에 가져올 수 있는 수(max_messages)를 넘으면 최근 것만 고르게 한다", () => {
+  const v = previewView({ ...PREVIEW, messages_total: 7200, max_messages: 5000 }, "박지현");
+  assert.equal(v.maxMessages, 5000);
+  assert.deepEqual(v.keepRecent, { needed: true, options: [500, 1000, 3000, 5000], forced: true, max: 5000 });
+  assert.equal(previewView(PREVIEW).maxMessages, 5000, "응답에 없으면 기본값");
+});
+
+test("미리보기: 텔레그램 계정 전체 내보내기는 대화 목록을 먼저 고르게 한다", () => {
+  // 계약(2단계): messages_total 0 + chats 목록 + problems 안내 → chat_id로 다시 parse
+  const v = previewView({
+    format: "telegram",
+    variant: null,
+    title_hint: null,
+    messages_total: 0,
+    date_from: null,
+    date_to: null,
+    speakers: [],
+    sample: [],
+    skipped_lines: 0,
+    system_lines: 0,
+    masked_pii: 0,
+    problems: ["계정 전체 내보내기입니다. 대화 3개 중 가져올 하나를 골라 주세요 (chat_id)."],
+    max_messages: 5000,
+    chats: [
+      { id: "777", name: "박지현", type: "personal_chat", messages: 5 },
+      { id: "888", name: "최유진", type: "personal_chat", messages: 1 },
+      { id: "1", name: "빈 방", type: "private_group", messages: 0 },
+    ],
+  });
+  assert.equal(v.needsChat, true);
+  assert.deepEqual(v.chats, [
+    { id: "777", name: "박지현", typeLabel: "1:1 대화", messages: 5 },
+    { id: "888", name: "최유진", typeLabel: "1:1 대화", messages: 1 },
+    { id: "1", name: "빈 방", typeLabel: "그룹", messages: 0 },
+  ]);
+  assert.equal(v.formatLabel, "텔레그램");
+  assert.equal(previewView(PREVIEW).needsChat, false);
+  assert.equal(chatTypeLabel("something_new"), "something_new");
+  assert.equal(chatTypeLabel(null), "");
 });
 
 test("미리보기에 빠진 값이 있어도 죽지 않는다", () => {
@@ -188,6 +237,22 @@ test("화자 미리 채우기: 이름이 안 맞으면 비워 두고, 이상한 
   assert.deepEqual(suggestRoles([], "박지현"), {});
 });
 
+test("화자 미리 채우기: 붙여넣기의 me·contact가 섞여 있어도 이름으로 나머지를 채운다", () => {
+  const speakers = [
+    { name: "최유진", count: 1, suggested_role: null },
+    { name: "김민수", count: 1, suggested_role: null },
+    { name: "me", count: 1, suggested_role: "me" },
+    { name: "contact", count: 1, suggested_role: "contact" },
+  ];
+  // 상대 이름과 같은 화자는 상대, 이 상대의 다른 대화방에서 '나'였던 이름은 나
+  assert.deepEqual(suggestRoles(speakers, "최유진", ["김민수", null]), { 최유진: "contact", 김민수: "me", me: "me", contact: "contact" });
+  // 내 이름을 모르면 그 사람은 비워 둔다(사용자가 고른다)
+  assert.deepEqual(suggestRoles(speakers, "최유진"), { 최유진: "contact", 김민수: null, me: "me", contact: "contact" });
+  // 미리보기 화면용 값에도 그대로 반영된다
+  const view = previewView({ speakers, messages_total: 4 }, "최유진", ["김민수"]);
+  assert.equal(view.roles["김민수"], "me");
+});
+
 test("화자 지정 검사", () => {
   assert.equal(checkRoles({ 김민수: "me", 박지현: "contact" }).ok, true);
   assert.match(checkRoles({ 김민수: "me", 박지현: null }).error, /박지현/);
@@ -212,9 +277,13 @@ test("내 이름과 저장될 메시지 수", () => {
 });
 
 test("최근 N개만: 많을 때만 내놓고, 한도를 넘으면 반드시 골라야 한다", () => {
-  assert.deepEqual(keepRecentOptions(312), { needed: false, options: [], forced: false });
-  assert.deepEqual(keepRecentOptions(2400), { needed: true, options: [500, 1000], forced: false });
-  assert.deepEqual(keepRecentOptions(12000), { needed: true, options: [500, 1000, 3000, 5000], forced: true });
+  assert.deepEqual(keepRecentOptions(312), { needed: false, options: [], forced: false, max: 5000 });
+  assert.deepEqual(keepRecentOptions(2400), { needed: true, options: [500, 1000], forced: false, max: 5000 });
+  assert.deepEqual(keepRecentOptions(12000), { needed: true, options: [500, 1000, 3000, 5000], forced: true, max: 5000 });
+  // 서버가 알려 준 한 번에 가져올 수 있는 수(max_messages)를 쓴다
+  assert.deepEqual(keepRecentOptions(12000, 2000), { needed: true, options: [500, 1000, 2000], forced: true, max: 2000 });
+  assert.deepEqual(keepRecentOptions(800, 600), { needed: true, options: [500, 600], forced: true, max: 600 });
+  assert.equal(keepRecentOptions(12000, 0).max, 5000, "응답에 값이 없으면 기본값");
 });
 
 // 계약 §4.4: GET /v1/conversations/{id}/stats
@@ -260,7 +329,11 @@ test("2단계: 그래프를 쓰지 않는 서버와 한도에 닿은 경우", ()
   assert.equal(limited.status, "limited");
   assert.equal(limited.count, "38 / 312");
   assert.match(limited.title, /한도/);
-  assert.equal(limited.polling, false);
+  assert.equal(limited.polling, false, "limited는 끝난 상태 — 더 읽지 않는다");
+  const daily = graphPhaseView({ ...STATS, graph_limited: true, latest_job: { ...JOB, graph_status: "limited", graph_error: "daily_cap" } }, JOB);
+  assert.match(daily.detail, /오늘 서비스 전체/);
+  const user = graphPhaseView({ ...STATS, graph_limited: true, latest_job: { ...JOB, graph_status: "limited", graph_error: "user_cap" } }, JOB);
+  assert.match(user.detail, /계정마다/);
 });
 
 test("2단계: 통계를 못 읽으면 작업 응답의 상태만 쓴다", () => {
@@ -276,4 +349,48 @@ test("2단계: 통계를 못 읽으면 작업 응답의 상태만 쓴다", () =>
 test("2단계: 작업 정보가 없어도 통계 숫자로 상태를 정한다", () => {
   assert.equal(graphStatus({ ...STATS, latest_job: null }, null), "running");
   assert.equal(graphStatus({ ...STATS, latest_job: null, graph_pending: 0, graph_ingested: 312 }, null), "completed");
+});
+
+test("내 이름: 내보내기의 자리표시 이름(회원님 등)은 보내지 않는다", () => {
+  assert.ok(isPlaceholderName("회원님"));
+  assert.ok(isPlaceholderName(" Me "));
+  assert.ok(!isPlaceholderName("김민수"));
+  // 카카오톡 안드로이드: 나는 "회원님"으로만 나온다 → 내 이름을 모른다
+  assert.equal(meName([{ name: "회원님", count: 5 }, { name: "박지현", count: 3 }], { 회원님: "me", 박지현: "contact" }), null);
+  // 자리표시와 진짜 이름이 함께 '나'면 진짜 이름을 쓴다(메시지 수가 적어도)
+  assert.equal(
+    meName([{ name: "me", count: 9 }, { name: "김민수", count: 2 }, { name: "최유진", count: 4 }], { me: "me", 김민수: "me", 최유진: "contact" }),
+    "김민수",
+  );
+});
+
+test("사건 정리 상태: 작업 기록보다 진행 수치를 먼저 본다(서버 재시작 뒤 running으로 남는 경우)", () => {
+  const stale = { ...STATS, graph_ingested: 312, graph_pending: 0, latest_job: { ...JOB, graph_status: "running" } };
+  assert.equal(graphStatus(stale, JOB), "completed");
+  assert.equal(graphPhaseView(stale, JOB).polling, false);
+  // 한도 표시는 작업 기록과 수치보다 먼저다
+  assert.equal(graphStatus({ ...stale, graph_limited: true }, JOB), "limited");
+  // 아직 남았으면 작업 기록을 따른다
+  assert.equal(graphStatus({ ...STATS, latest_job: { ...JOB, graph_status: "pending" } }, JOB), "pending");
+});
+
+test("사건 정리 진행이 몇 분째 그대로면 더 읽지 않는다", () => {
+  const t0 = 1_000_000;
+  let p = trackProgress(null, STATS, t0);
+  assert.deepEqual(p, { key: "38/312", since: t0, stalled: false });
+  p = trackProgress(p, STATS, t0 + POLL_STALL_MS - 1);
+  assert.equal(p.stalled, false);
+  p = trackProgress(p, STATS, t0 + POLL_STALL_MS);
+  assert.equal(p.stalled, true);
+  const view = graphPhaseView(STATS, JOB, { stalled: p.stalled });
+  assert.equal(view.polling, false);
+  assert.match(view.title, /멈춰/);
+  assert.match(view.detail, /나중에/);
+  // 수치가 움직이면 시계를 새로 잡는다
+  const moved = trackProgress(p, { ...STATS, graph_ingested: 39 }, t0 + POLL_STALL_MS + 5);
+  assert.deepEqual(moved, { key: "39/312", since: t0 + POLL_STALL_MS + 5, stalled: false });
+  // 끝난 상태에는 멈춤 표시를 덮어쓰지 않는다
+  const done = graphPhaseView({ ...STATS, graph_ingested: 312, graph_pending: 0 }, JOB, { stalled: true });
+  assert.equal(done.status, "completed");
+  assert.match(done.title, /완료/);
 });
