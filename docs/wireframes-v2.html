@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Persona_ize 와이어프레임 v2</title>
+<style>
+:root{--ink:#16171a;--sub:#5c606b;--line:#dcdee4;--bg:#f6f6f4;--card:#fff;--accent:#3b5bdb;--accent-soft:#e8ecfb;--warn:#8a5300;--warn-soft:#fff3d6;--ok:#1d6b3a;--ok-soft:#e3f4e8;--bad:#b3261e;--bad-soft:#fde7e5;--kb:#d3d6dd}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 -apple-system,"Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",sans-serif}
+header.top{padding:32px 24px 8px;max-width:1280px;margin:0 auto}
+h1{font-size:26px;margin:0 0 6px}
+h2{font-size:20px;margin:48px 0 4px}
+.lead{color:var(--sub);margin:0;max-width:820px}
+main{max-width:1280px;margin:0 auto;padding:0 24px 80px}
+.row{display:flex;flex-wrap:wrap;gap:28px;margin-top:20px;align-items:flex-start}
+figure{margin:0}
+figcaption{margin-top:10px;max-width:340px;font-size:13px;color:var(--sub)}
+figcaption b{color:var(--ink);display:block;font-size:14px;margin-bottom:2px}
+figcaption .chg{display:inline-block;background:var(--accent-soft);color:var(--accent);font-weight:700;font-size:11px;border-radius:4px;padding:1px 6px;margin-right:4px}
+.wide figcaption{max-width:760px}
+/* phone */
+.phone{width:320px;height:660px;border:1.5px solid #b9bcc6;border-radius:28px;background:var(--bg);overflow:hidden;display:flex;flex-direction:column;position:relative}
+.bar{display:flex;align-items:center;justify-content:space-between;padding:14px 16px 10px;font-weight:700;background:#fff;border-bottom:1px solid var(--line)}
+.bar small{font-weight:500;color:var(--sub);font-size:11px}
+.pad{padding:16px}
+.grow{flex:1;overflow:hidden}
+.title{font-size:19px;font-weight:800;line-height:1.3;margin:0 0 4px}
+.sub{color:var(--sub);font-size:12.5px;margin:0}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+.opt{display:flex;gap:10px;align-items:flex-start;margin-top:8px}
+.opt.sel{border:2px solid var(--accent)}
+.radio{flex:none;width:16px;height:16px;border-radius:50%;border:1.5px solid #9a9eaa;margin-top:2px}
+.sel .radio{border:5px solid var(--accent)}
+.opt b{display:block;font-size:13.5px}
+.opt span{font-size:11.5px;color:var(--sub)}
+.tag{display:inline-block;font-size:10.5px;font-weight:700;border-radius:4px;padding:1px 6px;background:var(--accent-soft);color:var(--accent);vertical-align:middle}
+.tag.gray{background:#ececef;color:var(--sub)}
+.tag.ok{background:var(--ok-soft);color:var(--ok)}
+.tag.warn{background:var(--warn-soft);color:var(--warn)}
+.tag.bad{background:var(--bad-soft);color:var(--bad)}
+.note{background:#ececef;border-radius:10px;padding:10px 12px;font-size:11.5px;color:#3d4049;margin-top:10px}
+.btn{display:flex;align-items:center;justify-content:center;height:44px;border-radius:10px;font-weight:700;font-size:14px;border:1px solid var(--line);background:#fff;flex:1}
+.btn.pri{background:var(--accent);color:#fff;border-color:var(--accent)}
+.btn.dark{background:var(--ink);color:#fff;border-color:var(--ink)}
+.btns{display:flex;gap:8px}
+kbd{display:inline-block;border:1px solid #b9bcc6;border-bottom-width:2px;border-radius:5px;padding:0 6px;font:600 11.5px/1.6 ui-monospace,Menlo,monospace;background:#fff;color:var(--ink)}
+/* chat + keyboard panel */
+.chat{background:#e9ebef;flex:1;padding:12px;display:flex;flex-direction:column;justify-content:flex-end;gap:6px}
+.bub{background:#fff;border-radius:12px;padding:8px 10px;max-width:78%;font-size:13px}
+.inputrow{background:#fff;border-top:1px solid var(--line);padding:8px 10px;display:flex;gap:8px;align-items:center}
+.inputrow .field{flex:1;background:#f0f1f3;border-radius:16px;padding:7px 12px;font-size:13px}
+.send{width:30px;height:30px;border-radius:50%;background:#cfd2d9;flex:none}
+.kbd{background:var(--kb);padding:8px}
+.kbd .tool{display:flex;align-items:center;gap:6px;margin-bottom:8px}
+.chip{display:inline-flex;align-items:center;gap:4px;background:#fff;border:1px solid var(--line);border-radius:16px;padding:5px 10px;font-size:12px;font-weight:600;min-height:32px;white-space:nowrap}
+.chip.on{border-color:var(--accent);background:var(--accent-soft);color:var(--accent)}
+.out{background:#fff;border:2px solid var(--accent);border-radius:10px;padding:10px;font-size:13.5px}
+.out mark{background:var(--ok-soft);color:inherit;border-bottom:1.5px solid var(--ok);padding:0 1px}
+.facts{display:flex;flex-wrap:wrap;gap:4px;margin:8px 0}
+.warnbox{background:var(--warn-soft);color:#5a3800;border-radius:8px;padding:8px 10px;font-size:12px;margin:8px 0}
+.warnbox b{display:block;font-size:11.5px;color:var(--warn)}
+.keys{display:grid;grid-template-columns:repeat(10,1fr);gap:4px;margin-top:8px}
+.keys i{height:26px;background:#fff;border-radius:5px;display:block}
+.keys.dim i{background:#e6e8ec}
+.list .it{display:flex;align-items:center;gap:8px;background:#fff;border-radius:10px;padding:8px 10px;margin-top:6px;min-height:44px}
+.av{width:28px;height:28px;border-radius:8px;background:var(--accent-soft);color:var(--accent);font-weight:700;font-size:12px;display:flex;align-items:center;justify-content:center;flex:none}
+.it b{font-size:13px}.it span{font-size:11px;color:var(--sub);display:block}
+.seg{display:flex;gap:4px}
+.seg i{flex:1;height:8px;border-radius:4px;background:#e1e3e8}
+.seg i.f{background:var(--accent)}
+.lab{display:flex;justify-content:space-between;font-size:12.5px;margin:10px 0 4px}
+.lab span{color:var(--sub);font-size:11.5px}
+/* desktop */
+.desk{width:760px;height:470px;border:1.5px solid #b9bcc6;border-radius:12px;background:#eef0f3;position:relative;overflow:hidden}
+.win{position:absolute;left:24px;top:22px;width:470px;height:420px;background:#fff;border:1px solid #c5c8d0;border-radius:8px;display:flex;flex-direction:column;overflow:hidden}
+.wtitle{background:#e4e6eb;padding:6px 10px;font-size:11.5px;color:var(--sub);display:flex;justify-content:space-between}
+.wbody{flex:1;background:#f3f4f6;padding:12px;display:flex;flex-direction:column;justify-content:flex-end;gap:6px}
+.wcompose{border-top:1px solid var(--line);padding:10px;font-size:13px;min-height:64px;outline:2px solid var(--accent);outline-offset:-2px}
+.pop{position:absolute;right:20px;top:60px;width:330px;background:#fff;border:1px solid #c5c8d0;border-radius:12px;box-shadow:0 10px 30px rgba(20,22,30,.18);padding:12px}
+.pop .hd{display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:8px}
+.foot{display:flex;justify-content:space-between;align-items:center;margin-top:8px;font-size:11px;color:var(--sub)}
+.settings{position:absolute;inset:20px;background:#fff;border:1px solid #c5c8d0;border-radius:10px;padding:18px 20px;overflow:hidden}
+.srow{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid #eceef1;font-size:13px}
+.srow span{color:var(--sub);font-size:11.5px;display:block}
+.tog{width:36px;height:20px;border-radius:10px;background:var(--accent);position:relative;flex:none}
+.tog::after{content:"";position:absolute;right:2px;top:2px;width:16px;height:16px;border-radius:50%;background:#fff}
+/* admin */
+.admin{width:1000px;max-width:100%;border:1.5px solid #b9bcc6;border-radius:12px;background:#f3f4f6;display:flex;overflow:hidden}
+.side{width:170px;background:#1c2749;color:#cfd5ea;padding:16px 10px;font-size:12.5px;flex:none}
+.side b{color:#fff;display:block;margin:0 6px 12px;font-size:14px}
+.side div{padding:7px 8px;border-radius:6px}
+.side .on{background:#2f3d6b;color:#fff;font-weight:700}
+.amain{flex:1;padding:16px;min-width:0}
+.kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin:10px 0}
+.kpi{background:#fff;border-radius:10px;padding:10px}
+.kpi span{font-size:11px;color:var(--sub);display:block}
+.kpi b{font-size:20px;display:block}
+.kpi em{font-style:normal;font-size:11px;color:var(--sub)}
+.grid2{display:grid;grid-template-columns:1.1fr 1fr;gap:8px}
+.panel{background:#fff;border-radius:10px;padding:12px;font-size:12.5px}
+.panel h4{margin:0 0 8px;font-size:13.5px}
+.prow{display:flex;justify-content:space-between;gap:8px;padding:5px 0;border-bottom:1px solid #eef0f3}
+.prow:last-child{border-bottom:0}
+.meter{height:8px;border-radius:4px;background:#e1e3e8;overflow:hidden;margin:3px 0 8px}
+.meter i{display:block;height:100%;background:var(--accent)}
+.tablewrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:12px}
+th,td{text-align:left;padding:5px 6px;border-bottom:1px solid #eef0f3;white-space:nowrap}
+th{color:var(--sub);font-weight:600}
+@media (max-width:820px){.desk{width:100%;overflow-x:auto}.admin{flex-direction:column}.side{width:auto}.kpis{grid-template-columns:repeat(2,1fr)}.grid2{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header class="top">
+  <h1>Persona_ize 와이어프레임 v2 — 바뀌는 화면만</h1>
+  <p class="lead">2026-11-10 검토 결과를 반영한 수정안입니다. 원본에서 그대로 두는 화면(온보딩 소개, 로그인, 페르소나 목록, 카톡 내보내기 안내)은 싣지 않았습니다. 사용 환경은 모바일 = 카카오톡·텔레그램 위 키보드, PC = 사내 메신저(설치형 프로그램) 위 전역 단축키입니다. 근거와 전체 지적 사항은 <code>wireframe-review-2026-11-10.md</code>.</p>
+</header>
+<main>
+
+<h2>모바일 — 키보드</h2>
+<p class="lead">키보드는 채팅 앱의 화면을 읽거나 그 안에 버튼을 넣을 수 없습니다. 읽을 수 있는 것은 입력창의 글자뿐이라, 모든 조작을 키보드 영역 안으로 옮겼습니다.</p>
+<div class="row">
+
+<figure>
+  <div class="phone">
+    <div class="bar"><span>‹ 김상무님</span><small>카카오톡 (예시)</small></div>
+    <div class="chat"><div class="bub">내일 임원회의 전까지 한 장 요약본으로 정리해줄 수 있어요?</div></div>
+    <div class="inputrow"><div class="field">넹 회의 전까지 정리해서 보낼게여</div><div class="send"></div></div>
+    <div class="kbd">
+      <div class="tool"><span class="chip on">✦ 김상무님에게 맞게</span><span class="chip">상대 바꾸기</span></div>
+      <div class="keys"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+      <div class="keys"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+      <div class="keys"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+    </div>
+  </div>
+  <figcaption><b>M1. 호출 버튼은 키보드 맨 윗줄</b><span class="chg">변경</span>원본은 버튼이 채팅 앱 입력창 왼쪽에 있었는데, 그 자리는 카카오톡의 화면이라 넣을 수 없습니다. 키보드 도구 줄로 옮기고, 이 앱에서 마지막에 고른 상대를 기본값으로 보여 한 번에 실행되게 했습니다.</figcaption>
+</figure>
+
+<figure>
+  <div class="phone">
+    <div class="bar"><span>‹ 김상무님</span><small>카카오톡 (예시)</small></div>
+    <div class="chat"><div class="bub">내일 임원회의 전까지 한 장 요약본으로 정리해줄 수 있어요?</div></div>
+    <div class="inputrow"><div class="field">넹 회의 전까지 정리해서 보낼게여</div><div class="send"></div></div>
+    <div class="kbd" style="height:330px">
+      <div class="tool" style="justify-content:space-between"><b style="font-size:13px">누구에게 보내나요?</b><span class="chip">✕</span></div>
+      <div class="tool"><span class="chip on">김상무님</span><span class="chip">기획팀 김윤서</span><span class="chip">동철이</span></div>
+      <div class="card" style="padding:8px 10px;font-size:12px;color:var(--sub)">🔍 이름 검색</div>
+      <div class="list">
+        <div class="it"><div class="av">이</div><div><b>현대건설 이부장</b><span>거래처 · 정중한 존댓말</span></div></div>
+        <div class="it"><div class="av">박</div><div><b>박영수</b><span>산악동호회 · 듬직한 형님 말투</span></div></div>
+        <div class="it"><div class="av">＋</div><div><b>상대 없이 다듬기</b><span>말투 학습 없이 정리만</span></div></div>
+      </div>
+    </div>
+  </div>
+  <figcaption><b>M2. 상대 선택 — 최근 3명이 먼저</b><span class="chg">변경</span>키보드는 지금 누구와 대화 중인지 알 수 없어 고르는 단계가 꼭 필요합니다. 그래서 최근 상대 칩을 맨 위에 두어 대부분 한 번에 끝나게 하고, 아직 페르소나가 없는 상대를 위한 '상대 없이 다듬기'를 추가했습니다.</figcaption>
+</figure>
+
+<figure>
+  <div class="phone">
+    <div class="bar"><span>‹ 김상무님</span><small>카카오톡 (예시)</small></div>
+    <div class="chat" style="flex:.35"><div class="bub">내일 임원회의 전까지 한 장 요약본으로…</div></div>
+    <div class="inputrow"><div class="field">넹 회의 전까지 정리해서 보낼게여</div><div class="send"></div></div>
+    <div class="kbd" style="flex:1">
+      <div class="tool"><span class="chip">‹</span><span class="chip on">김상무님에게 맞게</span></div>
+      <div class="out">알겠습니다, 상무님. <mark>회의 전까지</mark> 정리해서 보내드리겠습니다.</div>
+      <div class="facts"><span class="tag ok">✓ 회의 전까지</span><span class="tag ok">✓ 보내겠다(약속)</span></div>
+      <div class="warnbox"><b>확인해 주세요</b>상대가 '한 장 요약본'을 요청했어요. 초안에 없어서 넣지 않았습니다.</div>
+      <div class="tool"><span class="chip">더 짧게</span><span class="chip">더 공손하게</span><span class="chip">다시</span><span class="chip">고치기</span></div>
+      <div class="btns"><div class="btn">초안 그대로</div><div class="btn pri">입력창에 넣기</div></div>
+      <p class="sub" style="text-align:center;margin-top:6px;font-size:11px">넣기만 해요. 전송은 직접 누릅니다.</p>
+    </div>
+  </div>
+  <figcaption><b>M3. 결과 — 보존 항목과 주의 문구</b><span class="chg">추가</span>이 서비스의 약속은 "사실은 그대로, 말투만"입니다. 원본에는 그것을 보여 주는 자리가 없었습니다. 지킨 날짜·약속을 초록 표시로, 모델이 남긴 주의점을 노란 블록으로 보여 줍니다. 원본의 결과 문장은 초안에 없던 '내일 임원회의', '한 장 요약본'을 넣었는데, 이는 사실 추가라 주의 문구로 돌렸습니다. 직접 고칠 때만 자판이 올라옵니다.</figcaption>
+</figure>
+
+<figure>
+  <div class="phone">
+    <div class="bar"><span>‹ 김상무님</span><small>카카오톡 (예시)</small></div>
+    <div class="chat"><div class="bub">단가 3%로 금요일까지 회신 가능할까요?</div></div>
+    <div class="inputrow"><div class="field">3%는 어렵고 5%면 수요일까지 됨</div><div class="send"></div></div>
+    <div class="kbd" style="height:300px">
+      <div class="tool"><span class="chip">‹</span><span class="chip on">김상무님에게 맞게</span></div>
+      <div class="card">
+        <span class="tag warn">초안을 그대로 뒀어요</span>
+        <p style="margin:8px 0 4px;font-weight:700;font-size:13.5px">바꾼 문장에서 숫자가 달라졌어요</p>
+        <p class="sub">'5%'와 '수요일'을 지키지 못해 추천하지 않았습니다. 입력창의 초안은 그대로 있어요.</p>
+      </div>
+      <div class="btns" style="margin-top:10px"><div class="btn">닫기</div><div class="btn pri">다시 만들기</div></div>
+      <p class="sub" style="margin-top:10px;font-size:11px;text-align:center">오늘 12 / 200회 사용</p>
+    </div>
+  </div>
+  <figcaption><b>M4. 추천하지 않는 경우</b><span class="chg">추가</span>검증에 실패하면 백엔드는 원문을 유지합니다(<code>fallback_original</code>). 원본에는 인터넷 오류 화면만 있고 이 상태가 없었습니다. 하루 사용 한도(429)와 한도 도달 안내도 같은 자리에 둡니다.</figcaption>
+</figure>
+
+</div>
+
+<h2>모바일 — 대화 가져오기와 페르소나</h2>
+<div class="row">
+
+<figure>
+  <div class="phone">
+    <div class="bar"><span>‹</span><small>1 / 2</small></div>
+    <div class="pad grow">
+      <p class="title">상대와 나눈 대화를 올려주세요</p>
+      <p class="sub">상대 한 명당 파일 하나. 내 말투를 읽는 데 씁니다.</p>
+      <div class="card opt sel"><div class="radio"></div><div><b>카카오톡 대화 내보내기 <span class="tag">추천</span></b><span>채팅방 메뉴 → 대화 내용 내보내기 (.txt)</span></div></div>
+      <div class="card opt"><div class="radio"></div><div><b>텔레그램 내보내기 파일</b><span>PC용 텔레그램에서만 만들 수 있어요 (.json)</span></div></div>
+      <div class="card opt"><div class="radio"></div><div><b>대화 붙여넣기</b><span>다른 메신저·사내 메신저는 복사해서 붙여넣기</span></div></div>
+      <div class="card" style="margin-top:10px;border-style:dashed;text-align:center;padding:18px"><b>대화 파일 첨부하기</b><br><span class="sub">.txt · .json · .zip</span></div>
+      <div class="note">🔒 올린 대화는 내 계정에만 저장되고 말투 분석에 씁니다. 상대별로 언제든 지울 수 있어요. <u>자세히</u></div>
+    </div>
+    <div class="pad" style="padding-top:0"><div class="btn dark">다음</div></div>
+  </div>
+  <figcaption><b>M5. 가져오는 방법 3가지</b><span class="chg">변경</span>'메신저 API 호출하기'를 뺐습니다. 카카오톡은 개인 대화를 읽는 API가 없습니다. 텔레그램을 별도 항목으로 넣되, 내보내기가 PC용 앱에서만 된다는 점을 적었습니다. 저장 안내 문구는 실제 동작에 맞췄습니다(아래 M6 설명 참고).</figcaption>
+</figure>
+
+<figure>
+  <div class="phone">
+    <div class="bar"><span>‹</span><small>2 / 2</small></div>
+    <div class="pad grow">
+      <div class="card" style="background:var(--ok-soft);border-color:#bfe3c9">
+        <b style="font-size:13.5px">말투 분석 완료 · 지금 바로 쓸 수 있어요</b>
+        <p class="sub" style="color:#24573a">메시지 312개 중 내 발화 168개</p>
+      </div>
+      <div class="card" style="margin-top:8px">
+        <div style="display:flex;justify-content:space-between;font-size:12.5px"><b>지난 약속·사건 정리 중</b><span class="sub">38 / 312</span></div>
+        <div class="meter"><i style="width:12%"></i></div>
+        <p class="sub" style="font-size:11.5px">앱을 닫아도 계속됩니다. 끝나면 "지난번에 약속한 내용"까지 챙겨 드려요.</p>
+      </div>
+      <p class="sub" style="margin-top:14px;font-weight:700;color:var(--ink)">이 상대에게 쓰는 내 말투 <span class="tag">AI 추정</span></p>
+      <div class="lab">격식 <span>매우 정중</span></div><div class="seg"><i class="f"></i><i class="f"></i><i class="f"></i><i class="f"></i><i class="f"></i></div>
+      <div class="lab">친근함 <span>낮음</span></div><div class="seg"><i class="f"></i><i></i><i></i><i></i><i></i></div>
+      <div class="lab">돌려 말하기 ↔ 직설 <span>결론부터</span></div><div class="seg"><i class="f"></i><i class="f"></i><i class="f"></i><i class="f"></i><i></i></div>
+      <div class="lab">호칭 <span>상무님</span></div>
+      <div class="lab">길이 · 이모지 <span>짧게 · 안 씀</span></div>
+    </div>
+    <div class="pad" style="padding-top:0"><div class="btn dark">페르소나 저장</div></div>
+  </div>
+  <figcaption><b>M6. 분석은 두 단계로 나눠 보여 준다</b><span class="chg">변경</span>원본의 "보통 10~20초"는 말투 분석에만 맞습니다. 지난 사건을 정리하는 그래프 수집은 메시지 하나에 10~15초라 312개면 한 시간 안팎입니다. 그래서 말투는 즉시 완료로, 사건 정리는 백그라운드 진행으로 나눴습니다. 0~100 슬라이더는 5단계로 바꾸고 항목을 백엔드 설정(격식·친근함·직설·호칭·길이·이모지)과 맞췄습니다.</figcaption>
+</figure>
+
+</div>
+
+<h2>PC — 사내 메신저 위 전역 단축키 (설치형 프로그램)</h2>
+<p class="lead">원본의 PC 화면은 크롬 확장이라 브라우저 탭 안에서만 동작합니다. 설치형 사내 메신저에서는 쓸 수 없어, 트레이에 상주하는 프로그램으로 다시 그렸습니다. 크롬 확장과 메일 자동 분석은 2단계로 미룹니다.</p>
+<div class="row wide">
+
+<figure>
+  <div class="desk">
+    <div class="win">
+      <div class="wtitle"><span>사내 메신저 — 이준호 부장 (현대건설)</span><span>— ☐ ✕</span></div>
+      <div class="wbody"><div class="bub">단가 5% 조정 가능할지, 납품은 수요일 그대로인지 회신 부탁드립니다.</div></div>
+      <div class="wcompose">단가 5%는 좀 어려울거 같고 3%면 검토가능 수요일 납품은 됨</div>
+    </div>
+    <div class="pop">
+      <div class="hd"><span class="chip on">이 현대건설 이부장 ▾</span><span class="tag gray">창 제목으로 추정</span></div>
+      <div class="out">부장님, 5% 조정은 어렵고 <mark>3%</mark> 선이라면 검토 가능합니다. 납품은 <mark>수요일</mark>에 맞추겠습니다.</div>
+      <div class="facts"><span class="tag ok">✓ 5%</span><span class="tag ok">✓ 3%</span><span class="tag ok">✓ 수요일</span></div>
+      <div class="tool" style="margin:8px 0"><span class="chip">더 짧게 <kbd>1</kbd></span><span class="chip">더 공손하게 <kbd>2</kbd></span><span class="chip">다시 <kbd>R</kbd></span></div>
+      <div class="btn pri">입력칸에 넣기 &nbsp;<kbd>Enter</kbd></div>
+      <div class="foot"><span><kbd>Esc</kbd> 닫기 · 초안 유지</span><span><kbd>Tab</kbd> 직접 고치기</span></div>
+    </div>
+  </div>
+  <figcaption><b>P1. 단축키 → 입력칸 옆 팝오버</b><span class="chg">신규</span>입력칸에 초안을 쓰고 단축키를 누르면 프로그램이 초안을 가져와 팝오버를 띄웁니다. 상대는 창 제목에서 추정하고, 틀리면 ▾로 바꿉니다. 팝오버는 포커스를 가져가 키보드만으로 끝낼 수 있고, Enter는 입력칸에 넣기까지만 합니다. 전송은 사용자가 메신저에서 직접 합니다.</figcaption>
+</figure>
+
+<figure>
+  <div class="desk">
+    <div class="settings">
+      <b style="font-size:16px">Persona_ize 설정</b>
+      <div class="srow"><div>호출 단축키<span>다른 프로그램과 겹치면 여기서 바꿉니다</span></div><div><kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>Space</kbd> &nbsp;<span class="tag ok" style="display:inline">겹치는 단축키 없음</span></div></div>
+      <div class="srow"><div>초안 가져오는 방식<span>입력칸 전체를 선택해 복사한 뒤, 클립보드는 원래대로 되돌립니다</span></div><span class="chip on">입력칸 전체</span></div>
+      <div class="srow"><div>쓸 수 있는 프로그램<span>목록에 있는 프로그램에서만 단축키가 동작합니다</span></div><div><span class="chip">사내 메신저</span> <span class="chip">카카오톡 PC</span> <span class="chip">텔레그램</span> <span class="chip">＋</span></div></div>
+      <div class="srow"><div>비밀번호 칸·금융 프로그램에서는 동작하지 않음<span>항상 켜져 있고 끌 수 없습니다</span></div><div class="tog"></div></div>
+      <div class="srow"><div>프로그램별 기본 상대<span>창 제목으로 못 찾을 때 쓰는 상대</span></div><span class="chip">설정하기</span></div>
+      <div class="srow"><div>컴퓨터 시작 시 실행</div><div class="tog"></div></div>
+      <div class="note">처음 실행할 때 macOS는 '손쉬운 사용' 권한을, 회사 PC는 보안 프로그램의 허용을 요구할 수 있습니다. 설치 전에 사내 보안 정책(외부 전송 허용 여부)을 확인하는 안내를 온보딩 첫 화면에 둡니다.</div>
+    </div>
+  </div>
+  <figcaption><b>P2. 설정 — 단축키·허용 프로그램·권한</b><span class="chg">신규</span>원본의 Ctrl+Shift+P는 브라우저의 사생활 보호 창, 개발 도구의 명령 팔레트와 겹칩니다. 기본값을 바꾸고 충돌 여부를 보여 줍니다. 회사 환경이므로 허용 프로그램을 목록으로 제한하고, 비밀번호 칸에서는 동작하지 않게 고정했습니다.</figcaption>
+</figure>
+
+</div>
+
+<h2>어드민 — 운영 대시보드</h2>
+<p class="lead">가입자·활성 사용자 같은 성장 지표보다, 이 서비스가 약속한 품질(사실 보존)과 비용을 먼저 보이게 했습니다. 모든 수치는 예시입니다.</p>
+<div class="row wide">
+<figure style="max-width:100%">
+  <div class="admin">
+    <div class="side"><b>Persona_ize <span class="tag">Admin</span></b><div class="on">대시보드</div><div>사용자</div><div>품질 · 피드백</div><div>비용 · 사용량</div><div>수집 작업</div><div>개인정보 · 삭제</div><div>접근 기록</div></div>
+    <div class="amain">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><b style="font-size:17px">운영 대시보드</b><span><span class="chip">오늘</span> <span class="chip on">7일</span> <span class="chip">30일</span></span></div>
+      <div class="kpis">
+        <div class="kpi"><span>첨삭 요청</span><b>6,870</b><em>활성 사용자 4,215</em></div>
+        <div class="kpi"><span>추천 성공률</span><b>96.2%</b><em>원문 유지 3.8%</em></div>
+        <div class="kpi"><span>응답 시간 p95</span><b>7.4초</b><em>중앙값 2.4초</em></div>
+        <div class="kpi"><span>'나다워요' 비율</span><b>87%</b><em>응답 1,912건</em></div>
+        <div class="kpi"><span>이번 달 API 비용</span><b>$212</b><em>예산의 53%</em></div>
+      </div>
+      <div class="grid2">
+        <div class="panel"><h4>원문 유지 사유 (검증 실패)</h4>
+          <div class="prow"><span>날짜·시간 누락/변경</span><b>41%</b></div>
+          <div class="prow"><span>숫자·금액 변경</span><b>27%</b></div>
+          <div class="prow"><span>가능/불가 뒤바뀜</span><b>14%</b></div>
+          <div class="prow"><span>모델 거절</span><b>11%</b></div>
+          <div class="prow"><span>시간 초과</span><b>7%</b></div>
+        </div>
+        <div class="panel"><h4>비용 · 사용량</h4>
+          첨삭 (Opus)<div class="meter"><i style="width:22%"></i></div>
+          사건 정리 (Haiku)<div class="meter"><i style="width:78%"></i></div>
+          <div class="prow"><span>하루 한도 도달 사용자</span><b>12명</b></div>
+          <div class="prow"><span>채널: 모바일 / PC</span><b>68% / 32%</b></div>
+        </div>
+        <div class="panel"><h4>수집 작업 · 상태</h4>
+          <div class="prow"><span>사건 정리 대기</span><span><b>214건</b> <span class="tag warn">주의</span></span></div>
+          <div class="prow"><span>수집 실패(재시도 필요)</span><span><b>3건</b> <span class="tag bad">확인 필요</span></span></div>
+          <div class="prow"><span>DB · 그래프 DB</span><span class="tag ok">정상</span></div>
+          <div class="prow"><span>키보드 '전체 접근' 꺼짐</span><b>6.1%</b></div>
+        </div>
+        <div class="panel"><h4>개인정보 처리</h4>
+          <div class="prow"><span>삭제 요청 대기</span><span><b>3건</b> · 가장 오래된 것 2일</span></div>
+          <div class="prow"><span>지난 7일 관리자 열람</span><b>0건</b></div>
+          <div class="btn" style="height:34px;margin-top:8px">요청 처리하러 가기</div>
+        </div>
+      </div>
+      <div class="panel" style="margin-top:8px"><h4>최근 '나답지 않아요' 피드백</h4>
+        <div class="tablewrap"><table><tr><th>사용자</th><th>관계</th><th>채널</th><th>사유(선택형)</th><th>조건</th><th>시각</th></tr>
+        <tr><td>u_8f2…a1</td><td>직장 상사</td><td>모바일</td><td>너무 딱딱함</td><td>C</td><td>10분 전</td></tr>
+        <tr><td>u_31c…7e</td><td>거래처</td><td>PC</td><td>저자세로 느껴짐</td><td>D</td><td>32분 전</td></tr>
+        <tr><td>u_c04…9b</td><td>친구</td><td>모바일</td><td>평소 말투와 다름</td><td>C</td><td>1시간 전</td></tr></table></div>
+        <p class="sub" style="margin-top:6px;font-size:11.5px">대화 원문과 첨삭 문장은 관리자 화면에 표시하지 않습니다. 사유는 선택형만 수집합니다.</p>
+      </div>
+    </div>
+  </div>
+  <figcaption><b>A1. 품질·비용 중심으로 재구성</b><span class="chg">변경</span>추천 성공률과 원문 유지 사유, 응답 시간, API 비용, 수집 작업 대기열을 추가했습니다. 성공률·사유·응답 시간·토큰·수집 대기는 백엔드가 이미 기록하고, 채널과 금액 환산은 새로 기록해야 합니다. 채널은 모바일/PC로 줄였고, '메일 API 연동 오류'는 범위에서 빠져 지웠습니다. 좌측 메뉴에 관리자 접근 기록을 넣었습니다.</figcaption>
+</figure>
+</div>
+
+</main>
+</body>
+</html>

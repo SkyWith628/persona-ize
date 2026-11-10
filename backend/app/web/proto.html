@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Persona_ize 시연 프로토타입</title>
+  <link rel="stylesheet" href="proto.css" />
+</head>
+<body>
+  <header class="top">
+    <div>
+      <h1>Persona_ize 시연 프로토타입</h1>
+      <p class="muted">와이어프레임 v2(M1~M4, P1)를 실제 첨삭 API에 붙인 화면입니다. 메신저 화면은 흉내이고 전송은 일어나지 않습니다. <a href="/">관리 화면</a></p>
+    </div>
+    <div id="me" class="muted"></div>
+  </header>
+
+  <form id="login" class="card login hidden">
+    <b>로그인</b>
+    <input id="login-user" placeholder="아이디" autocomplete="username" required />
+    <input id="login-pass" type="password" placeholder="비밀번호" autocomplete="current-password" required />
+    <button class="btn pri" type="submit">로그인</button>
+    <span id="login-error" class="error"></span>
+  </form>
+
+  <main id="app" class="hidden">
+    <section class="card settings">
+      <div class="tabs" role="tablist">
+        <button type="button" role="tab" data-mode="mobile" aria-selected="true">모바일 · 키보드</button>
+        <button type="button" role="tab" data-mode="pc" aria-selected="false">PC · 단축키</button>
+      </div>
+      <label>대화 상대 <select id="contact"></select></label>
+      <label>조건
+        <select id="condition">
+          <option value="D" selected>D +그래프 맥락</option>
+          <option value="C">C +내 과거 표현</option>
+          <option value="B">B 페르소나</option>
+          <option value="A">A 기준선</option>
+        </select>
+      </label>
+      <label class="grow">상황 <input id="situation" placeholder="예: 거절, 일정 조율 (선택)" maxlength="500" /></label>
+      <span id="usage" class="muted"></span>
+    </section>
+    <p id="meta" class="muted meta"></p>
+
+    <!-- 모바일: 채팅 앱 위의 키보드 -->
+    <section id="stage-mobile" class="stage">
+      <div class="phone">
+        <div class="bar"><span>‹ <span class="who"></span></span><small>채팅 앱 (예시)</small></div>
+        <div class="chat" id="m-chat"></div>
+        <div class="inputrow">
+          <input id="m-input" class="field" placeholder="초안을 쓰세요" autocomplete="off" />
+          <button type="button" id="m-send" class="send" aria-label="보내기(시연용)">↑</button>
+        </div>
+        <div class="kbd">
+          <div id="m-idle">
+            <div class="tool">
+              <button type="button" id="m-run" class="chip on"><span>✦ <span class="who"></span>에게 맞게</span></button>
+              <button type="button" id="m-pick" class="chip">상대 바꾸기</button>
+            </div>
+            <div class="keys" aria-hidden="true"></div>
+          </div>
+          <div id="m-panel" class="panel hidden"></div>
+        </div>
+      </div>
+      <p class="muted hint">입력창에 초안을 쓰고 <b>✦ 버튼</b>을 누릅니다. 자판은 그림이며 실제 키보드로 입력합니다.</p>
+    </section>
+
+    <!-- PC: 사내 메신저 위의 전역 단축키 -->
+    <section id="stage-pc" class="stage hidden">
+      <div class="desk">
+        <div class="win">
+          <div class="wtitle"><span>사내 메신저 — <span class="who"></span></span><span>— ☐ ✕</span></div>
+          <div class="wbody" id="p-chat"></div>
+          <textarea id="p-input" class="wcompose" placeholder="초안을 쓰고 단축키를 누르세요"></textarea>
+        </div>
+        <div id="p-pop" class="pop panel hidden" role="dialog" aria-label="Persona_ize"></div>
+      </div>
+      <p class="muted hint">입력칸에 초안을 쓰고 <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Space</kbd> (Mac은 <kbd>⌘</kbd>+<kbd>Shift</kbd>+<kbd>Space</kbd>). 창이 뜬 뒤: <kbd>Enter</kbd> 넣기 · <kbd>Esc</kbd> 닫기 · <kbd>R</kbd> 다시.
+        <button type="button" id="p-run" class="chip">단축키 대신 누르기</button></p>
+    </section>
+  </main>
+
+  <script src="proto.js"></script>
+</body>
+</html>
