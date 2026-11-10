@@ -68,6 +68,8 @@ class RewriteRequestRow(Base):
     )
     draft_version: Mapped[int] = mapped_column(Integer, nullable=False)
     condition: Mapped[str] = mapped_column(String(1), nullable=False, default="B")  # A/B/C/D (0007)
+    # 요청이 온 곳: web(PC 웹) | mobile | desktop | api (0008). 관리자 화면의 채널 집계에 쓴다.
+    channel: Mapped[str] = mapped_column(String(16), nullable=False, default="web", server_default="web")
     input_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     idempotency_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -115,6 +117,8 @@ class FeedbackRow(Base):
     accepted: Mapped[bool] = mapped_column(Boolean, nullable=False)
     edited_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # 선택형 사유 (0008). 값 목록은 app/domain/rewrite.py의 FeedbackReasonCode
+    reason_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
     consent_to_reuse: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
@@ -247,6 +251,26 @@ class UserRow(Base):
     username: Mapped[str] = mapped_column(String(32), nullable=False, unique=True)
     password_hash: Mapped[str] = mapped_column(String(256), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # 약관·개인정보 안내 동의 (0008). 동의한 적 없으면 둘 다 NULL.
+    consented_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    consent_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+
+class AdminAccessLogRow(Base):
+    """관리자 화면·API 접근 기록 (0008). 대화 원문은 관리자 화면에 나오지 않지만 누가 언제 봤는지는 남긴다."""
+
+    __tablename__ = "admin_access_log"
+
+    id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    admin_user_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    admin_username: Mapped[str] = mapped_column(String(32), nullable=False)
+    action: Mapped[str] = mapped_column(
+        String(64), nullable=False
+    )  # overview | users | jobs | feedback | ...
+    detail: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (Index("ix_admin_access_log_created", "created_at"),)
 
 
 class SessionRow(Base):

@@ -1,14 +1,11 @@
 """PostgreSQL 저장소 통합 테스트. 로컬 Postgres가 없으면 건너뛴다 (`docker compose up -d postgres`).
 
-같은 서버에 `persona_ize_test` DB를 만들어 public 스키마를 비우고 Alembic head까지 올린 뒤 테스트한다.
-`.env`의 DATABASE_URL이 가리키는 운영 DB는 건드리지 않는다. `TEST_DATABASE_URL`을 직접 주면 그 DB를 쓰되,
-이름이 `_test`로 끝나야 한다 (매 실행마다 스키마를 지우기 때문).
+테스트 DB 준비(스키마 비우기 → Alembic head)는 `tests/pg_support.py`, 픽스처 `pg_url`은 conftest에 있다.
 """
 
 from __future__ import annotations
 
 import asyncio
-import os
 import uuid
 
 import pytest
@@ -20,7 +17,6 @@ asyncpg = pytest.importorskip("asyncpg")
 from app.ai.embeddings import FakeEmbedder  # noqa: E402
 from app.core.config import Settings  # noqa: E402
 from app.core.errors import NotFoundError, VersionConflictError  # noqa: E402
-from app.db.migrate import upgrade_to_head  # noqa: E402
 from app.db.session import create_engine, create_session_factory  # noqa: E402
 from app.domain.persona import PersonaSettings  # noqa: E402
 from app.domain.rewrite import Feedback, RewriteResult, ValidationReport  # noqa: E402
@@ -30,58 +26,9 @@ from app.repositories.postgres import (  # noqa: E402
     PostgresConversationRepo,
     PostgresRewriteRepo,
 )
+from tests.pg_support import dsn as _dsn  # noqa: E402
 
 pytestmark = pytest.mark.anyio
-
-TEST_DB = "persona_ize_test"
-
-
-def _dsn(url: str) -> str:
-    return url.replace("postgresql+asyncpg://", "postgresql://", 1)
-
-
-def _urls() -> tuple[str, str] | None:
-    """(관리용 접속 URL, 테스트 DB URL). DATABASE_URL이 없으면 None."""
-    explicit = os.environ.get("TEST_DATABASE_URL")
-    if explicit:
-        if not explicit.rpartition("/")[2].split("?")[0].endswith("_test"):
-            raise RuntimeError("TEST_DATABASE_URL의 DB 이름은 _test로 끝나야 합니다 (스키마를 지웁니다).")
-        return explicit, explicit
-    base = Settings().database_url  # .env를 읽는다
-    if not base:
-        return None
-    head, _, _ = base.rpartition("/")
-    return base, f"{head}/{TEST_DB}"
-
-
-async def _prepare(admin_url: str, test_url: str) -> None:
-    if admin_url != test_url:
-        conn = await asyncpg.connect(_dsn(admin_url), timeout=3)
-        try:
-            exists = await conn.fetchval("SELECT 1 FROM pg_database WHERE datname = $1", TEST_DB)
-            if not exists:
-                await conn.execute(f'CREATE DATABASE "{TEST_DB}"')
-        finally:
-            await conn.close()
-    conn = await asyncpg.connect(_dsn(test_url), timeout=3)
-    try:
-        await conn.execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public")
-    finally:
-        await conn.close()
-
-
-@pytest.fixture(scope="session")
-def pg_url() -> str:
-    urls = _urls()
-    if urls is None:
-        pytest.skip("DATABASE_URL이 비어 있어 PostgreSQL 테스트를 건너뜁니다.")
-    admin_url, test_url = urls
-    try:
-        asyncio.run(_prepare(admin_url, test_url))
-    except (OSError, TimeoutError, asyncpg.PostgresError) as exc:
-        pytest.skip(f"PostgreSQL 연결 실패({type(exc).__name__}) — `docker compose up -d postgres` 후 다시.")
-    upgrade_to_head(test_url)
-    return test_url
 
 
 @pytest.fixture

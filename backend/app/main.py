@@ -8,13 +8,13 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.deps import build_state
-from app.api.routes import auth, contacts, conversations, health, rewrites
+from app.api.routes import admin, auth, contacts, conversations, data, health, rewrites
 from app.core.config import Settings, get_settings
 from app.core.errors import DomainError
 
@@ -82,6 +82,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(rewrites.router)
     app.include_router(rewrites.usage_router)
     app.include_router(conversations.router)
+    app.include_router(data.router)
+    app.include_router(admin.router)
 
     # 데모 화면: 빌드 없는 정적 파일 (app/web). React(apps/web)는 뒤로 미뤘다 (decisions 11-09).
     app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")
@@ -89,6 +91,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/", include_in_schema=False)
     async def index() -> FileResponse:
         return FileResponse(WEB_DIR / "index.html")
+
+    # 화면 주소: /admin(운영 대시보드), /privacy·/terms(안내 문서). 파일이 아직 없으면 404.
+    def _page(filename: str):  # noqa: ANN202
+        async def page() -> FileResponse:
+            path = WEB_DIR / filename
+            if not path.is_file():
+                raise HTTPException(
+                    status_code=404, detail={"code": "not_found", "message": "없는 화면입니다."}
+                )
+            return FileResponse(path)
+
+        return page
+
+    for route, filename in (("/admin", "admin.html"), ("/privacy", "privacy.html"), ("/terms", "terms.html")):
+        app.add_api_route(route, _page(filename), methods=["GET"], include_in_schema=False)
 
     return app
 
