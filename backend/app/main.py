@@ -13,7 +13,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.types import Scope
@@ -27,6 +27,8 @@ from app.core.logs import configure_logging
 from app.core.middleware import build_middleware
 from app.core.periodic import housekeeping_loop
 from app.core.ratelimit import RateLimiter
+from app.core.safe_exc import safe_exception_message
+from app.core.text_guard import reject_unstorable_text
 
 log = logging.getLogger(__name__)
 
@@ -52,7 +54,7 @@ async def _warm_up_embedder(container) -> None:  # noqa: ANN001
         await container.embedder.embed_query("워밍업")
         log.info("embedder warmed up: %s", container.embedder.version)
     except Exception as exc:  # noqa: BLE001 - 워밍업 실패는 서비스 장애가 아니다
-        log.warning("embedder warm-up failed: %s", exc)
+        log.warning("embedder warm-up failed: %s", safe_exception_message(exc))
 
 
 async def _resume_graph(container) -> None:  # noqa: ANN001
@@ -62,7 +64,7 @@ async def _resume_graph(container) -> None:  # noqa: ANN001
         if done:
             log.info("graph resume: %s", done)
     except Exception as exc:  # noqa: BLE001
-        log.warning("graph resume failed: %s", exc)
+        log.warning("graph resume failed: %s", safe_exception_message(exc))
 
 
 async def _warn_missing_admins(container) -> None:  # noqa: ANN001
@@ -126,6 +128,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         version="0.1.0",
         lifespan=_lifespan,
         middleware=build_middleware(settings, limiter),
+        # 저장할 수 없는 문자(NUL·짝 없는 대리 문자)는 어느 라우트든 저장 계층에 닿기 전에 422
+        dependencies=[Depends(reject_unstorable_text)],
         **docs,
     )
     app.state.container = build_state(settings)

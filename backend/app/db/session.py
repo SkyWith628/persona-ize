@@ -10,7 +10,8 @@ SessionFactory = async_sessionmaker[AsyncSession]
 def create_engine(database_url: str) -> AsyncEngine:
     if not database_url.startswith("postgresql+asyncpg://"):
         raise ValueError("DATABASE_URL은 postgresql+asyncpg:// 로 시작해야 합니다 (.env.example 참고).")
-    return create_async_engine(database_url, pool_pre_ping=True)
+    # hide_parameters: 오류 메시지와 엔진 로그에 SQL 매개변수(대화 원문·초안·편집본)를 싣지 않는다.
+    return create_async_engine(database_url, pool_pre_ping=True, hide_parameters=True)
 
 
 def create_session_factory(engine: AsyncEngine) -> SessionFactory:

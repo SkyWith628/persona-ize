@@ -318,10 +318,20 @@ def test_token_endpoint_shares_login_throttle_and_hides_user_existence() -> None
     wrong = api.post("/v1/auth/token", json={**CRED, "password": "wrong-password-1"})
     unknown = api.post("/v1/auth/token", json={"username": "nobody_here", "password": "whatever-1"})
     assert wrong.status_code == unknown.status_code == 401 and wrong.json() == unknown.json()
-    blocked = api.post("/v1/auth/token", json=CRED)  # 같은 IP에서 실패 2번 → 맞는 비밀번호여도 잠금
+    # 2026-11-11 검토 뒤: 잠금은 (이름, IP) 쌍 기준이다. 위의 두 실패는 이름이 달라 아직 아무도 안 잠겼다
+    # (예전에는 IP 실패 2번으로 이 IP의 모든 로그인이 막혔다 — 같은 공유기 뒤의 다른 사람까지).
+    # 토큰 발급과 쿠키 로그인은 같은 기록을 쓴다: 쿠키 로그인으로 한 번 더 틀리면 두 경로가 함께 잠긴다
+    assert api.post("/v1/auth/login", json={**CRED, "password": "wrong-password-2"}).status_code == 401
+    blocked = api.post(
+        "/v1/auth/token", json=CRED
+    )  # 같은 곳에서 같은 이름을 2번 틀림 → 맞는 비밀번호여도 잠금
     assert blocked.status_code == 429 and blocked.json()["code"] == "too_many_attempts"
     assert 0 < int(blocked.headers["retry-after"]) <= 15 * 60
     assert api.post("/v1/auth/login", json=CRED).status_code == 429  # 쿠키 로그인과 같은 제한
+    # 없는 이름도 똑같이 잠긴다 (잠금 여부로 가입 여부를 알 수 없다)
+    assert api.post("/v1/auth/token", json={"username": "nobody_here", "password": "x"}).status_code == 401
+    ghost = api.post("/v1/auth/token", json={"username": "nobody_here", "password": "whatever-1"})
+    assert ghost.status_code == 429 and ghost.json()["code"] == "too_many_attempts"
 
 
 def test_cookie_attributes_follow_secure_setting() -> None:

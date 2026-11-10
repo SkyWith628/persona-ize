@@ -118,9 +118,10 @@ def test_login_throttle_by_username_then_recovers_on_success() -> None:
     assert blocked.status_code == 429 and blocked.json()["code"] == "too_many_attempts"
     assert "초 뒤" in blocked.json()["message"]
     assert f"{blocked.headers['retry-after']}초 뒤" in blocked.json()["message"]  # 헤더로도 같은 값을 알린다
-    # 다른 이름은 영향 없음 (IP는 TestClient가 같지만 이름 키가 먼저 걸린 상태라 IP 키도 3회 → 함께 잠긴다)
+    # 같은 IP의 다른 이름은 잠기지 않는다 — 잠금은 (이름, IP) 쌍 기준이다 (2026-11-11 검토 뒤.
+    # 예전에는 IP 실패 3번으로 이 IP의 모든 로그인이 막혀 401과 429를 둘 다 허용했다)
     other = client.post("/v1/auth/login", json={"username": "someone_else", "password": "whatever-1"})
-    assert other.status_code in (401, 429)
+    assert other.status_code == 401
 
 
 def test_login_throttle_unit_and_reset() -> None:

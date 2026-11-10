@@ -43,6 +43,7 @@ SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 BEARER_SCHEME = "bearer"
 AUTH_VIA_BEARER = "bearer"  # request.state.auth_via — 이 요청의 세션을 어디서 찾았는가
 AUTH_VIA_COOKIE = "cookie"
+MAX_STUB_USER_ID_CHARS = 128  # 개발용 X-User-Id 스텁이 받는 길이 (모든 테이블의 user_id 열 길이)
 
 Storage = Literal["memory", "postgres"]
 
@@ -266,8 +267,10 @@ async def current_user_id(
             raise ForbiddenError("CSRF 토큰이 없거나 맞지 않습니다 (X-CSRF-Token).")
         request.state.auth_via = AUTH_VIA_COOKIE
         return str(session.user_id)
-    if state.settings.auth_allow_header_stub and x_user_id and x_user_id.strip():
-        return x_user_id.strip()
+    stub = (x_user_id or "").strip()
+    # user_id 열은 128자다 — 그보다 긴 값은 DB에 넣다가 500이 되므로 스텁으로 받지 않는다.
+    if state.settings.auth_allow_header_stub and stub and len(stub) <= MAX_STUB_USER_ID_CHARS:
+        return stub
     raise HTTPException(status_code=401, detail={"code": "unauthorized", "message": "로그인이 필요합니다."})
 
 

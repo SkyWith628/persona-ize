@@ -8,7 +8,8 @@
 - `BaseHTTPMiddleware`를 쓰지 않는다. 그것은 응답을 가로채 다시 흘려보내는 구조라 백그라운드 작업
   (가져오기 뒤 그래프 수집)·contextvars와 어긋난다. 여기 클래스들은 `send`/`receive`만 얇게 감싼다.
 - ErrorBoundary를 CORS 안쪽에 두어 500 응답에도 요청 id·보안 헤더·CORS 헤더가 똑같이 붙는다.
-- `/healthz`는 Host 검사와 요청 제한을 받지 않는다 (컨테이너·프록시 헬스체크가 내부 주소로 부른다).
+- `/healthz`는 Host 검사를 받지 않고, 쿼리가 없으면 요청 제한도 받지 않는다 (컨테이너·프록시 헬스체크가
+  내부 주소로 부른다). DB·Neo4j에 붙는 `/healthz?deep=true`는 요청 제한에 들어간다.
 - 접근 로그에는 메서드·경로·상태·ms·요청 id만 남긴다. 쿼리 문자열·본문·쿠키·Authorization은 남기지 않는다.
 """
 
@@ -37,6 +38,7 @@ from app.core.http_errors import (
 )
 from app.core.logs import ACCESS_LOGGER, mark_reported, request_id_var
 from app.core.ratelimit import RateLimiter
+from app.core.safe_exc import format_exception_safely
 
 log = logging.getLogger(__name__)
 access_log = logging.getLogger(ACCESS_LOGGER)
@@ -223,12 +225,14 @@ class ErrorBoundaryMiddleware:
             await self.app(scope, receive, tracking_send)
         except Exception as exc:
             request_id = request_id_var.get()
+            # 스택은 값(사용자 입력)을 뺀 모양으로 메시지에 넣는다. exc_info로 넘기면 로그 포매터가 예외
+            # 메시지를 그대로 찍는다 — DB 드라이버는 거기에 SQL 매개변수(대화 원문·초안)를 넣는다.
             log.error(
-                "처리되지 않은 예외 %s: %s %s",
+                "처리되지 않은 예외 %s: %s %s\n%s",
                 type(exc).__name__,
                 _printable(str(scope.get("method", "-")), 16),
                 _printable(scope.get("path", ""), _MAX_LOGGED_PATH),
-                exc_info=exc,
+                format_exception_safely(exc),
                 extra={"request_id": request_id},
             )
             mark_reported(exc)
@@ -336,7 +340,10 @@ class RateLimitMiddleware:
         if scope["type"] == "http":
             client = scope.get("client")
             retry_after = self.limiter.check(
-                scope.get("method", "GET"), scope.get("path", ""), client[0] if client else None
+                scope.get("method", "GET"),
+                scope.get("path", ""),
+                client[0] if client else None,
+                scope.get("query_string", b""),
             )
             if retry_after is not None:
                 response = json_error(

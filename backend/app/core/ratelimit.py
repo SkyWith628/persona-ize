@@ -3,6 +3,7 @@
 - 미끄러지는 1분 창: 어느 60초 구간을 잡아도 허용된 요청 수가 한도를 넘지 않는다. 거절된 요청은 세지 않는다.
 - `RATE_LIMIT_PER_MINUTE`는 `/v1/*` 전체, `RATE_LIMIT_AUTH_PER_MINUTE`는 비밀번호를 확인·저장하는 경로
   (로그인·가입·토큰 발급·비밀번호 변경·계정 삭제)에 추가로 건다. 0이면 그 한도는 끈다.
+  `/healthz`는 쿼리가 없을 때만 세지 않는다. `/healthz?deep=true`는 `/v1/*`와 같은 한도로 센다.
 - 키는 클라이언트 주소다. IPv6는 /64로 묶는다(한 가입자가 주소를 2^64개 쓸 수 있다).
   프록시 뒤에서는 uvicorn `--proxy-headers`가 채운 주소를 쓴다 — 여기서 `X-Forwarded-For`를 직접 읽지 않는다.
 - 창이 지난 키는 창마다 한 번 쓸어 낸다. 그래도 `max_keys`를 넘으면 오래된 키부터 버린다(메모리 상한).
@@ -132,9 +133,16 @@ class RateLimiter:
     def enabled(self) -> bool:
         return self.general is not None or self.auth is not None
 
-    def check(self, method: str, path: str, client_host: str | None) -> int | None:
-        """허용이면 None, 막혔으면 `Retry-After`에 넣을 초(1 이상, 올림)."""
-        if path in self.exempt_paths or not path.startswith(API_PREFIX):
+    def check(self, method: str, path: str, client_host: str | None, query: bytes = b"") -> int | None:
+        """허용이면 None, 막혔으면 `Retry-After`에 넣을 초(1 이상, 올림).
+
+        예외 경로(`/healthz`)는 **쿼리가 없을 때만** 세지 않는다 — 컨테이너·프록시 헬스체크가 그렇게 부른다.
+        `/healthz?deep=true`는 DB·Neo4j에 실제로 붙으므로 `/v1/*` 요청과 같은 한도로 센다.
+        """
+        if path in self.exempt_paths:
+            if not query:
+                return None
+        elif not path.startswith(API_PREFIX):
             return None
         key = client_key(client_host)
         if self.general is not None:

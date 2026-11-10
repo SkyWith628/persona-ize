@@ -238,8 +238,10 @@ def test_rate_limit_general_per_ip_with_retry_after() -> None:
 
     assert other.get("/v1/auth/config").status_code == 200  # 다른 IP는 따로 센다
     # /v1 밖(헬스체크·화면·정적 파일)은 세지도 막지도 않는다
-    for path in ("/healthz", "/healthz?deep=true", "/", "/static/proto.js"):
+    for path in ("/healthz", "/", "/static/proto.js"):
         assert {client.get(path).status_code for _ in range(5)} == {200}, path
+    # 단, DB·Neo4j에 붙는 깊은 헬스체크는 /v1 요청과 같은 한도로 센다 (2026-11-11 검토 — 예전에는 무제한)
+    assert client.get("/healthz?deep=true").status_code == 429
 
     clock.advance(30.2)
     assert client.get("/v1/auth/config").headers["retry-after"] == "30"  # 올림

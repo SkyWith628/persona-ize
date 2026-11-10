@@ -410,11 +410,14 @@ def test_error_shape_500_has_request_id_and_hides_the_cause(caplog: pytest.LogCa
     # 500에도 보안 헤더·캐시 헤더·CORS 헤더가 똑같이 붙는다
     assert r.headers["content-security-policy"] == CONTRACT_CSP and r.headers["cache-control"] == "no-store"
     assert r.headers["access-control-allow-origin"] == "http://localhost:5173"
-    # 원인은 서버 로그에만: 스택과 요청 id
+    # 원인은 서버 로그에만: 스택과 요청 id. 스택은 값 없는 모양으로 메시지에 들어 있고 예외 객체는 달지 않는다
+    # (포매터가 예외 메시지를 그대로 찍지 못하게 — test_platform_review.py의 C2)
     errors = [rec for rec in caplog.records if rec.name == "app.core.middleware"]
-    assert len(errors) == 1 and errors[0].exc_info is not None
+    assert len(errors) == 1 and errors[0].exc_info is None
     assert errors[0].request_id == body["request_id"]
-    assert "RuntimeError" in errors[0].getMessage() and "/v1/boom" in errors[0].getMessage()
+    logged = errors[0].getMessage()
+    assert "RuntimeError" in logged and "/v1/boom" in logged
+    assert "Traceback (most recent call last):" in logged and "in boom" in logged
 
     # 모르는 상태 코드의 HTTPException도 같은 모양 (한국어 detail은 메시지로 쓴다)
     tea = client.get("/v1/teapot")
@@ -443,8 +446,11 @@ def test_server_does_not_log_the_same_traceback_twice() -> None:
         server_log.error("no exception attached")
     finally:
         server_log.removeHandler(handler)
-    assert [r.getMessage() for r in seen] == ["Exception in ASGI application\n", "no exception attached"]
-    assert seen[0].exc_info[1] is fresh
+    # 앱이 남긴 것은 버려지고, 남기지 않은 것은 (값을 뺀 모양으로) 메시지에 들어간다
+    assert [r.getMessage() for r in seen] == [
+        "Exception in ASGI application\nRuntimeError: b",
+        "no exception attached",
+    ]
     assert logging.getLogger("uvicorn.access").disabled  # 접근 로그는 앱이 한 줄로 남긴다
 
 

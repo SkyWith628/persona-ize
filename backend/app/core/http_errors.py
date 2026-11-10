@@ -8,11 +8,15 @@
   "detail":[…FastAPI 목록…]}`. `detail` 항목의 `input`(보낸 값 되돌려 주기)은 짧은 단일 값일 때만 남긴다 —
   FastAPI 기본값은 필드가 빠지면 본문 전체(비밀번호 포함)를 `input`으로 되돌려 준다.
 - 처리되지 않은 예외는 `ErrorBoundaryMiddleware`가 500 `internal_error` + `request_id`로 바꾼다.
+- 429는 모두 `Retry-After`(초)를 싣는다: 요청 제한·로그인 잠금은 창이 풀릴 때까지, 하루 한도
+  (`usage_exceeded`·`budget_exceeded`)는 사용량 날짜가 바뀌는 자정까지.
 """
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime, timedelta, timezone
 from http import HTTPStatus
 from typing import Any
 
@@ -28,6 +32,8 @@ INTERNAL_ERROR_MESSAGE = "서버에서 문제가 생겼습니다. 잠시 뒤에 
 PAYLOAD_TOO_LARGE = "payload_too_large"
 RATE_LIMITED = "rate_limited"
 INVALID_HOST = "invalid_host"
+# 하루 단위 한도의 오류 코드 (429). 응답에 `Retry-After`(사용량 날짜가 바뀔 때까지 남은 초)를 붙인다.
+DAILY_LIMIT_CODES = frozenset({"usage_exceeded", "budget_exceeded"})
 
 # 상태 코드 → (code, 기본 메시지). HTTPException의 detail이 영어 기본 문구이거나 코드가 없을 때 쓴다.
 _STATUS_DEFAULTS: dict[int, tuple[str, str]] = {
@@ -160,8 +166,22 @@ def _is_korean(text: str) -> bool:
     return any("가" <= ch <= "힣" for ch in text)
 
 
-async def domain_error_handler(_: Request, exc: DomainError) -> JSONResponse:
-    return json_error(exc.status_code, exc.code, exc.message, headers=getattr(exc, "headers", None))
+def seconds_until_usage_day_ends(offset_hours: int, now: datetime | None = None) -> int:
+    """사용량 날짜(기본 한국 시간)가 바뀌는 자정까지 남은 초 — 하루 한도가 다시 열리는 때. 1 이상."""
+    zone = timezone(timedelta(hours=offset_hours))
+    local = (now or datetime.now(UTC)).astimezone(zone)
+    next_day = (local + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    return max(math.ceil((next_day - local).total_seconds()), 1)
+
+
+async def domain_error_handler(request: Request, exc: DomainError) -> JSONResponse:
+    headers = dict(getattr(exc, "headers", None) or {})
+    if exc.code in DAILY_LIMIT_CODES and "Retry-After" not in headers:
+        # 하루 한도(사용자·서비스 전체)는 사용량 날짜가 바뀌면 풀린다 — 다른 429처럼 언제 다시 되는지 알린다.
+        settings = getattr(getattr(request.app.state, "container", None), "settings", None)
+        if settings is not None:
+            headers["Retry-After"] = str(seconds_until_usage_day_ends(settings.usage_day_offset_hours))
+    return json_error(exc.status_code, exc.code, exc.message, headers=headers or None)
 
 
 async def payload_too_large_handler(_: Request, exc: PayloadTooLargeError) -> JSONResponse:

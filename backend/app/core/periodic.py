@@ -17,6 +17,8 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from app.core.safe_exc import format_exception_safely
+
 log = logging.getLogger(__name__)
 
 FIRST_DELAY_SECONDS = 60.0  # 시작 직후의 워밍업·마이그레이션과 겹치지 않게 잠깐 기다렸다가 첫 정리
@@ -72,12 +74,13 @@ async def housekeeping_loop(
         try:
             removed = await run_housekeeping_once(state)
             log.info("housekeeping: %s", ", ".join(f"{k}={v}" for k, v in removed.items()))
-        except Exception:  # noqa: BLE001 - 정리 실패가 서버를 내리면 안 된다
-            log.warning("housekeeping failed (다음 주기에 다시 시도)", exc_info=True)
+        except Exception as exc:  # noqa: BLE001 - 정리 실패가 서버를 내리면 안 된다
+            # 스택은 값(사용자 입력)을 뺀 모양으로 남긴다 (core/safe_exc.py)
+            log.warning("housekeeping failed (다음 주기에 다시 시도)\n%s", format_exception_safely(exc))
         try:
             resumed = await resume_graph_once(state)
             if resumed:
                 log.info("graph resume: %s", resumed)
-        except Exception:  # noqa: BLE001 - 수집 실패도 서버를 내리지 않는다
-            log.warning("graph resume failed (다음 주기에 다시 시도)", exc_info=True)
+        except Exception as exc:  # noqa: BLE001 - 수집 실패도 서버를 내리지 않는다
+            log.warning("graph resume failed (다음 주기에 다시 시도)\n%s", format_exception_safely(exc))
         await sleep(interval_seconds)
