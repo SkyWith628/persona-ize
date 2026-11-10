@@ -33,8 +33,17 @@ Neo4j 자격증명은 `.env`의 `NEO4J_USERNAME`/`NEO4J_PASSWORD`. 기본 비밀
   `../docs/deploy.md` 1장(로그인 제한·요청 제한·그래프 수집 잠금이 프로세스 메모리).
 - `HEALTHCHECK`는 `/healthz`를 본다(`pz-healthcheck`, `TRUSTED_HOSTS`가 있으면 그 이름을 Host 헤더로 보낸다).
   배포 점검에는 `curl <주소>/healthz?deep=true` — Postgres·Neo4j에 실제로 붙어 보고 하나라도 실패하면 503.
-- 이미지에 깔린 정확한 패키지 버전: `docker run --rm persona-ize/backend:prod cat /opt/pz/pip-freeze.txt`
-  (버전 고정 파일이 없어 빌드 시점마다 달라질 수 있다).
+- **의존성 버전은 `backend/constraints.txt`로 고정한다**(`pip install -c`). 언제 빌드해도 같은 패키지가 들어간다 —
+  고정하기 전에는 같은 날 만든 두 이미지의 anthropic이 2.6.0과 2.8.0으로 달랐다. CI도 같은 파일로 깐다.
+  이미지에 실제로 깔린 목록: `docker run --rm --entrypoint cat persona-ize/backend:prod /opt/pz/pip-freeze.txt`
+  (Git Bash에서는 앞에 `MSYS_NO_PATHCONV=1`).
+
+### 의존성 버전 올리기
+1. `backend/constraints.txt`에서 올릴 패키지의 줄을 지우거나(그 패키지만 최신으로 깔린다) 버전을 고친다.
+   `pyproject.toml`에 새 패키지를 더했을 때는 그대로 두면 된다(고정에 없는 패키지는 최신으로 깔린다).
+2. 다시 빌드하고 확인한다: `docker compose --profile test build test && make test-docker`, 그리고 배포 리허설
+   (`../docs/deploy.md` 14장).
+3. `make lock` — 파일을 새 이미지의 설치 목록으로 다시 쓴다(머리말 주석은 남는다). 함께 커밋한다.
 
 ### 개발 흐름에서 달라진 점
 `make up`(DB 두 개) + `make dev`(호스트 venv), 또는 `make up-all`(전체 컨테이너)은 그대로다. compose의 `postgres`·

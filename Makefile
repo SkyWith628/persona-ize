@@ -14,7 +14,7 @@ SMOKE_PY ?= python3
 BASE_URL ?= https://localhost
 
 .PHONY: help setup venv up up-all down logs dev migrate import-synthetic demo-prepare test lint eval blind graph-dry-run usage-report graph-reset housekeeping \
-	test-docker lint-docker prod-config prod-up prod-down prod-logs prod-ps backup smoke
+	test-docker lint-docker lock prod-config prod-up prod-down prod-logs prod-ps backup smoke
 
 help:
 	@echo "make setup     - .env.example → .env (최초 1회)"
@@ -38,6 +38,7 @@ help:
 	@echo "호스트 venv를 못 쓰는 PC (컨테이너에서, .env를 넣지 않는다 — 실제 DB·API를 건드리지 않음)"
 	@echo "make test-docker [ARGS='tests/test_auth.py -k login'] - 백엔드 테스트 (Postgres 통합 테스트 포함)"
 	@echo "make lint-docker   - ruff (저장소 전체)"
+	@echo "make lock          - 의존성 버전 고정 파일(backend/constraints.txt)을 운영 이미지의 설치 목록으로 갱신"
 	@echo ""
 	@echo "운영 (docs/deploy.md, 값은 .env.production — 다른 파일은 PROD_ENV=...)"
 	@echo "make prod-config   - docker-compose.prod.yml + env 파일 검증 (빠진 필수 값이 있으면 실패)"
@@ -112,6 +113,14 @@ test-docker:
 # lint는 저장소 전체를 읽기 전용으로 붙여 CI와 같은 범위(문서의 코드 블록 포함)를 본다. ruff는 .env를 읽지 않는다.
 lint-docker:
 	docker compose --profile test run --rm --no-deps -v "$(CURDIR):/lint:ro" -w /lint test sh -c "ruff check . && ruff format --check ."
+
+# 의존성 버전 고정 파일을 지금 운영 이미지에 실제로 깔린 목록으로 다시 쓴다 (올리는 절차는 backend/constraints.txt 머리말).
+# 머리말 주석은 남기고 목록만 바꾼다.
+lock:
+	@grep -E '^#' backend/constraints.txt > backend/constraints.txt.new
+	@docker run --rm --entrypoint cat $(or $(BACKEND_IMAGE),persona-ize/backend:prod) /opt/pz/pip-freeze.txt >> backend/constraints.txt.new
+	@mv backend/constraints.txt.new backend/constraints.txt
+	@echo "backend/constraints.txt 갱신: $$(grep -cvE '^#' backend/constraints.txt)개 패키지"
 
 # ---- 운영 (docker-compose.prod.yml). 안내는 docs/deploy.md ----
 prod-config:

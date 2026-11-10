@@ -45,9 +45,17 @@ PY
 # ---- deps: 의존성 + 임베딩 모델 (무겁고 드물게 바뀐다) ----
 FROM base AS deps
 # torch는 CPU 휠을 먼저 깐다 — 기본 인덱스는 CUDA 휠(수 GB)을 끌어온다.
-RUN pip install --index-url https://download.pytorch.org/whl/cpu torch
+#
+# 버전 고정: constraints.txt에 적힌 버전으로만 깐다 — 언제 빌드해도 같은 패키지가 들어간다.
+# (줄을 지운 패키지는 최신으로 깔린다. 올리는 절차는 constraints.txt 머리말.)
+# torch 단계는 torch 줄만 고정으로 쓴다: CPU 휠 인덱스에는 다른 패키지의 고정 버전이 없을 수 있다
+# (나머지는 아래 단계가 고정 버전으로 맞춘다).
+COPY constraints.txt /opt/pz/constraints.txt
+RUN (grep -iE '^torch==' /opt/pz/constraints.txt > /opt/pz/torch-constraint.txt || true) \
+    && pip install --index-url https://download.pytorch.org/whl/cpu -c /opt/pz/torch-constraint.txt torch
 COPY --from=requirements /requirements/ /opt/pz/requirements/
-RUN pip install -r /opt/pz/requirements/runtime.txt \
+# pip-freeze.txt: 실제로 깔린 목록. `make lock`이 이것을 constraints.txt로 내보낸다.
+RUN pip install -r /opt/pz/requirements/runtime.txt -c /opt/pz/constraints.txt \
     && pip freeze > /opt/pz/pip-freeze.txt
 
 # e5 임베딩 모델을 이미지에 넣는다. 실제 로더(SentenceTransformer)로 한 번 올려서 받으므로 런타임이 찾는 파일이
@@ -96,7 +104,7 @@ EXPOSE 8000
 # root로 둔다 — 저장소를 바인드 마운트해 쓰는 용도라 캐시 파일을 쓸 수 있어야 한다.
 # 이 이미지에 .env를 넣어 돌리지 않는다(docker-compose.yml의 test 서비스 주석 참고).
 FROM runtime AS dev
-RUN pip install -r /opt/pz/requirements/dev.txt
+RUN pip install -r /opt/pz/requirements/dev.txt -c /opt/pz/constraints.txt
 COPY tests ./tests
 CMD ["pytest", "-q"]
 
