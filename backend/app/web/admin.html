@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex, nofollow" />
+  <title>운영 대시보드 — Persona_ize</title>
+  <link rel="stylesheet" href="/static/css/tokens.css" />
+  <link rel="stylesheet" href="/static/css/admin.css" />
+</head>
+<body>
+  <a class="skip" href="#main">본문으로 건너뛰기</a>
+
+  <header class="top">
+    <p class="brand"><strong>Persona_ize</strong> <span class="tag">관리자</span></p>
+    <p class="top-right">
+      <span id="who" class="muted"></span>
+      <a href="/">서비스 화면으로</a>
+    </p>
+  </header>
+
+  <main id="main" tabindex="-1">
+    <noscript><p class="gate">이 화면은 자바스크립트를 켜야 볼 수 있습니다.</p></noscript>
+
+    <!-- 처음 불러올 때와 오류 안내. 화면 낭독기가 읽도록 status로 둔다. -->
+    <p id="status" class="status" role="status" aria-live="polite">불러오는 중입니다…</p>
+
+    <!-- 로그인 필요(401) · 관리자 아님(403) · 인메모리 저장소(503) 안내 -->
+    <section id="gate" class="gate" aria-labelledby="gate-title" hidden>
+      <h1 id="gate-title"></h1>
+      <p id="gate-text"></p>
+      <p><a id="gate-link" class="btn" href="/"></a></p>
+    </section>
+
+    <div id="dash" hidden>
+      <div class="toolbar">
+        <h1>운영 대시보드</h1>
+        <div class="toolbar-right">
+          <div class="chips" role="group" aria-label="기간">
+            <button type="button" class="chip" data-days="1" aria-pressed="false">오늘</button>
+            <button type="button" class="chip" data-days="7" aria-pressed="true">7일</button>
+            <button type="button" class="chip" data-days="30" aria-pressed="false">30일</button>
+          </div>
+          <button type="button" id="refresh" class="btn ghost">새로 고침</button>
+        </div>
+      </div>
+      <p class="range muted"><span id="range-text"></span> <span id="updated"></span></p>
+
+      <section aria-labelledby="h-kpi">
+        <h2 id="h-kpi" class="sr-only">핵심 지표</h2>
+        <ul id="kpis" class="kpis"></ul>
+      </section>
+
+      <section class="panel" aria-labelledby="h-daily">
+        <h2 id="h-daily">일별 첨삭 요청</h2>
+        <div id="daily"></div>
+      </section>
+
+      <div class="grid">
+        <section class="panel" aria-labelledby="h-reasons">
+          <h2 id="h-reasons">원문 유지 사유</h2>
+          <div id="reasons"></div>
+        </section>
+        <section class="panel" aria-labelledby="h-mix">
+          <h2 id="h-mix">조건·채널 분포</h2>
+          <div id="mix"></div>
+        </section>
+        <section class="panel" aria-labelledby="h-cost">
+          <h2 id="h-cost">비용·사용량</h2>
+          <div id="cost"></div>
+        </section>
+        <section class="panel" aria-labelledby="h-ingest">
+          <h2 id="h-ingest">수집 작업 상태</h2>
+          <div id="ingest"></div>
+        </section>
+      </div>
+
+      <section class="panel note" aria-labelledby="h-privacy">
+        <h2 id="h-privacy">개인정보 원칙</h2>
+        <ul class="bullets">
+          <li>이 화면에는 대화 원문, 첨삭한 문장, 사용자가 직접 적은 사유가 나오지 않습니다. 사유는 선택형 항목만 집계합니다.</li>
+          <li>사용자 id는 <code>u_8f2…a1</code>처럼 줄여서 보여 줍니다. 작업 오류는 내용이 아니라 종류만 보여 줍니다.</li>
+          <li>관리자가 이 화면을 열 때마다 맨 아래 ‘관리자 접근 기록’에 남습니다.</li>
+        </ul>
+      </section>
+
+      <section class="panel" aria-labelledby="h-feedback">
+        <h2 id="h-feedback">최근 거절 피드백</h2>
+        <div id="t-feedback"></div>
+      </section>
+
+      <section class="panel" aria-labelledby="h-jobs">
+        <h2 id="h-jobs">최근 가져오기 작업</h2>
+        <div id="t-jobs"></div>
+      </section>
+
+      <section class="panel" aria-labelledby="h-users">
+        <h2 id="h-users">사용자</h2>
+        <div id="t-users"></div>
+        <div class="pager">
+          <button type="button" id="users-prev" class="btn ghost" disabled>이전</button>
+          <span id="users-page" class="muted" aria-live="polite"></span>
+          <button type="button" id="users-next" class="btn ghost" disabled>다음</button>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="h-access">
+        <h2 id="h-access">관리자 접근 기록</h2>
+        <div id="t-access"></div>
+      </section>
+    </div>
+  </main>
+
+  <script type="module" src="/static/js/admin.js"></script>
+</body>
+</html>
