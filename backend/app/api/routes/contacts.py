@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 from uuid import UUID
 
@@ -20,6 +21,7 @@ from app.api.schemas import (
 from app.core.errors import InvalidInputError, NotFoundError
 from app.domain.contact import Contact
 from app.domain.persona import PersonaVersion, default_persona
+from app.domain.usage import QuotaExceededError
 
 router = APIRouter(prefix="/v1/contacts", tags=["contacts"])
 
@@ -50,6 +52,13 @@ async def create_contact(body: ContactCreate, user_id: UserId, state: State) -> 
     alias = body.alias.strip()
     if not alias:
         raise InvalidInputError("상대 이름(별칭)이 비어 있습니다.")
+    limit = state.settings.max_contacts_per_user
+    owned = await state.contacts.count(user_id)
+    if owned >= limit:
+        raise QuotaExceededError(
+            f"상대는 계정당 {limit:,}명까지 만들 수 있습니다 (지금 {owned:,}명). "
+            "쓰지 않는 상대를 지운 뒤 다시 시도하세요."
+        )
     c = await state.contacts.create(user_id, alias, body.relationship_type)
     if body.use_default_persona:
         pv = await state.contacts.save_persona(user_id, c.id, default_persona(c.relationship_type), 0)
@@ -109,6 +118,8 @@ async def suggest_persona_settings(contact_id: UUID, user_id: UserId, state: Sta
     """이 상대에게 보낸 내 과거 메시지에서 문체 수치를 규칙으로 추정한다 (모델 호출 없음, 저장하지 않음).
 
     추정하지 않는 항목은 저장된 페르소나(없으면 관계 유형 기본값)의 값이다. 성격은 추정하지 않는다.
+    내 메시지가 5건보다 적으면 추정하지 않는다: `settings`는 null, `signals`는 빈 목록이고
+    `based_on_messages`에 본 메시지 수가 나온다.
     """
     contact = await state.contacts.get(user_id, contact_id)
     mine: list[tuple[datetime, str]] = []
@@ -122,7 +133,8 @@ async def suggest_persona_settings(contact_id: UUID, user_id: UserId, state: Sta
     texts = [text for _, text in mine][-MAX_MESSAGES:]  # 최근 것부터 MAX_MESSAGES건만 본다
     current = await state.contacts.latest_persona(user_id, contact.id)
     base = current.settings if current else default_persona(contact.relationship_type)
-    settings, signals = suggest_persona(texts, base, contact.alias)
+    # 메시지 500건에 정규식을 여러 번 돌린다 — 이벤트 루프 밖에서 계산한다.
+    settings, signals = await asyncio.to_thread(suggest_persona, texts, base, contact.alias)
     return PersonaSuggestionOut(
         based_on_messages=len(texts),
         settings=settings,

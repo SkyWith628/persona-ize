@@ -337,7 +337,7 @@ async def test_graph_caps_count_from_postgres(repos) -> None:  # noqa: ANN001
     ingest = GraphIngestService(store, convs, contacts, user_message_cap=2)
     assert await ingest.remaining(a) == (2, "user_cap")
     assert await ingest.ingest_user(a, job.id) == 2
-    assert [x["name"] for x in store.added] == ["c1:m1", "c1:m2"]  # 시각 순으로 예산만큼
+    assert [x["name"] for x in store.added] == ["c1:m2", "c1:m3"]  # 가장 최근 것을 예산만큼, 시각 순으로
     limited = await convs.get_job(a, job.id)
     assert (limited.graph_status, limited.graph_episodes, limited.graph_error) == ("limited", 2, "user_cap")
     assert await ingest.is_limited(a) is True
@@ -348,6 +348,88 @@ async def test_graph_caps_count_from_postgres(repos) -> None:  # noqa: ANN001
     # 상한이 없는 서비스(스크립트·상한 0)는 남은 것을 마저 넣는다
     assert await GraphIngestService(store, convs, contacts).ingest_user(a) == 1
     assert (await convs.get_job(a, job.id)).graph_status == "completed"
+
+
+async def test_graph_usage_counter_survives_deletion_on_postgres(repos, pg_url: str) -> None:  # noqa: ANN001
+    """그래프에 넣은 양은 usage_counters.graph_episodes(사용자·일)에 남는다 — 대화를 지워도 줄지 않는다."""
+    contacts, _, convs, usage, _ = repos
+    a, b = _user(), _user()
+    boss = await contacts.create(a, "박지현", "superior")
+    store = FakeGraphStore()
+    ingest = GraphIngestService(store, convs, contacts, user_message_cap=6)
+    day, _ = ingest._today()
+    before_all = await convs.graph_usage(day)
+
+    async def import_room(key: str, texts: list[str]):  # noqa: ANN202
+        conv = await convs.create(a, boss.id, key, "kakao", key, "김민수")
+        await convs.add_messages(
+            a,
+            conv.id,
+            [
+                NewMessage(
+                    source_key=f"m{i}",
+                    speaker_role="me",
+                    sent_at=datetime(2026, 10, 5, 0, i, tzinfo=UTC),
+                    text=text,
+                )
+                for i, text in enumerate(texts)
+            ],
+        )
+        return conv
+
+    # 긴 메시지는 더 센다: 2,500자 = 3, 짧은 것 = 1 (SQL의 합계가 파이썬 쪽 식과 같아야 한다)
+    c1 = await import_room("c1", ["짧은 말", "가" * 2500, "나" * 999])
+    assert await ingest.ingest_user(a) == 3
+    assert await convs.graph_units_in_graph(a) == 5
+    assert await convs.graph_usage(day, a) == 5
+    assert await convs.graph_usage(day) == before_all + 5
+    assert (await usage.get(a, day)).graph_episodes == 5  # 첨삭 사용량과 같은 행에 있다
+    assert await ingest.remaining(a) == (1, "user_cap")
+
+    # 지우면 그래프에 든 양은 0이 되지만 오늘 넣은 양은 그대로다
+    await convs.delete_conversation(a, c1.id)
+    assert await convs.graph_units_in_graph(a) == 0
+    assert await convs.graph_usage(day, a) == 5
+    assert await ingest.remaining(a) == (1, "user_cap")
+    c2 = await import_room("c2", ["다시 올린 말 하나", "다시 올린 말 둘", "다시 올린 말 셋"])
+    assert await ingest.ingest_user(a) == 1  # 남은 1만큼, 가장 최근 것
+    assert [x["name"] for x in store.added][-1] == "c2:m2"
+    assert await ingest.remaining(a) == (0, "user_cap")
+
+    # 예약을 돌려놓기(실패한 에피소드): 음수로 더하면 줄고, 0 아래로는 내려가지 않는다
+    await convs.add_graph_usage(b, day, 3)
+    await convs.add_graph_usage(b, day, -1)
+    assert await convs.graph_usage(day, b) == 2
+    await convs.add_graph_usage(b, day, -10)
+    assert await convs.graph_usage(day, b) == 0
+    # 첨삭 카운터와 서로 건드리지 않는다
+    await usage.reserve_rewrite(a, day, 10)
+    await usage.add_tokens(a, day, 7, 3)
+    row = await usage.get(a, day)
+    assert (row.rewrites, row.input_tokens, row.output_tokens, row.graph_episodes) == (1, 7, 3, 6)
+
+    # 상한 때문에 남은 작업 정리: 미수집 메시지가 남은 방의 pending/running 작업만 limited가 된다
+    def job_for(conv_id: uuid.UUID, status: str) -> ImportJob:
+        return ImportJob(
+            id=uuid.uuid4(),
+            user_id=a,
+            conversation_id=conv_id,
+            source_hash=uuid.uuid4().hex * 2,
+            status="completed",
+            graph_status=status,  # type: ignore[arg-type]
+            created_at=datetime.now(UTC),
+        )
+
+    c3 = await import_room("c3", ["전부 들어간 방"])
+    await convs.mark_graph_ingested(a, [m.id for m in await convs.list_messages(a, c3.id)], datetime.now(UTC))
+    stale = await convs.save_job(job_for(c2.id, "running"))
+    waiting = await convs.save_job(job_for(c2.id, "pending"))
+    failed = await convs.save_job(job_for(c2.id, "failed"))
+    done_room = await convs.save_job(job_for(c3.id, "running"))
+    assert await convs.limit_stale_graph_jobs(a, "user_cap") == 2
+    states = [(await convs.get_job(a, j.id)).graph_status for j in (stale, waiting, failed, done_room)]
+    assert states == ["limited", "limited", "failed", "running"]
+    assert (await convs.get_job(a, stale.id)).graph_error == "user_cap"
 
 
 def test_data_api_flow_on_postgres(pg_url: str) -> None:
@@ -461,7 +543,8 @@ def test_data_api_flow_on_postgres(pg_url: str) -> None:
         assert client.get("/v1/data/summary", headers=stranger).json()["totals"]["contacts"] == 0
 
         suggestion = client.get(f"/v1/contacts/{cid}/persona/suggestion", headers=h).json()
-        assert suggestion["based_on_messages"] == 3 and suggestion["settings"]["address_term"] == "팀장님"
+        # 내 메시지 3건: 표본이 작아 추정하지 않는다 (집계 쿼리가 내 메시지만 세는지는 여기서 본다)
+        assert suggestion == {"based_on_messages": 3, "settings": None, "signals": []}
 
         export = client.get("/v1/export", headers=h)
         assert export.status_code == 200 and "attachment" in export.headers["content-disposition"]
@@ -477,7 +560,11 @@ def test_data_api_flow_on_postgres(pg_url: str) -> None:
 
         # 대화방을 지우면 근거 원문도 사라지고, 다음 auto는 B로 돌아간다
         assert client.delete(f"/v1/conversations/{conv_id}", headers=h).status_code == 200
-        assert client.get(f"/v1/rewrites/{rid}/evidence", headers=h).json() == {"items": [], "missing": 1}
+        assert client.get(f"/v1/rewrites/{rid}/evidence", headers=h).json() == {
+            "items": [],
+            "missing": 1,
+            "refs_recorded": True,
+        }
         back = client.post(
             "/v1/rewrites", json={"contact_id": cid, "draft_text": DRAFT, "condition": "auto"}, headers=h
         )

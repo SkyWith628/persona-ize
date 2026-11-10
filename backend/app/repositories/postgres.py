@@ -18,7 +18,7 @@ from app.db.session import SessionFactory
 from app.domain.contact import Contact
 from app.domain.persona import PersonaSettings, PersonaVersion, RelationshipType
 from app.domain.rewrite import Feedback, RewriteRecord, RewriteResult
-from app.repositories.postgres_conversations import PostgresConversationRepo
+from app.repositories.postgres_conversations import PostgresConversationRepo, _gone
 
 __all__ = ["PostgresContactRepo", "PostgresConversationRepo", "PostgresRewriteRepo"]
 
@@ -34,6 +34,7 @@ def _contact(row: ContactRow) -> Contact:
         alias=row.alias,
         relationship_type=row.relationship_type,  # type: ignore[arg-type]
         created_at=row.created_at,
+        graph_name=row.graph_name,
     )
 
 
@@ -201,6 +202,18 @@ class PostgresContactRepo:
             rows = (await s.execute(stmt)).all()
         return {contact_id: int(version) for contact_id, version in rows}
 
+    async def count(self, user_id: str) -> int:
+        stmt = select(func.count()).select_from(ContactRow).where(ContactRow.user_id == user_id)
+        async with self._sessions() as s:
+            return int(await s.scalar(stmt) or 0)
+
+    async def remember_graph_name(self, user_id: str, contact_id: UUID, name: str) -> Contact:
+        async with self._sessions.begin() as s:
+            row = await self._owned_contact(s, user_id, contact_id)
+            if row.graph_name is None:
+                row.graph_name = name
+        return _contact(row)
+
     @staticmethod
     async def _owned_contact(s, user_id: str, contact_id: UUID) -> ContactRow:  # noqa: ANN001
         row = await s.scalar(
@@ -273,6 +286,8 @@ class PostgresRewriteRepo:
             async with self._sessions.begin() as s:
                 s.add(req)
         except IntegrityError as exc:
+            if _gone(exc):  # 첨삭하는 사이에 상대(또는 계정)가 지워졌다
+                raise NotFoundError("상대를 찾을 수 없습니다.") from exc
             # 서비스가 먼저 조회하지만, 같은 키의 동시 요청은 유일 제약에서 걸린다.
             raise VersionConflictError("같은 Idempotency-Key 요청이 동시에 처리되었습니다.") from exc
         return _record(req)

@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from typing import Any
 
 from fastapi import Request
@@ -35,15 +36,34 @@ _SUSPECT_BYTES = re.compile(
 )
 
 
-def find_unstorable(value: Any) -> str | None:
+# 가져오기의 **대화 본문**은 예외다: 실제 내보내기 파일에는 깨진 글자가 섞여 있을 수 있고, 파일 하나를 통째로
+# 거절하면 사용자가 손쓸 방법이 없다. 그 본문은 가져오기 쪽(`app/importers`,
+# `ImportService`)이 `?`로 바꿔 읽는다.
+# 같은 요청의 다른 칸(메시지 id, 화자 이름, 형식 등)은 여기서 그대로 막는다.
+_MESSAGE_TEXT = re.compile(r"messages\.\d+\.text")
+
+
+def _import_text_exemption(path: str) -> Callable[[str], bool] | None:
+    """이 경로의 요청에서 검사를 건너뛸 위치를 고르는 함수. 가져오기 경로가 아니면 None."""
+    if path == "/v1/imports/parse" or path.endswith("/imports/raw"):
+        return lambda location: location == "text"
+    if path.startswith("/v1/conversations/") and path.endswith("/imports"):
+        return lambda location: _MESSAGE_TEXT.fullmatch(location) is not None
+    return None
+
+
+def find_unstorable(value: Any, skip: Callable[[str], bool] | None = None) -> str | None:
     """JSON에서 온 값(dict·list·str…)을 훑어 문제 문자가 든 곳의 위치를 돌려준다. 없으면 None.
 
     위치는 `messages.3.text` 꼴이다. 재귀 없이 돈다 — 깊게 겹친 본문이 호출 스택을 넘기지 않게.
+    `skip(위치)`가 참인 문자열은 보지 않는다(가져오기의 대화 본문).
     """
     stack: list[tuple[Any, str]] = [(value, "")]
     while stack:
         current, path = stack.pop()
         if isinstance(current, str):
+            if skip is not None and skip(path):
+                continue
             if _UNSTORABLE.search(current):
                 return path or "본문"
         elif isinstance(current, dict):
@@ -70,6 +90,6 @@ async def reject_unstorable_text(request: Request) -> None:
         data = await request.json()
     except Exception:  # noqa: BLE001 - JSON이 아니거나 깨진 본문은 라우트의 본문 검증이 거절한다
         return
-    location = find_unstorable(data)
+    location = find_unstorable(data, _import_text_exemption(request.scope.get("path", "")))
     if location is not None:
         raise InvalidInputError(f"{MESSAGE}: {location[:MAX_LOC_CHARS]}")

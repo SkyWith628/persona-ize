@@ -7,6 +7,13 @@
 - 호칭(address_term): 메시지 첫머리에 반복해서 나오는 부르는 말 ('팀장님,' '유진아').
 직접성·길이는 겉모습으로 믿을 만하게 재기 어려워 추정하지 않는다 (기준값 그대로).
 
+근거가 약하면 말하지 않는다 (2026-11-11 검토)
+- 내 메시지가 `MIN_MESSAGES`건보다 적으면 추정하지 않는다 (`settings`는 None).
+- 근거(signal)가 없는 항목은 기준값을 건드리지 않는다. 이모지·구어 표지가 **한 번도 없었다**는 것은
+  메시지가 `ABSENCE_MIN_MESSAGES`건 이상일 때만 근거로 삼는다 — 몇 건에 없었다고 저장된 값을
+  '없음'·'거리감'으로 덮어쓰지 않는다. 종결 어미를 판단할 수 있는 메시지가 3건 미만이면 격식도
+  추정하지 않는다.
+
 결과는 제안일 뿐이다. 저장하지 않으며 사용자가 화면에서 확인하고 고쳐서 저장한다.
 """
 
@@ -20,6 +27,9 @@ from typing import Any
 from app.domain.persona import PersonaSettings
 
 MAX_MESSAGES = 500  # 최근 것부터 이만큼만 본다
+MIN_MESSAGES = 5  # 이보다 적으면 추정하지 않는다
+ABSENCE_MIN_MESSAGES = 20  # '한 번도 안 썼다'를 근거로 삼는 데 필요한 메시지 수
+MIN_ENDINGS = 3  # 격식을 말하는 데 필요한, 종결 어미를 판단할 수 있는 메시지 수
 TAIL_CHARS = 60  # 종결 어미를 찾을 때 보는 마지막 줄의 끝부분 길이
 
 _TRAILING = re.compile(r"[\s.!?~…,;:)(\]\[\"'^*♡♥ㅋㅎㅠㅜ\U0001F300-\U0001FAFF\u2600-\u27BF]+$")
@@ -75,7 +85,7 @@ def _ending(text: str) -> str | None:
 def _formality(texts: list[str]) -> Signal | None:
     kinds = Counter(k for k in (_ending(t) for t in texts) if k)
     total = sum(kinds.values())
-    if total == 0:
+    if total < MIN_ENDINGS:
         return None
     hapsyo, haeyo, banmal = kinds["hapsyo"], kinds["haeyo"], kinds["banmal"]
     polite = hapsyo + haeyo
@@ -94,17 +104,21 @@ def _formality(texts: list[str]) -> Signal | None:
     return Signal("formality", 1, f"내 메시지 {total}개 중 {banmal}개가 반말")
 
 
-def _emoji(texts: list[str]) -> Signal:
+def _emoji(texts: list[str]) -> Signal | None:
     n = len(texts)
     with_emoji = sum(1 for t in texts if _EMOJI.search(t))
+    if with_emoji == 0 and n < ABSENCE_MIN_MESSAGES:
+        return None  # 몇 건에 없었다는 것만으로 '없음'이라 하지 않는다
     share = with_emoji / n
     value = "often" if share >= 0.2 else "rare" if with_emoji and share >= 0.03 else "none"
     return Signal("emoji", value, f"내 메시지 {n}개 중 {with_emoji}개에 이모지")
 
 
-def _friendliness(texts: list[str]) -> Signal:
+def _friendliness(texts: list[str]) -> Signal | None:
     n = len(texts)
     marked = sum(1 for t in texts if _CASUAL_MARK.search(t) or _EMOJI.search(t))
+    if marked == 0 and n < ABSENCE_MIN_MESSAGES:
+        return None
     share = marked / n
     value = 5 if share >= 0.5 else 4 if share >= 0.25 else 3 if share >= 0.08 else 2
     return Signal("friendliness", value, f"내 메시지 {n}개 중 {marked}개에 ㅋㅋ·ㅠㅠ·물결·느낌표·이모지")
@@ -143,12 +157,13 @@ def _address_term(texts: list[str], alias: str) -> Signal | None:
 def suggest_persona(
     my_texts: list[str], base: PersonaSettings, contact_alias: str
 ) -> tuple[PersonaSettings | None, list[Signal]]:
-    """내 메시지(시간 순)에서 추정한 설정과 근거. 메시지가 없으면 (None, []).
+    """내 메시지(시간 순)에서 추정한 설정과 근거. 메시지가 `MIN_MESSAGES`건보다 적으면 (None, []).
 
     `base`는 추정하지 않는 항목의 값이다 (저장된 페르소나가 있으면 그것, 없으면 관계 유형 기본값).
+    근거가 없는 항목은 `base` 그대로다. CPU 작업이다 — API는 스레드에서 부른다.
     """
     texts = [t for t in my_texts if t and t.strip()][-MAX_MESSAGES:]
-    if not texts:
+    if len(texts) < MIN_MESSAGES:
         return None, []
     signals = [
         s

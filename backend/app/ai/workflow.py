@@ -12,12 +12,13 @@ from dataclasses import dataclass
 
 from app.ai.intent import classify_intent
 from app.ai.preserve import extract_preserved_items
-from app.ai.prompt import build_prompt, build_regenerate_suffix, today_kst
+from app.ai.prompt import build_prompt, build_regenerate_suffix, fit_examples, today_kst
 from app.ai.providers.base import LLMProvider
 from app.ai.retrieval.base import Retriever
 from app.ai.validation import validate_output
 from app.core.errors import ModelRefusalError, ModelUnavailableError
 from app.domain.contact import Contact
+from app.domain.conversation import exception_kind
 from app.domain.persona import PersonaSettings, apply_adjust
 from app.domain.rewrite import (
     AttemptRecord,
@@ -29,6 +30,7 @@ from app.domain.rewrite import (
     ValidationReport,
     Violation,
 )
+from app.domain.usage import estimate_tokens
 
 log = logging.getLogger(__name__)
 
@@ -55,7 +57,9 @@ class RewriteWorkflow:
         persona_used = None if inp.condition == "A" else apply_adjust(persona, inp.adjust)
 
         retriever = self.retrievers[inp.condition]
-        retrieved = await self._retrieve_safely(retriever, inp)
+        # 검색 결과는 프롬프트 예산에 맞게 줄여서 쓴다 (예시 하나·전체 글자 상한).
+        # 검증과 근거 참조도 줄인 목록 기준이다.
+        retrieved = fit_examples(await self._retrieve_safely(retriever, inp))
 
         prompt = build_prompt(
             version=self.prompt_version,
@@ -86,6 +90,7 @@ class RewriteWorkflow:
             except ModelRefusalError as exc:
                 # 거절은 장애가 아니다. 위반처럼 기록하고 재생성 1회를 시도한다 (11-08 E003).
                 log.info("model refusal attempt=%d", attempts)
+                self._count_unmeasured(usage, prompt.system, user_prompt)
                 last_report = ValidationReport(
                     passed=False, violations=[Violation(check="refusal", detail=exc.message)]
                 )
@@ -101,6 +106,7 @@ class RewriteWorkflow:
                 continue
             except ModelUnavailableError as exc:
                 log.info("model unavailable attempt=%d: %s", attempts, exc.message)
+                self._count_unmeasured(usage, prompt.system, user_prompt)
                 last_report = ValidationReport(
                     passed=False, violations=[Violation(check="empty", detail=exc.message)]
                 )
@@ -177,6 +183,18 @@ class RewriteWorkflow:
         )
 
     @staticmethod
+    def _count_unmeasured(usage: dict[str, int], system: str, user: str) -> None:
+        """응답 없이 끝난 호출(거절·장애·시간 초과)의 입력을 글자 수로 어림해 남긴다.
+
+        이런 호출도 프롬프트는 보냈다(과금될 수 있다). 0으로 두면 실패하는 호출을 되풀이해도
+        토큰 한도에 닿지 않는다. 측정값(`input_tokens`)과 섞지 않으려고
+        `estimated_input_tokens`에 따로 쌓는다.
+        """
+        usage["estimated_input_tokens"] = usage.get("estimated_input_tokens", 0) + estimate_tokens(
+            len(system) + len(user)
+        )
+
+    @staticmethod
     async def _retrieve_safely(retriever: Retriever, inp: RewriteInput) -> list[RetrievedExample]:
         """검색 장애는 이력 미사용으로 축소 동작한다 (project-design §9).
 
@@ -191,5 +209,5 @@ class RewriteWorkflow:
                 as_of=inp.as_of,
             )
         except Exception as exc:  # noqa: BLE001 - 검색 계층의 어떤 장애든 축소 동작
-            log.warning("retrieval failed, continuing without history: %s", exc)
+            log.warning("retrieval failed, continuing without history: %s", exception_kind(exc))
             return []

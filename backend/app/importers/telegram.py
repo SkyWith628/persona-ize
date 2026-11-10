@@ -5,7 +5,8 @@
   목록(`ParsedImport.chats`)만 돌려주고, `chat_id`로 하나를 고르게 한다. 메시지가 있는 대화가
   하나뿐이면 그것을 쓴다.
 - 메시지: `type`이 `message`인 것만. `service`(입·퇴장, 통화 등)와 본문 없는 미디어, 전달받은 메시지
-  (`forwarded_from` — 화자가 쓴 글이 아니다)는 시스템 줄로 센다.
+  (`forwarded_from` 키가 있는 것 — 화자가 쓴 글이 아니다. 값이 null이어도 전달이다)는 시스템 줄로 센다.
+- 계정 전체 내보내기에 메시지가 든 대화가 하나도 없으면 422.
 - 시각: `date_unixtime`이 있으면 그것(UTC), 없으면 `date`(현지 시각)에 `tz_offset_minutes`를 붙인다.
 - 본문: 문자열, 또는 문자열·`{"type": "bold", "text": "…"}` 조각의 배열 → 이어 붙인다.
 - id: 텔레그램 메시지 id(`tg<id>`). 같은 대화를 다시 내보내 올려도 겹치는 메시지는 건너뛴다.
@@ -111,13 +112,17 @@ def parse_telegram(data: Any, tz: timezone, chat_id: str | None = None) -> Parse
             if len(with_messages) == 1:
                 chosen = with_messages[0]
         if chosen is None:
-            parsed = ParsedImport(format="telegram", chats=choices)
-            if not choices:
-                parsed.problem("내보내기 파일에 대화가 없습니다.")
-            else:
-                parsed.problem(
-                    f"계정 전체 내보내기입니다. 대화 {len(choices)}개 중 가져올 하나를 골라 주세요 (chat_id)."
+            if not any(ch.messages > 0 for ch in choices):
+                # 고를 것이 없다 — 빈 목록을 돌려주면 화면이 '대화를 고르세요'에서 멈춘다.
+                raise InvalidInputError(
+                    "내보내기 파일에 가져올 대화가 없습니다"
+                    + (f" (대화 {len(choices)}개에 메시지가 없습니다)." if choices else ".")
+                    + " 텔레그램 Desktop의 '채팅 기록 내보내기'에서 형식을 JSON으로 골라 다시 내보내 주세요."
                 )
+            parsed = ParsedImport(format="telegram", chats=choices)
+            parsed.problem(
+                f"계정 전체 내보내기입니다. 대화 {len(choices)}개 중 가져올 하나를 골라 주세요 (chat_id)."
+            )
             return parsed
         return _parse_chat(chosen, tz, me_name)
     if not isinstance(data.get("messages"), list):
@@ -132,7 +137,8 @@ def _parse_chat(chat: dict[str, Any], tz: timezone, me_name: str | None) -> Pars
         if not isinstance(m, dict):
             parsed.skipped_lines += 1
             continue
-        if m.get("type") != "message" or m.get("forwarded_from"):
+        # 전달받은 메시지는 키가 있는지로 본다: 보낸 사람이 계정을 숨겼으면 `"forwarded_from": null`이다.
+        if m.get("type") != "message" or "forwarded_from" in m:
             parsed.system_lines += 1  # service(입·퇴장·통화), 전달받은 메시지
             continue
         body = _flatten(m.get("text")).strip()

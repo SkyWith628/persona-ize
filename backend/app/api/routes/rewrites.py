@@ -28,6 +28,7 @@ usage_router = APIRouter(prefix="/v1/usage", tags=["usage"])
 
 # 쿼리 문자열에서 '+'가 공백으로 풀린 시간대(…T03:00:00 00:00)를 되살린다.
 _SPACE_OFFSET = re.compile(r" (\d{2}:?\d{2})$")
+EDITED_TEXT_FACTOR = 2  # 피드백의 고친 문장 길이 한도 = 초안 한도(MAX_DRAFT_CHARS) × 이 값
 
 
 def _to_out(rec: RewriteRecord) -> RewriteOut:
@@ -62,12 +63,13 @@ def _parse_before(raw: str | None) -> datetime | None:
         value = _SPACE_OFFSET.sub(r"+\1", value)
     try:
         dt = datetime.fromisoformat(value)
-    except ValueError as exc:
+        # UTC로 맞춰 둔다. 0001년·9999년 근처는 시간대 변환이 넘친다 — 저장소까지 가면 500이었다.
+        return (dt if dt.tzinfo else dt.replace(tzinfo=UTC)).astimezone(UTC)
+    except (ValueError, OverflowError) as exc:
         raise InvalidInputError(
             "before는 ISO 시각이어야 합니다 (예: 2026-11-11T03:00:00+00:00). "
             "목록의 created_at을 그대로 넣으세요."
         ) from exc
-    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
 
 
 @router.post("", response_model=RewriteOut, status_code=status.HTTP_201_CREATED)
@@ -117,7 +119,8 @@ async def delete_rewrite(request_id: UUID, user_id: UserId, state: State) -> Non
 async def get_evidence(request_id: UUID, user_id: UserId, state: State) -> EvidenceOut:
     """참고한 과거 표현의 원문. 결과에는 참조만 있고, 여기서 **지금 남아 있는** 메시지를 읽어 온다.
 
-    대화방을 지웠으면 그 근거는 나오지 않고 `missing`에 수만 남는다.
+    대화방을 지웠으면 그 근거는 나오지 않고 `missing`에 수만 남는다. 출처 참조를 남기기 전에 만든
+    옛 결과는 `refs_recorded: false`다 (그때는 `items`가 비고 `missing`은 0).
     """
     ev = await state.rewrite_service.evidence(user_id, request_id)
     return EvidenceOut(
@@ -133,11 +136,16 @@ async def get_evidence(request_id: UUID, user_id: UserId, state: State) -> Evide
             for item in ev.items
         ],
         missing=ev.missing,
+        refs_recorded=ev.refs_recorded,
     )
 
 
 @router.post("/{request_id}/feedback", status_code=status.HTTP_204_NO_CONTENT)
 async def post_feedback(request_id: UUID, body: FeedbackIn, user_id: UserId, state: State) -> None:
+    # 고친 문장은 결과를 손본 글이다 — 초안 한도의 두 배까지 받는다 (예전에는 길이 제한이 없었다).
+    limit = state.settings.max_draft_chars * EDITED_TEXT_FACTOR
+    if body.edited_text is not None and len(body.edited_text) > limit:
+        raise InvalidInputError(f"고친 문장은 {limit:,}자 이내여야 합니다.")
     await state.rewrite_service.feedback(user_id, Feedback(request_id=request_id, **body.model_dump()))
 
 

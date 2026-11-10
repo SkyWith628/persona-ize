@@ -697,3 +697,24 @@ async def test_periodic_loop_also_resumes_pending_graph_ingest(monkeypatch: pyte
     with pytest.raises(asyncio.CancelledError):
         await periodic.housekeeping_loop(on, 3600.0, sleep=fake_sleep)
     assert resumes == [0, 1]
+
+
+def test_import_message_text_is_exempt_from_the_unstorable_text_guard() -> None:
+    """가져오기의 대화 본문만 예외다(가져오기 쪽이 깨진 글자를 바꿔 읽는다). 다른 칸은 그대로 막는다."""
+    from app.core.text_guard import _import_text_exemption, find_unstorable
+
+    bad = "앞\x00뒤"
+    parse = _import_text_exemption("/v1/imports/parse")
+    raw = _import_text_exemption("/v1/conversations/1dfd5ea0/imports/raw")
+    messages = _import_text_exemption("/v1/conversations/1dfd5ea0/imports")
+    assert parse is not None and raw is not None and messages is not None
+    assert _import_text_exemption("/v1/contacts") is None
+    assert _import_text_exemption("/v1/rewrites") is None
+
+    assert find_unstorable({"format": "auto", "text": bad}, parse) is None
+    assert find_unstorable({"format": bad, "text": "x"}, parse) == "format"
+    assert find_unstorable({"text": bad, "speaker_map": {"김민수": "me"}}, raw) is None
+    assert find_unstorable({"text": "x", "speaker_map": {"a": bad}}, raw) == "speaker_map.a"
+    assert find_unstorable({"messages": [{"id": "m1", "text": bad}]}, messages) is None
+    assert find_unstorable({"messages": [{"id": bad, "text": "x"}]}, messages) == "messages.0.id"
+    assert find_unstorable({"draft_text": bad}, None) == "draft_text"

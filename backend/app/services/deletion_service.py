@@ -14,8 +14,9 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from app.core.security import verify_password
+from app.core.security import verify_password_async
 from app.domain.auth import Session
+from app.domain.conversation import exception_kind
 from app.repositories.auth import AuthRepo
 from app.repositories.base import ContactRepo, ConversationRepo, RewriteRepo
 from app.repositories.usage import UsageRepo
@@ -83,7 +84,8 @@ class DeletionService:
     async def delete_account(self, session: Session, password: str) -> AccountDeletion:
         user = await self._auth.get_user(session.user_id)
         found = await self._auth.find_user_by_username(user.username)
-        if found is None or not verify_password(password, found[1]):
+        # 비밀번호 해시(scrypt)는 수십 ms짜리 CPU 작업이다 — 이벤트 루프 밖에서 확인한다.
+        if found is None or not await verify_password_async(password, found[1]):
             raise UnauthorizedError("비밀번호가 맞지 않습니다.")
         user_id = str(user.id)
         result = AccountDeletion(user_id=user_id, contacts=0, conversations=0, messages=0)
@@ -96,8 +98,8 @@ class DeletionService:
             try:
                 result.graph_nodes_removed = await self._graph.remove_group(user_id)
             except Exception as exc:  # noqa: BLE001 - DB 삭제는 계속
-                log.warning("graph group removal failed user=%s: %s", user_id, exc)
-                result.graph_error = str(exc)[:300]
+                result.graph_error = exception_kind(exc)
+                log.warning("graph group removal failed user=%s: %s", user_id, result.graph_error)
         await self._usage.delete_user(user_id)
         await self._auth.delete_user(user.id)  # 세션은 CASCADE
         return result

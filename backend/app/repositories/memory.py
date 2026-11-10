@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from uuid import UUID, uuid4
 
 from app.ai.embeddings import cosine
@@ -23,6 +23,7 @@ from app.domain.conversation import (
     ImportJob,
     Message,
     NewMessage,
+    graph_units,
 )
 from app.domain.persona import PersonaSettings, PersonaVersion, RelationshipType
 from app.domain.rewrite import Feedback, RewriteRecord, RewriteResult
@@ -123,6 +124,16 @@ class InMemoryContactRepo:
             for cid, versions in self._personas.items()
             if versions and cid in self._contacts and self._contacts[cid].user_id == user_id
         }
+
+    async def count(self, user_id: str) -> int:
+        return sum(1 for c in self._contacts.values() if c.user_id == user_id)
+
+    async def remember_graph_name(self, user_id: str, contact_id: UUID, name: str) -> Contact:
+        c = await self.get(user_id, contact_id)
+        if c.graph_name is None:
+            c = c.model_copy(update={"graph_name": name})
+            self._contacts[contact_id] = c
+        return c
 
 
 class InMemoryRewriteRepo:
@@ -241,6 +252,7 @@ class InMemoryConversationRepo:
         self._messages: dict[UUID, list[Message]] = {}
         self._episodes: dict[UUID, list[tuple[Episode, list[float]]]] = {}  # conversation_id → (episode, vec)
         self._jobs: dict[UUID, ImportJob] = {}
+        self._graph_usage: dict[tuple[str, date], int] = {}  # (user_id, 날짜) → 그날 그래프에 넣은 양
 
     async def create(
         self,
@@ -309,9 +321,26 @@ class InMemoryConversationRepo:
             inserted += 1
         return inserted, len(messages) - inserted
 
-    async def list_messages(self, user_id: str, conversation_id: UUID) -> list[Message]:
+    async def list_messages(
+        self, user_id: str, conversation_id: UUID, limit: int | None = None
+    ) -> list[Message]:
         conv = await self.get(user_id, conversation_id)
-        return sorted(self._messages[conv.id], key=lambda m: m.sent_at)
+        ordered = sorted(self._messages[conv.id], key=lambda m: m.sent_at)
+        return ordered if limit is None else ordered[-limit:]
+
+    async def message_keys(self, user_id: str, conversation_id: UUID) -> set[str]:
+        conv = await self.get(user_id, conversation_id)
+        return {m.source_key for m in self._messages[conv.id]}
+
+    async def count_owned(self, user_id: str) -> tuple[int, int]:
+        mine = [cid for cid, c in self._conversations.items() if c.user_id == user_id]
+        return len(mine), sum(len(self._messages.get(cid, [])) for cid in mine)
+
+    async def episode_vectors(self, user_id: str, conversation_id: UUID) -> dict[str, list[float]]:
+        conv = await self.get(user_id, conversation_id)
+        return {
+            f"{ep.embedding_version}\n{ep.context_text}": vec for ep, vec in self._episodes.get(conv.id, [])
+        }
 
     async def replace_episodes(
         self,
@@ -516,3 +545,32 @@ class InMemoryConversationRepo:
                 if ref in wanted:
                     out[ref] = m
         return out
+
+    async def graph_units_in_graph(self, user_id: str) -> int:
+        return sum(
+            graph_units(m.text)
+            for conv_id, msgs in self._messages.items()
+            if conv_id in self._conversations and self._conversations[conv_id].user_id == user_id
+            for m in msgs
+            if m.graph_ingested_at is not None
+        )
+
+    async def add_graph_usage(self, user_id: str, day: date, units: int) -> None:
+        key = (user_id, day)
+        self._graph_usage[key] = max(self._graph_usage.get(key, 0) + units, 0)
+
+    async def graph_usage(self, day: date, user_id: str | None = None) -> int:
+        return sum(
+            n for (uid, d), n in self._graph_usage.items() if d == day and (user_id is None or uid == user_id)
+        )
+
+    async def limit_stale_graph_jobs(self, user_id: str, reason: str) -> int:
+        n = 0
+        for jid, job in list(self._jobs.items()):
+            if job.user_id != user_id or job.graph_status not in ("pending", "running"):
+                continue
+            msgs = self._messages.get(job.conversation_id, [])
+            if any(m.graph_ingested_at is None for m in msgs):
+                self._jobs[jid] = job.model_copy(update={"graph_status": "limited", "graph_error": reason})
+                n += 1
+        return n

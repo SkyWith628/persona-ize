@@ -5,7 +5,9 @@
   노드이거나 상대와 연결된 Event 노드인 엣지만** 남긴다. 거리 재정렬만으로는 다른 방의 사실이 섞였다(11-08
   첫 실측: 팀장 질의에 친구 방 홈커밍, 동기 질의에 동생 방 케이크). Person 이웃(사용자 자신, 다른 상대)은
   기준으로 삼지 않는다 — 사용자 노드는 모든 방에 걸쳐 있어서 걸러지는 게 없기 때문이다.
-  상대 이름과 정확히 일치하는 노드가 없으면(호칭으로만 병합된 경우) 필터 없이 거리 재정렬만 한다.
+  상대 노드는 그래프에 넣을 때 쓴 이름(`Contact.name_in_graph` — 별칭을 바꿔도 처음 수집한 이름)으로
+  찾는다. 그 이름과 정확히 일치하는 노드가 없으면(아직 수집 전, 호칭으로만 병합된 경우) **사실 맥락을
+  비운다** — 예전에는 필터 없이 돌려줘 다른 상대의 사실이 섞일 수 있었다.
 - 요청 이전 데이터만: 출처 에피소드 중 하나라도 `as_of` 이후면 그 사실을 버린다 (평가에서 미래 유출 방지).
   이미 무효화된(invalid_at ≤ as_of) 사실도 버린다 — 지금 어조를 정하는 데는 현재 관계가 맞다.
 - 재정렬(11-09, 백로그 A2): Graphiti의 순위는 BM25 비중이 커서 "주간보고 초안 공유"처럼 질의와 무관한 사실이
@@ -88,11 +90,14 @@ class GraphContextRetriever:
             return []
         k = self._top_k or top_k
         contact = await self._contacts.get(user_id, contact_id)
-        center = await self._store.find_entity_uuid(user_id, contact.alias)
+        # 그래프에 넣을 때 쓴 이름으로 찾는다 (별칭을 바꿔도 노드 이름은 처음 수집한 이름이다).
+        center = await self._store.find_entity_uuid(user_id, contact.name_in_graph)
+        if center is None:
+            # 상대 노드가 없으면 '이 상대와 관련된 사실'을 가려낼 기준이 없다. 필터 없이 돌려주면
+            # 다른 상대의 사실이 섞인다 — 사실 맥락 없이 간다 (2026-11-11 검토).
+            return []
         hits = await self._store.search(query, user_id, center, k * self._oversample)
-        allowed: set[str] | None = None
-        if center is not None:
-            allowed = {center} | await self._store.event_neighbors(user_id, center)
+        allowed: set[str] | None = {center} | await self._store.event_neighbors(user_id, center)
         refs = await self._store.episode_refs({u for h in hits for u in h.episode_uuids})
         cutoff = as_of or datetime.now(UTC)
 

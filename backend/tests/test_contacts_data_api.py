@@ -160,7 +160,10 @@ def test_persona_suggestion_from_my_past_messages(
     assert (
         signals["address_term"]["value"] == "팀장님" and "3개가 '팀장님'" in signals["address_term"]["reason"]
     )
-    assert signals["emoji"]["value"] == "none"
+    # 이모지·구어 표지가 다섯 건에 없었다는 것만으로는 근거가 되지 않는다 — 기준값을 건드리지 않는다
+    assert "emoji" not in signals and "friendliness" not in signals
+    assert body["settings"]["emoji"] == DEFAULT_PERSONAS["superior"].emoji
+    assert body["settings"]["friendliness"] == DEFAULT_PERSONAS["superior"].friendliness
     assert body["settings"]["formality"] == 4 and body["settings"]["address_term"] == "팀장님"
     # 추정하지 않는 항목은 저장된 설정 그대로 (금지 표현 등), 저장은 하지 않는다
     assert body["settings"]["forbidden_phrases"] == ["ㅋㅋ", "ㅠ"]
@@ -168,10 +171,16 @@ def test_persona_suggestion_from_my_past_messages(
     assert client.get(url, headers=user_b).status_code == 404
 
     friend = _new_contact(client, user_a, "최유진", "friend")
-    _import(client, user_a, friend["id"], CASUAL_HISTORY, "c2")
+    conv_id = _import(client, user_a, friend["id"], CASUAL_HISTORY, "c2")
+    few = client.get(f"/v1/contacts/{friend['id']}/persona/suggestion", headers=user_a).json()
+    # 내 메시지 4건: 표본이 작아 추정하지 않는다 (본 메시지 수만 알려 준다)
+    assert few == {"based_on_messages": 4, "settings": None, "signals": []}
+    more = "2026-10-07 20:07 | me | 유진아 7시 괜찮아?ㅎㅎ"
+    added = client.post(f"/v1/conversations/{conv_id}/imports/raw", json={"text": more}, headers=user_a)
+    assert added.status_code == 202, added.text
     casual = client.get(f"/v1/contacts/{friend['id']}/persona/suggestion", headers=user_a).json()
     by_field = {s["field"]: s["value"] for s in casual["signals"]}
-    assert casual["based_on_messages"] == 4
+    assert casual["based_on_messages"] == 5
     assert by_field["formality"] == 1 and by_field["friendliness"] >= 4
     assert by_field["emoji"] == "often" and by_field["address_term"] == "유진아"
     # 페르소나가 없는 상대는 관계 유형 기본값 위에 얹는다
@@ -182,23 +191,39 @@ def test_suggest_persona_rules() -> None:
     base = PersonaSettings()
     assert suggest_persona([], base, "박지현") == (None, [])
     assert suggest_persona(["   "], base, "박지현") == (None, [])
-    polite, signals = suggest_persona(["네 알겠어요", "내일 봬요~", "감사해요!", "넵"], base, "이서연")
+    assert suggest_persona(["네", "넵", "알겠습니다", "감사합니다"], base, "박지현") == (None, [])  # 4건
+    polite, signals = suggest_persona(
+        ["네 알겠어요", "내일 봬요~", "감사해요!", "넵", "확인했어요"], base, "이서연"
+    )
     assert polite is not None and polite.formality == 3
-    assert {s.field for s in signals} == {
-        "formality",
-        "friendliness",
-        "emoji",
-    }  # 호칭은 근거가 없으면 내지 않는다
-    mixed, _ = suggest_persona(["알겠습니다", "ㅇㅋ 내일 봐", "그래", "고마워요"], base, "이서연")
+    # 근거가 있는 것만 낸다: 호칭(반복되는 부르는 말 없음)과 이모지(다섯 건에 없었을 뿐)는 내지 않는다
+    assert {s.field for s in signals} == {"formality", "friendliness"}
+    assert polite.emoji == base.emoji and polite.address_term == base.address_term
+    mixed, _ = suggest_persona(["알겠습니다", "ㅇㅋ 내일 봐", "그래", "고마워요", "응"], base, "이서연")
     assert mixed is not None and mixed.formality == 2
     # '좋아,' '뭐야,' 같은 말은 호칭이 아니다. 별칭에 든 이름의 호격만 받는다.
-    none, sig = suggest_persona(["좋아, 그럼 내일 보자", "좋아, 알겠어", "뭐야, 진짜?"], base, "최유진")
+    none, sig = suggest_persona(
+        ["좋아, 그럼 내일 보자", "좋아, 알겠어", "뭐야, 진짜?", "좋아, 가자", "뭐야, 벌써?"], base, "최유진"
+    )
     assert none is not None and none.address_term is None and "address_term" not in {s.field for s in sig}
-    kin, _ = suggest_persona(["형 내일 뭐해", "형, 밥 먹었어?", "ㅋㅋㅋ"], base, "김준호")
+    kin, _ = suggest_persona(["형 내일 뭐해", "형, 밥 먹었어?", "ㅋㅋㅋ", "알았어", "간다"], base, "김준호")
     assert kin is not None and kin.address_term == "형"
     # 아주 긴 줄도 끝부분만 보고 판단한다 (4000자 느낌표 줄에서 정규식이 느려지지 않는다)
     long_formal, _ = suggest_persona(["가" * 3990 + " 확인했습니다", "!" * 4000 + "가"] * 50, base, "박지현")
     assert long_formal is not None and long_formal.formality == 4
+
+    # "한 번도 없었다"는 메시지가 충분히 많을 때만 근거다: 몇 건에 없었다고 저장된 값을 덮어쓰지 않는다
+    saved = PersonaSettings(friendliness=4, emoji="often", address_term="선배")
+    few, few_signals = suggest_persona(["확인했습니다"] * 6, saved, "박지현")
+    assert few is not None and {s.field for s in few_signals} == {"formality"}
+    assert (few.friendliness, few.emoji, few.address_term, few.formality) == (4, "often", "선배", 5)
+    many, many_signals = suggest_persona(["확인했습니다"] * 20, saved, "박지현")
+    assert many is not None and {s.field for s in many_signals} == {"formality", "friendliness", "emoji"}
+    assert (many.friendliness, many.emoji, many.address_term) == (2, "none", "선배")
+    # 종결 어미를 판단할 수 있는 메시지가 3건 미만이면 격식도 말하지 않는다
+    vague, vague_signals = suggest_persona(["ㅇㅇ", "ㄱㄱ", "ㅋㅋㅋ", "!!", "OK"], saved, "박지현")
+    assert vague is not None and vague.formality == saved.formality
+    assert "formality" not in {s.field for s in vague_signals}
 
 
 def test_apply_adjust_returns_a_copy() -> None:

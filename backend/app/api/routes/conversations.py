@@ -7,6 +7,9 @@
 - `POST /v1/conversations/{id}/imports` — 메시지 배열(JSON). 검증 실패가 하나라도 있으면 저장하지 않고 422.
 - `POST /v1/conversations/{id}/imports/raw` — 내보내기 원문(카카오톡·텔레그램·붙여넣기)을 서버가 읽는다.
   미리보기는 `POST /v1/imports/parse`(routes/data.py).
+
+사용자별 보관 한도(`MAX_CONVERSATIONS_PER_USER`, `MAX_MESSAGES_PER_USER`)를 넘는 요청은 아무것도 저장하지
+않고 422 `quota_exceeded`다. 한도는 이 API 경로에서만 건다 (합성 적재·평가 스크립트는 서비스를 직접 부른다).
 """
 
 from __future__ import annotations
@@ -14,7 +17,7 @@ from __future__ import annotations
 import asyncio
 from uuid import UUID
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Query, status
 
 from app.api.deps import State, UserId
 from app.api.schemas import (
@@ -31,6 +34,7 @@ from app.importers import parse_import
 from app.services.import_service import ImportPayload
 
 router = APIRouter(tags=["conversations"])
+MESSAGES_LIMIT_MAX = 5000  # 메시지 목록의 limit 상한 (한 번에 가져올 수 있는 수와 같은 수준)
 
 
 def _conv_out(c: Conversation) -> ConversationOut:
@@ -65,7 +69,13 @@ def _job_out(j: ImportJob) -> ImportJobOut:
 @router.post("/v1/conversations", response_model=ConversationOut, status_code=status.HTTP_201_CREATED)
 async def create_conversation(body: ConversationCreate, user_id: UserId, state: State) -> ConversationOut:
     conv = await state.import_service.create_conversation(
-        user_id, body.contact_id, body.title, body.source, body.source_key, body.me_name
+        user_id,
+        body.contact_id,
+        body.title,
+        body.source,
+        body.source_key,
+        body.me_name,
+        max_per_user=state.settings.max_conversations_per_user,
     )
     return _conv_out(conv)
 
@@ -83,12 +93,20 @@ async def get_conversation(conversation_id: UUID, user_id: UserId, state: State)
 
 
 @router.get("/v1/conversations/{conversation_id}/messages", response_model=list[MessageOut])
-async def list_messages(conversation_id: UUID, user_id: UserId, state: State) -> list[MessageOut]:
+async def list_messages(
+    conversation_id: UUID,
+    user_id: UserId,
+    state: State,
+    limit: int | None = Query(
+        None, ge=1, le=MESSAGES_LIMIT_MAX, description="가장 최근 N건만 (시각 순). 생략하면 전부"
+    ),
+) -> list[MessageOut]:
+    """시각 순 메시지. `limit`을 주면 가장 최근 N건만 돌려준다 (생략하면 예전처럼 전부)."""
     return [
         MessageOut(
             id=m.id, source_key=m.source_key, speaker_role=m.speaker_role, sent_at=m.sent_at, text=m.text
         )
-        for m in await state.conversations.list_messages(user_id, conversation_id)
+        for m in await state.conversations.list_messages(user_id, conversation_id, limit)
     ]
 
 
@@ -131,7 +149,11 @@ async def import_messages(
 ) -> ImportJobOut:
     """지금은 요청 안에서 처리를 끝내고 완료된 작업을 돌려준다 (202는 설계의 비동기 전환을 위해 유지)."""
     job = await state.import_service.import_messages(
-        user_id, conversation_id, body, mask_pii=state.settings.import_mask_pii
+        user_id,
+        conversation_id,
+        body,
+        mask_pii=state.settings.import_mask_pii,
+        max_user_messages=state.settings.max_messages_per_user,
     )
     return _job_out(job)
 
@@ -159,7 +181,12 @@ async def import_raw(conversation_id: UUID, body: ImportRawIn, user_id: UserId, 
         max_chars=settings.max_import_chars,
     )
     job = await state.import_service.import_parsed(
-        user_id, conversation_id, parsed, body.speaker_map, keep_recent=body.keep_recent
+        user_id,
+        conversation_id,
+        parsed,
+        body.speaker_map,
+        keep_recent=body.keep_recent,
+        max_user_messages=settings.max_messages_per_user,
     )
     return _job_out(job)
 

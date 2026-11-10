@@ -5,14 +5,22 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from uuid import UUID, uuid4
 
 from sqlalchemy import and_, delete, func, or_, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 
 from app.core.errors import NotFoundError, VersionConflictError
-from app.db.models import ConversationRow, EpisodeMessageRow, EpisodeRow, ImportJobRow, MessageRow
+from app.db.models import (
+    ConversationRow,
+    EpisodeMessageRow,
+    EpisodeRow,
+    ImportJobRow,
+    MessageRow,
+    UsageCounterRow,
+)
 from app.db.session import SessionFactory
 from app.domain.conversation import (
     ContactDataStats,
@@ -27,9 +35,18 @@ from app.domain.conversation import (
     NewMessage,
 )
 
+# 그래프 수집 상한에서 메시지 한 건을 세는 양 (domain.conversation.graph_units와 같은 식): 1 + 글자 수 // 1000
+_GRAPH_UNITS = 1 + func.char_length(MessageRow.text) // 1000
+
 
 def _now() -> datetime:
     return datetime.now(UTC)
+
+
+def _gone(exc: IntegrityError) -> bool:
+    """외래 키 위반(23503)인가 — 쓰는 사이에 대화방(또는 상대·계정)이 지워졌다."""
+    code = getattr(exc.orig, "sqlstate", None) or getattr(exc.orig, "pgcode", None)
+    return code == "23503"
 
 
 def _conversation(row: ConversationRow) -> Conversation:
@@ -138,47 +155,89 @@ class PostgresConversationRepo:
     async def add_messages(
         self, user_id: str, conversation_id: UUID, messages: list[NewMessage]
     ) -> tuple[int, int]:
-        async with self._sessions.begin() as s:
-            conv = await self._owned(s, user_id, conversation_id)
-            existing = set(
-                (
-                    await s.scalars(
-                        select(MessageRow.source_key).where(MessageRow.conversation_id == conv.id)
-                    )
-                ).all()
-            )
-            inserted = 0
-            now = _now()
-            for nm in messages:
-                if nm.source_key in existing:
-                    continue
-                existing.add(nm.source_key)
-                s.add(
-                    MessageRow(
-                        id=uuid4(),
-                        user_id=user_id,
-                        conversation_id=conv.id,
-                        source_key=nm.source_key,
-                        speaker_role=nm.speaker_role,
-                        sent_at=nm.sent_at,
-                        text=nm.text,
-                        created_at=now,
-                    )
+        try:
+            async with self._sessions.begin() as s:
+                conv = await self._owned(s, user_id, conversation_id)
+                existing = set(
+                    (
+                        await s.scalars(
+                            select(MessageRow.source_key).where(MessageRow.conversation_id == conv.id)
+                        )
+                    ).all()
                 )
-                inserted += 1
+                inserted = 0
+                now = _now()
+                for nm in messages:
+                    if nm.source_key in existing:
+                        continue
+                    existing.add(nm.source_key)
+                    s.add(
+                        MessageRow(
+                            id=uuid4(),
+                            user_id=user_id,
+                            conversation_id=conv.id,
+                            source_key=nm.source_key,
+                            speaker_role=nm.speaker_role,
+                            sent_at=nm.sent_at,
+                            text=nm.text,
+                            created_at=now,
+                        )
+                    )
+                    inserted += 1
+        except IntegrityError as exc:
+            if _gone(exc):
+                raise NotFoundError("대화방을 찾을 수 없습니다.") from exc
+            # 같은 메시지를 다른 요청이 방금 넣었다
+            # (다른 프로세스와의 경합 — 한 프로세스 안은 서비스가 직렬화한다).
+            raise VersionConflictError(
+                "같은 대화방에 다른 가져오기가 진행 중입니다. 잠시 뒤 다시 시도하세요."
+            ) from exc
         return inserted, len(messages) - inserted
 
-    async def list_messages(self, user_id: str, conversation_id: UUID) -> list[Message]:
+    async def list_messages(
+        self, user_id: str, conversation_id: UUID, limit: int | None = None
+    ) -> list[Message]:
+        async with self._sessions() as s:
+            conv = await self._owned(s, user_id, conversation_id)
+            stmt = select(MessageRow).where(
+                MessageRow.conversation_id == conv.id, MessageRow.user_id == user_id
+            )
+            if limit is None:
+                stmt = stmt.order_by(MessageRow.sent_at, MessageRow.created_at)
+            else:  # 가장 최근 limit건을 고른 뒤 아래에서 시각 순으로 뒤집는다
+                stmt = stmt.order_by(MessageRow.sent_at.desc(), MessageRow.created_at.desc()).limit(limit)
+            rows = (await s.scalars(stmt)).all()
+        if limit is not None:
+            rows = list(reversed(rows))
+        return [_message(r) for r in rows]
+
+    async def message_keys(self, user_id: str, conversation_id: UUID) -> set[str]:
+        async with self._sessions() as s:
+            conv = await self._owned(s, user_id, conversation_id)
+            keys = await s.scalars(select(MessageRow.source_key).where(MessageRow.conversation_id == conv.id))
+            return set(keys.all())
+
+    async def count_owned(self, user_id: str) -> tuple[int, int]:
+        async with self._sessions() as s:
+            convs = await s.scalar(
+                select(func.count()).select_from(ConversationRow).where(ConversationRow.user_id == user_id)
+            )
+            msgs = await s.scalar(
+                select(func.count()).select_from(MessageRow).where(MessageRow.user_id == user_id)
+            )
+        return int(convs or 0), int(msgs or 0)
+
+    async def episode_vectors(self, user_id: str, conversation_id: UUID) -> dict[str, list[float]]:
         async with self._sessions() as s:
             conv = await self._owned(s, user_id, conversation_id)
             rows = (
-                await s.scalars(
-                    select(MessageRow)
-                    .where(MessageRow.conversation_id == conv.id, MessageRow.user_id == user_id)
-                    .order_by(MessageRow.sent_at, MessageRow.created_at)
+                await s.execute(
+                    select(EpisodeRow.embedding_version, EpisodeRow.context_text, EpisodeRow.embedding).where(
+                        EpisodeRow.conversation_id == conv.id, EpisodeRow.user_id == user_id
+                    )
                 )
             ).all()
-        return [_message(r) for r in rows]
+        return {f"{version}\n{text}": [float(x) for x in vector] for version, text, vector in rows}
 
     async def replace_episodes(
         self,
@@ -252,25 +311,31 @@ class PostgresConversationRepo:
         return _job(row) if row is not None else None
 
     async def save_job(self, job: ImportJob) -> ImportJob:
-        async with self._sessions.begin() as s:
-            await s.merge(
-                ImportJobRow(
-                    id=job.id,
-                    user_id=job.user_id,
-                    conversation_id=job.conversation_id,
-                    source_hash=job.source_hash,
-                    status=job.status,
-                    imported=job.imported,
-                    duplicates=job.duplicates,
-                    episodes=job.episodes,
-                    error_code=job.error_code,
-                    error_message=job.error_message,
-                    graph_status=job.graph_status,
-                    graph_episodes=job.graph_episodes,
-                    graph_error=job.graph_error,
-                    created_at=job.created_at,
+        try:
+            async with self._sessions.begin() as s:
+                await s.merge(
+                    ImportJobRow(
+                        id=job.id,
+                        user_id=job.user_id,
+                        conversation_id=job.conversation_id,
+                        source_hash=job.source_hash,
+                        status=job.status,
+                        imported=job.imported,
+                        duplicates=job.duplicates,
+                        episodes=job.episodes,
+                        error_code=job.error_code,
+                        error_message=job.error_message,
+                        graph_status=job.graph_status,
+                        graph_episodes=job.graph_episodes,
+                        graph_error=job.graph_error,
+                        created_at=job.created_at,
+                    )
                 )
-            )
+        except IntegrityError as exc:
+            if _gone(exc):
+                raise NotFoundError("대화방을 찾을 수 없습니다.") from exc
+            # (사용자, 대화방, 내용 해시)가 같은 작업이 이미 있다 — 같은 파일을 동시에 올렸다.
+            raise VersionConflictError("같은 내용의 가져오기 작업이 이미 있습니다.") from exc
         return job
 
     async def get_job(self, user_id: str, job_id: UUID) -> ImportJob:
@@ -514,3 +579,63 @@ class PostgresConversationRepo:
                 )
             ).all()
         return {wanted[r.conversation_id][r.source_key]: _message(r) for r in rows}
+
+    async def graph_units_in_graph(self, user_id: str) -> int:
+        stmt = select(func.coalesce(func.sum(_GRAPH_UNITS), 0)).where(
+            MessageRow.user_id == user_id, MessageRow.graph_ingested_at.is_not(None)
+        )
+        async with self._sessions() as s:
+            return int(await s.scalar(stmt) or 0)
+
+    async def add_graph_usage(self, user_id: str, day: date, units: int) -> None:
+        if units == 0:
+            return
+        now = _now()
+        stmt = (
+            pg_insert(UsageCounterRow)
+            .values(
+                user_id=user_id,
+                day=day,
+                rewrites=0,
+                input_tokens=0,
+                output_tokens=0,
+                graph_episodes=max(units, 0),
+                updated_at=now,
+            )
+            .on_conflict_do_update(
+                index_elements=[UsageCounterRow.user_id, UsageCounterRow.day],
+                set_={
+                    "graph_episodes": func.greatest(UsageCounterRow.graph_episodes + units, 0),
+                    "updated_at": now,
+                },
+            )
+        )
+        async with self._sessions.begin() as s:
+            await s.execute(stmt)
+
+    async def graph_usage(self, day: date, user_id: str | None = None) -> int:
+        stmt = select(func.coalesce(func.sum(UsageCounterRow.graph_episodes), 0)).where(
+            UsageCounterRow.day == day
+        )
+        if user_id is not None:
+            stmt = stmt.where(UsageCounterRow.user_id == user_id)
+        async with self._sessions() as s:
+            return int(await s.scalar(stmt) or 0)
+
+    async def limit_stale_graph_jobs(self, user_id: str, reason: str) -> int:
+        pending_convs = (
+            select(MessageRow.conversation_id)
+            .where(MessageRow.user_id == user_id, MessageRow.graph_ingested_at.is_(None))
+            .distinct()
+        )
+        async with self._sessions.begin() as s:
+            result = await s.execute(
+                update(ImportJobRow)
+                .where(
+                    ImportJobRow.user_id == user_id,
+                    ImportJobRow.graph_status.in_(("pending", "running")),
+                    ImportJobRow.conversation_id.in_(pending_convs),
+                )
+                .values(graph_status="limited", graph_error=reason)
+            )
+        return int(result.rowcount or 0)

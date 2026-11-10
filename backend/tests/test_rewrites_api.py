@@ -271,12 +271,34 @@ def test_evidence_reads_remaining_messages_and_vanishes_with_the_conversation(
     assert client.get(f"/v1/rewrites/{b['id']}/evidence", headers=user_a).json() == {
         "items": [],
         "missing": 0,
+        "refs_recorded": True,
     }
 
     # 대화방을 지우면 근거 원문도 사라진다 — 이력에는 수만 남는다
     assert client.delete(f"/v1/conversations/{conv_id}", headers=user_a).status_code == 200
     gone = client.get(f"/v1/rewrites/{rec['id']}/evidence", headers=user_a).json()
-    assert gone == {"items": [], "missing": 1}
+    assert gone == {"items": [], "missing": 1, "refs_recorded": True}
+
+
+def test_evidence_of_results_saved_before_refs_existed_is_marked_not_missing(
+    client: TestClient, user_a: dict[str, str]
+) -> None:
+    """출처 참조를 남기기 전에 만든 결과: '원문이 지워졌다'(missing)가 아니라 '참조가 없다'로 알린다."""
+    cid = _contact(client, user_a)
+    conv_id = _import_history(client, user_a, cid)
+    rec = _rewrite(client, user_a, cid, condition="auto").json()
+    assert rec["condition"] == "C" and rec["result"]["evidence_ids"] and rec["result"]["evidence_refs"]
+
+    # 옛 결과를 흉내 낸다: 근거 id는 있는데 참조가 없다 (그때는 payload에 evidence_refs가 없었다)
+    rewrites = client.app.state.container.rewrites
+    stored = next(r for r in rewrites._records.values() if str(r.id) == rec["id"])
+    stored.result.evidence_refs.clear()
+
+    old = client.get(f"/v1/rewrites/{rec['id']}/evidence", headers=user_a).json()
+    assert old == {"items": [], "missing": 0, "refs_recorded": False}  # 예전: missing이 근거 수만큼
+    # 대화방을 지워도 달라지지 않는다 — 처음부터 찾을 수 없던 것이다
+    assert client.delete(f"/v1/conversations/{conv_id}", headers=user_a).status_code == 200
+    assert client.get(f"/v1/rewrites/{rec['id']}/evidence", headers=user_a).json() == old
 
 
 def test_delete_one_rewrite_and_all_for_a_contact(

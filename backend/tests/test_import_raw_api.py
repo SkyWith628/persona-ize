@@ -262,6 +262,14 @@ def test_conversation_stats_and_me_name_adoption(
     )
     assert client.get(f"/v1/conversations/{android}", headers=user_a).json()["me_name"] is None
 
+    # 대화방을 만들 때 보낸 이름도 마찬가지다: 화면은 '나'로 지정한 화자 이름을 me_name으로 보내는데,
+    # 안드로이드 내보내기면 그것이 '회원님'이다 — 저장하지 않는다 (그래프 에피소드의 화자가 '회원님'이 된다).
+    for generic in ("회원님", " 회원님 ", "나", "me", "   "):
+        _, made = _conversation(client, user_a, me_name=generic)
+        assert client.get(f"/v1/conversations/{made}", headers=user_a).json()["me_name"] is None, generic
+    _, named = _conversation(client, user_a, me_name=" 김민수 ")
+    assert client.get(f"/v1/conversations/{named}", headers=user_a).json()["me_name"] == "김민수"
+
 
 def test_json_import_masks_pii_only_through_the_api(client: TestClient, user_a: dict[str, str]) -> None:
     """API 경로는 가리고, ImportService를 직접 부르는 경로(평가·합성 적재 스크립트)는 그대로 둔다."""

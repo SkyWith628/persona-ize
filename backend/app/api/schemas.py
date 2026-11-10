@@ -6,15 +6,36 @@ from datetime import date, datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.domain.conversation import GraphStatus, ImportStatus, SpeakerRole
 from app.domain.persona import Adjust, PersonaSettings, RelationshipType
-from app.domain.rewrite import Channel, Condition, FeedbackReasonCode, RequestedCondition, RewriteResult
-from app.importers.base import ImportFormat, RequestedFormat
+from app.domain.rewrite import (
+    INT4_MAX,
+    Channel,
+    Condition,
+    FeedbackReasonCode,
+    RequestedCondition,
+    RewriteResult,
+)
+from app.importers.base import ImportFormat, RequestedFormat, has_unstorable_text, repair_unicode
 
 
-class ContactCreate(BaseModel):
+class StoredBody(BaseModel):
+    """저장되는 요청 본문의 공통 검사: NUL·깨진 유니코드가 든 글은 받지 않는다 (422).
+
+    그대로 두면 PostgreSQL이 거부해 500이 났다 — 첨삭이면 모델을 부른 뒤에야 실패했다 (2026-11-11 검토).
+    """
+
+    @model_validator(mode="before")
+    @classmethod
+    def _storable(cls, data: Any) -> Any:
+        if has_unstorable_text(data):
+            raise ValueError("저장할 수 없는 문자가 들어 있습니다 (NUL 또는 깨진 유니코드).")
+        return data
+
+
+class ContactCreate(StoredBody):
     alias: str = Field(min_length=1, max_length=50)
     relationship_type: RelationshipType
     use_default_persona: bool = Field(
@@ -22,7 +43,7 @@ class ContactCreate(BaseModel):
     )
 
 
-class ContactUpdate(BaseModel):
+class ContactUpdate(StoredBody):
     """바꿀 것만 보낸다. 생략하거나 null이면 그대로."""
 
     alias: str | None = Field(None, min_length=1, max_length=50)
@@ -47,10 +68,10 @@ class ContactDeletionOut(BaseModel):
     graph_errors: list[str]
 
 
-class PersonaPut(BaseModel):
+class PersonaPut(StoredBody):
     settings: PersonaSettings
     expected_version: int | None = Field(
-        None, description="현재 최신 버전. 다르면 409. 처음 저장이면 0 또는 생략"
+        None, le=INT4_MAX, description="현재 최신 버전. 다르면 409. 처음 저장이면 0 또는 생략"
     )
 
 
@@ -61,15 +82,16 @@ class PersonaOut(BaseModel):
     created_at: datetime
 
 
-class RewriteCreate(BaseModel):
+class RewriteCreate(StoredBody):
     contact_id: UUID
     draft_text: str
-    draft_version: int = Field(1, ge=1)
+    # 정수 열(INTEGER)에 들어가는 값은 범위를 먼저 본다 — 넘치면 모델을 부른 뒤 저장에서 실패했다.
+    draft_version: int = Field(1, ge=1, le=INT4_MAX)
     situation: str = ""
     condition: RequestedCondition = Field(
         "B", description="A~D 또는 auto(이 상대에 쓸 수 있는 가장 풍부한 조건을 서버가 고른다)"
     )
-    persona_version: int | None = None
+    persona_version: int | None = Field(None, ge=-INT4_MAX, le=INT4_MAX)
     adjust: Adjust | None = Field(None, description="이번 요청만의 조정. 저장된 페르소나는 바뀌지 않는다")
     channel: Channel = "web"
 
@@ -94,7 +116,7 @@ class RewriteOut(BaseModel):
     feedback: FeedbackOut | None = None
 
 
-class FeedbackIn(BaseModel):
+class FeedbackIn(StoredBody):
     accepted: bool
     edited_text: str | None = None
     reason: str | None = Field(None, max_length=500)
@@ -107,7 +129,11 @@ class UsageOut(BaseModel):
     rewrites: int
     rewrite_limit: int
     remaining_rewrites: int
-    graph_messages_ingested: int = Field(0, description="그래프(D)에 들어가 있는 내 메시지 수")
+    graph_messages_ingested: int = Field(
+        0,
+        description="그래프 수집 상한이 보는 값: max(지금 그래프에 든 양, 오늘 넣은 양). "
+        "메시지 1건이 1이고 1,000자마다 1을 더 센다",
+    )
     graph_message_cap: int = Field(0, description="사용자당 그래프 수집 상한. 0이면 무제한")
     input_tokens: int
     output_tokens: int
@@ -119,7 +145,7 @@ class ErrorOut(BaseModel):
     message: str
 
 
-class ConversationCreate(BaseModel):
+class ConversationCreate(StoredBody):
     contact_id: UUID
     title: str | None = Field(None, max_length=200)
     source: str = Field("json", max_length=64)
@@ -184,6 +210,22 @@ class ImportParseIn(BaseModel):
     chat_id: str | int | None = Field(
         None, description="텔레그램 계정 전체 내보내기에서 고른 대화 id (미리보기의 chats[].id)"
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _readable(cls, data: Any) -> Any:
+        """깨진 유니코드(짝 없는 대리 문자): 원문(`text`)은 `?`로 바꿔 읽고, 그 밖의 값에 있으면 422.
+
+        원문의 NUL은 파서가 뺀다. 화자 지정(`speaker_map`)의 이름 등에 NUL·깨진 글자가 있으면 받지 않는다.
+        """
+        if not isinstance(data, dict):
+            return data
+        if has_unstorable_text({k: v for k, v in data.items() if k != "text"}):
+            raise ValueError("저장할 수 없는 문자가 들어 있습니다 (NUL 또는 깨진 유니코드).")
+        text = data.get("text")
+        if isinstance(text, str) and repair_unicode(text) is not text:
+            return {**data, "text": repair_unicode(text)}
+        return data
 
 
 class ImportRawIn(ImportParseIn):
@@ -305,6 +347,10 @@ class EvidenceItemOut(BaseModel):
 class EvidenceOut(BaseModel):
     items: list[EvidenceItemOut]
     missing: int = Field(description="원문이 모두 지워져 보여 줄 수 없는 근거 수")
+    refs_recorded: bool = Field(
+        True,
+        description="거짓이면 근거의 출처 참조를 남기기 전에 만든 결과라 원문을 찾을 수 없다 (missing은 0)",
+    )
 
 
 class RewritesDeletedOut(BaseModel):

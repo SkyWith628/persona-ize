@@ -100,7 +100,7 @@ CONTRACT_FIELDS: dict[str, set[str]] = {
         "feedback",
     },
     "FeedbackOut": {"accepted", "edited_text", "reason", "reason_code", "consent_to_reuse", "created_at"},
-    "EvidenceOut": {"items", "missing"},
+    "EvidenceOut": {"items", "missing", "refs_recorded"},
     "EvidenceItemOut": {"id", "source_message_ids", "messages"},
     "EvidenceMessageOut": {"speaker_role", "sent_at", "text"},
     "RewritesDeletedOut": {"deleted"},

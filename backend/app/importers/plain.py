@@ -8,8 +8,9 @@ plain — 화면에 직접 붙여 넣는 줄 형식 (예전에는 화면 JS `par
 - 날짜 시각은 `YYYY-MM-DD HH:MM[:SS]`(구분 기호 `-`·`/`·`.`, `T`, 시간대 `+09:00`/`Z` 허용).
   시간대가 없으면 `tz_offset_minutes`를 붙인다.
 - 화자에 `me`/`contact`를 직접 써도 된다.
-- 형식에 맞지 않는 줄은 앞 메시지의 이어지는 줄로 본다. 다만 `|`가 둘 이상인데 날짜를 못 읽은 줄은
-  깨진 줄로 보고 건너뛴 수에 넣는다.
+- 구분은 앞의 `|` 두 개까지만 한다. 본문 안의 `|`는 쓴 그대로 남는다.
+- 형식에 맞지 않는 줄은 앞 메시지의 이어지는 줄로 본다 (`|`가 여러 개 든 줄도). 다만 날짜로 시작하고
+  `|`가 둘 이상인데 날짜·화자를 못 읽은 줄은 깨진 줄로 보고 건너뛴 수에 넣는다.
 
 json — 기존 가져오기와 같은 메시지 배열 `[{"id"?, "speaker", "sent_at", "text"}, ...]`
 (`{"messages": [...]}`로 감싼 것도 받는다). `id`가 없으면 내용으로 만든다.
@@ -30,6 +31,7 @@ _MOMENT = re.compile(
     r"(?::(\d{2})(?:\.(\d{1,6}))?)?\s*(Z|[+-]\d{2}:?\d{2})?$"
 )
 _ROLE_NAMES = ("me", "contact")
+_DATE_ATTEMPT = re.compile(r"^\s*\d{4}[-./]")  # 날짜를 쓰려던 줄 (`2026-13-05 …`)
 
 
 def parse_moment(raw: str, tz: timezone) -> tuple[datetime, bool] | None:
@@ -76,24 +78,21 @@ def parse_plain(text: str, tz: timezone) -> ParsedImport:
             if current is not None:
                 current.text += "\n"
             continue
-        parts = line.split("|")
-        moment = parse_moment(parts[0], tz) if len(parts) >= 3 else None
-        speaker = parts[1].strip() if len(parts) >= 3 else ""
+        parts = line.split("|", 2)  # 본문 안의 `|`는 그대로 둔다
+        moment = parse_moment(parts[0], tz) if len(parts) == 3 else None
+        speaker = parts[1].strip() if len(parts) == 3 else ""
         if moment is not None and speaker:
             current = ParsedMessage(
-                speaker=speaker,
-                sent_at=moment[0],
-                text=" | ".join(p.strip() for p in parts[2:]),
-                has_seconds=moment[1],
+                speaker=speaker, sent_at=moment[0], text=parts[2].strip(), has_seconds=moment[1]
             )
             parsed.messages.append(current)
             continue
-        if len(parts) >= 3 or current is None:
-            # 깨진 줄(구분 기호는 있는데 날짜·화자를 못 읽음) 또는 첫 메시지보다 앞의 줄
+        if current is None or (len(parts) == 3 and _DATE_ATTEMPT.match(parts[0])):
+            # 첫 메시지보다 앞의 줄, 또는 깨진 줄(날짜로 시작하는데 날짜·화자를 못 읽음)
             unreadable.append(lineno)
             parsed.skipped_lines += 1
             continue
-        current.text += "\n" + line  # 여러 줄 메시지
+        current.text += "\n" + line  # 여러 줄 메시지 (본문에 `|`가 여러 개 있어도 이어지는 줄이다)
     if unreadable:
         parsed.problem(
             f"'날짜 시각 | 화자 | 내용' 형식이 아닌 줄이 {len(unreadable)}개 있습니다 "

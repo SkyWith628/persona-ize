@@ -26,6 +26,7 @@ from app.importers.base import (
     ParsedImport,
     ParsedMessage,
     RequestedFormat,
+    clean,
     content_id,
     finalize,
     tz_from_offset,
@@ -49,6 +50,7 @@ __all__ = [
 ]
 
 DETECT_LINES = 60  # 형식 감지에 보는 앞부분 줄 수
+ONE_SPEAKER_WARN_FROM = 5  # 화자가 한 명뿐이라고 알리기 시작하는 메시지 수 (짧은 붙여넣기는 흔하다)
 UNKNOWN_FORMAT = (
     "형식을 알 수 없습니다. 카카오톡 대화 내보내기(.txt·.csv), 텔레그램 내보내기(result.json), "
     "또는 '날짜 시각 | 화자 | 내용' 줄 형식으로 올려 주세요."
@@ -152,6 +154,7 @@ def parse_import(
     else:
         parsed = parse_plain(text, tz)
 
+    clean(parsed)  # 4000자를 넘는 메시지는 가림보다 먼저 버린다 (가림 정규식이 긴 글을 훑지 않게)
     if mask:
         for m in parsed.messages:
             m.text, n = mask_pii(m.text)
@@ -161,5 +164,12 @@ def parse_import(
         detail = " ".join(parsed.problems[:3])
         raise InvalidInputError(
             "메시지를 한 건도 읽지 못했습니다. 형식을 확인해 주세요." + (f" {detail}" if detail else "")
+        )
+    speakers = parsed.speakers()
+    if len(speakers) == 1 and len(parsed.messages) >= ONE_SPEAKER_WARN_FROM:
+        # 텔레그램 '저장한 메시지', 메모용 나와의 채팅, 한 사람 말만 복사한 붙여넣기 등
+        parsed.problem(
+            f"말한 사람이 한 명({speakers[0][0]})뿐입니다. 주고받은 대화가 아니면 앞뒤 맥락 없이 "
+            "말투 자료로만 쓰이고, 특정 상대에게 쓰는 말투와 다를 수 있습니다."
         )
     return parsed

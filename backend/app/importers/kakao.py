@@ -13,6 +13,13 @@
   (날짜는 구분선에서 이어받는다). 영어 로캘 `[Name] [9:25 AM]`, `Monday, October 5, 2026`도 읽는다.
 - CSV: 머리 `Date,User,Message`, 줄 `2026-10-05 09:25:10,"박지현","본문"` (따옴표 안 줄바꿈·쉼표·`""`).
 - 날짜 접두가 없는 줄은 앞 메시지의 이어지는 줄(여러 줄 메시지).
+- 본문 안에도 날짜처럼 생긴 줄이 있을 수 있다 (`2026년 10월 7일 수요일`, `2026년 10월 7일 오후 3:00`).
+  그런 줄을 구분선·시스템 줄로 보는 것은 **다음 비어 있지 않은 줄이 메시지·구분선일 때만**이다.
+  뒤에 본문이 이어지면 본문의 한 줄이다. PC 내보내기(대시 구분선)에서는 대시 없는 요일 줄을 날짜로
+  쓰지 않는다 — 본문 속 요일 줄 하나가 그 뒤 메시지 전부의 날짜를 바꾸던 문제 (2026-11-11 검토).
+- `…, 회원님 :`처럼 첫 줄이 빈 메시지(줄바꿈으로 시작한 여러 줄 메시지)도 메시지다.
+- PC 카카오톡 **창에서 복사한** 내용(`[이름] [오후 3:12] 본문`만 있고 날짜 줄이 없다)은 날짜를 알 수
+  없어 가져오지 못한다 — 무엇이 문제인지 알려 준다.
 - `사진`, `동영상`, `이모티콘`, `삭제된 메시지입니다.`, `파일: …` 같은 자리표시는 문체 자료가
   아니므로 시스템 줄.
 """
@@ -24,6 +31,7 @@ import io
 import re
 from datetime import datetime, timezone
 
+from app.core.errors import InvalidInputError
 from app.importers.base import ParsedImport, ParsedMessage, line_list
 
 ME_ALIASES = {"회원님"}  # 안드로이드 내보내기에서 내보낸 본인
@@ -87,6 +95,39 @@ def looks_like_kakao(line: str) -> bool:
         or (_KO_HEAD.match(line) or _NUM_HEAD.match(line) or _EN_HEAD.match(line)) is not None
         and " : " in line
     )
+
+
+def _line_kind(line: str) -> str:
+    """본문이 이어지는지 볼 때의 줄 종류.
+
+    - `structure`: 틀림없이 메시지 머리·구분선·입퇴장 줄이다 (`[이름] [시각] …`, 대시 구분선,
+      `날짜 시각, 이름 : …`, `날짜 시각, …님이 들어왔습니다`).
+    - `datelike`: 날짜만 있는 줄 (`2026년 10월 7일 수요일`, `2026년 10월 7일 오후 3:00[, 글]`).
+      내보내기의 구분선·시스템 줄일 수도, 본문에 쓴 날짜일 수도 있다 — 그 뒤에 오는 줄로 가린다.
+    - `text`: 그 밖의 글 (본문의 이어지는 줄).
+    """
+    stripped = line.strip()
+    if _PC_MESSAGE.match(line) or _PC_SEPARATOR.match(stripped) or _PC_SEPARATOR_EN.match(stripped):
+        return "structure"
+    head = _KO_HEAD.match(line) or _NUM_HEAD.match(line) or _EN_HEAD.match(line)
+    if head:
+        rest = head.group(9)
+        if rest is not None and (" : " in rest or rest.endswith(" :") or _SYSTEM_PHRASE.match(rest)):
+            return "structure"
+        return "datelike"
+    return "datelike" if _day_line(stripped) is not None else "text"
+
+
+def _day_line(stripped: str) -> tuple[int, int, int] | None:
+    """요일이 붙은 날짜 줄(`2026년 10월 5일 월요일`, `Monday, October 5, 2026`)의 (년, 월, 일)."""
+    day = _DAY_LINE.match(stripped)
+    if day:
+        return int(day.group(1)), int(day.group(2)), int(day.group(3))
+    day_en = _DAY_LINE_EN.match(stripped)
+    month = _month(day_en.group(1)) if day_en else None
+    if day_en and month:
+        return int(day_en.group(3)), month, int(day_en.group(2))
+    return None
 
 
 def is_csv(text: str) -> bool:
@@ -171,9 +212,44 @@ def _parse_txt(text: str, tz: timezone) -> ParsedImport:
     current: _Draft | None = None
     current_day: tuple[int, int, int] | None = None  # PC: 구분선에서 이어받는 날짜
     pc_mode = False
+    dashed = False  # 대시 구분선(PC 내보내기)을 봤다 — 그 뒤로 대시 없는 요일 줄은 날짜로 쓰지 않는다
     seen_message = False
     unreadable: list[int] = []
     undated: list[int] = []
+
+    lines = [raw.rstrip() for raw in text.splitlines()]
+    # 다음 비어 있지 않은 줄의 위치(없으면 -1). 뒤에서부터 한 번에 채운다 — 빈 줄이 많아도 선형이다.
+    following = [-1] * len(lines)
+    nearest = -1
+    for i in range(len(lines) - 1, -1, -1):
+        following[i] = nearest
+        if lines[i].strip():
+            nearest = i
+
+    verdicts: dict[int, bool] = {}  # 줄 위치 → "이 줄에 닿으면 본문이 이어지는 것인가" (한 번만 따진다)
+
+    def body_continues(i: int) -> bool:
+        """이 줄 뒤에 본문이 이어지는가.
+
+        뒤의 비어 있지 않은 줄을 차례로 본다: 날짜처럼 생긴 줄은 건너뛰고, 처음 만나는 다른 줄이
+        보통 글이면 참, 메시지·구분선이거나 파일 끝이면 거짓.
+        """
+        trail: list[int] = []
+        j = following[i]
+        answer = False
+        while j != -1:
+            if j in verdicts:
+                answer = verdicts[j]
+                break
+            kind = _line_kind(lines[j])
+            if kind != "datelike":
+                answer = verdicts[j] = kind == "text"
+                break
+            trail.append(j)
+            j = following[j]
+        for k in trail:
+            verdicts[k] = answer
+        return answer
 
     def flush() -> None:
         nonlocal current
@@ -194,8 +270,8 @@ def _parse_txt(text: str, tz: timezone) -> ParsedImport:
         current = _Draft(speaker.strip(), when, first, has_seconds)
         seen_message = True
 
-    for lineno, raw in enumerate(text.splitlines(), 1):
-        line = raw.rstrip()
+    for index, line in enumerate(lines):
+        lineno = index + 1
         stripped = line.strip()
 
         # PC 날짜 구분선
@@ -208,7 +284,7 @@ def _parse_txt(text: str, tz: timezone) -> ParsedImport:
             else:
                 month = _month(sep_en.group(1))
                 current_day = (int(sep_en.group(3)), month, int(sep_en.group(2))) if month else None
-            pc_mode = True
+            pc_mode = dashed = True
             parsed.system_lines += 1
             continue
 
@@ -227,11 +303,16 @@ def _parse_txt(text: str, tz: timezone) -> ParsedImport:
             pc_mode = True
             continue
 
-        # iOS 날짜 구분선: 2026년 10월 5일 월요일
-        day = _DAY_LINE.match(stripped)
-        if day:
+        # 요일이 붙은 날짜 줄: 2026년 10월 5일 월요일 / Monday, October 5, 2026
+        # (iOS 내보내기의 날짜 구분선, 대시 없이 붙여 넣은 PC 조각의 날짜 줄)
+        day_ymd = _day_line(stripped)
+        if day_ymd is not None:
+            if current is not None and (dashed or body_continues(index)):
+                current.lines.append(line)  # 본문 속의 날짜 줄이다
+                continue
             flush()
-            current_day = (int(day.group(1)), int(day.group(2)), int(day.group(3)))
+            if not dashed:
+                current_day = day_ymd
             parsed.system_lines += 1
             continue
 
@@ -257,17 +338,31 @@ def _parse_txt(text: str, tz: timezone) -> ParsedImport:
             clock = _clock(head.group(4), head.group(5), head.group(6), head.group(7), head.group(8))
             when = _moment(*ymd, clock, tz) if clock else None
             rest = head.group(9)
+            is_message = rest is not None and (" : " in rest or rest.endswith(" :"))
+            if (
+                not is_message
+                and current is not None
+                and not (rest is not None and _SYSTEM_PHRASE.match(rest))
+                and (dashed or body_continues(index))
+            ):
+                # 본문 속의 날짜·시각 줄이다: 뒤에 본문이 이어지거나, 이런 줄이 구조로 쓰이지 않는
+                # PC 내보내기다. (입·퇴장 안내는 본문이 아니다.)
+                current.lines.append(line)
+                continue
             if when is None:
                 flush()
                 unreadable.append(lineno)
                 parsed.skipped_lines += 1
                 continue
-            if rest is None or " : " not in rest:
+            if not is_message:
                 # 날짜만 있는 줄, 또는 입·퇴장 안내 → 시스템 줄
                 flush()
                 parsed.system_lines += 1
                 continue
-            speaker, _, body = rest.partition(" : ")
+            if " : " in rest:
+                speaker, _, body = rest.partition(" : ")
+            else:  # `…, 회원님 :` — 첫 줄이 빈 메시지 (본문이 줄바꿈으로 시작했다)
+                speaker, body = rest[:-2], ""
             start(speaker, when, body, clock[3])
             hits[kind] += 1
             continue
@@ -280,14 +375,6 @@ def _parse_txt(text: str, tz: timezone) -> ParsedImport:
                 continue
             if _SAVED.match(stripped) or not stripped:
                 continue
-
-        # 영어 로캘 날짜 구분선: Monday, October 5, 2026
-        day_en = _DAY_LINE_EN.match(stripped)
-        if day_en and _month(day_en.group(1)):
-            flush()
-            current_day = (int(day_en.group(3)), _month(day_en.group(1)) or 1, int(day_en.group(2)))
-            parsed.system_lines += 1
-            continue
 
         if not stripped:
             if current is not None:
@@ -304,6 +391,13 @@ def _parse_txt(text: str, tz: timezone) -> ParsedImport:
         parsed.skipped_lines += 1
     flush()
 
+    if undated and not parsed.messages and current_day is None:
+        # `[이름] [오후 3:12] 본문` 줄만 있고 날짜 줄이 하나도 없다: PC 카카오톡 창에서 복사한 내용이다.
+        raise InvalidInputError(
+            f"메시지 {len(undated)}건에 시각만 있고 날짜가 없어 가져올 수 없습니다. PC 카카오톡 창에서 "
+            "복사한 내용에는 날짜가 들어 있지 않습니다. 채팅방 메뉴의 '대화 내용 내보내기'로 저장한 "
+            "파일(.txt)을 올려 주세요."
+        )
     if unreadable:
         parsed.problem(f"읽지 못한 줄이 {len(unreadable)}개 있습니다 ({line_list(unreadable)}).")
     if undated:

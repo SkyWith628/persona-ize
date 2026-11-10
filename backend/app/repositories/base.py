@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Protocol
 from uuid import UUID
 
@@ -64,6 +64,14 @@ class ContactRepo(Protocol):
 
     async def latest_persona_versions(self, user_id: str) -> dict[UUID, int]:
         """상대 id → 최신 페르소나 버전 번호 (페르소나가 없는 상대는 빠진다). 목록·요약의 N+1 방지용."""
+        ...
+
+    async def count(self, user_id: str) -> int:
+        """이 사용자의 상대 수 (사용자별 한도 검사)."""
+        ...
+
+    async def remember_graph_name(self, user_id: str, contact_id: UUID, name: str) -> Contact:
+        """그래프에 처음 넣을 때의 이름을 남긴다. 이미 있으면 바꾸지 않고 그대로 돌려준다."""
         ...
 
 
@@ -144,8 +152,25 @@ class ConversationRepo(Protocol):
         """(새로 넣은 수, source_key가 겹쳐 건너뛴 수)."""
         ...
 
-    async def list_messages(self, user_id: str, conversation_id: UUID) -> list[Message]:
-        """sent_at 순."""
+    async def list_messages(
+        self, user_id: str, conversation_id: UUID, limit: int | None = None
+    ) -> list[Message]:
+        """sent_at 순. limit을 주면 가장 최근 limit건만 (역시 sent_at 순)."""
+        ...
+
+    async def message_keys(self, user_id: str, conversation_id: UUID) -> set[str]:
+        """이 대화방에 이미 있는 메시지 키(source_key)들 — 새로 들어갈 수를 미리 세는 데 쓴다."""
+        ...
+
+    async def count_owned(self, user_id: str) -> tuple[int, int]:
+        """(대화방 수, 메시지 수) — 사용자별 한도 검사."""
+        ...
+
+    async def episode_vectors(self, user_id: str, conversation_id: UUID) -> dict[str, list[float]]:
+        """이 대화방 묶음의 `임베딩 버전 + 줄바꿈 + context_text` → 벡터.
+
+        재색인 때 본문이 같은 묶음의 벡터를 다시 계산하지 않으려는 것이다.
+        """
         ...
 
     async def replace_episodes(
@@ -232,4 +257,20 @@ class ConversationRepo(Protocol):
 
     async def find_messages(self, user_id: str, refs: list[str]) -> dict[str, Message]:
         """`대화방키:메시지키` 참조 → 지금 남아 있는 메시지. 지워진 것은 결과에 없다."""
+        ...
+
+    async def graph_units_in_graph(self, user_id: str) -> int:
+        """지금 그래프에 들어 있는 이 사용자 메시지의 양 (메시지 1건 = 1, 1,000자마다 +1)."""
+        ...
+
+    async def add_graph_usage(self, user_id: str, day: date, units: int) -> None:
+        """그날 그래프에 넣은 양을 더한다(음수면 뺀다). 대화를 지워도 줄지 않는 카운터다."""
+        ...
+
+    async def graph_usage(self, day: date, user_id: str | None = None) -> int:
+        """그날 그래프에 넣은 양. user_id가 없으면 전체 사용자 합계."""
+        ...
+
+    async def limit_stale_graph_jobs(self, user_id: str, reason: str) -> int:
+        """미수집 메시지가 남은 대화방의 pending/running 작업을 limited로 (상한 때문에 더 돌지 않을 때)."""
         ...

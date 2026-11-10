@@ -6,11 +6,58 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+import re
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
+
+KST = timezone(timedelta(hours=9))
+_SAFE_CODE = re.compile(r"^[A-Za-z0-9_.\-]{1,80}$")
+
+
+def exception_kind(exc: BaseException) -> str:
+    """예외의 **종류만**: 클래스 이름과, 있으면 형태가 정해진 코드(HTTP 상태, SQLSTATE, Neo4j 코드).
+
+    예외 문구(`str(exc)`)는 쓰지 않는다. DB·그래프·모델 클라이언트의 문구에는 SQL 매개변수나 프롬프트
+    조각 — 사용자의 대화 원문 — 이 들어 있을 수 있다. 작업 기록(`import_jobs.error_message`·
+    `graph_error`), 삭제 응답의 `graph_error`, 로그 줄에는 이것만 남긴다 (2026-11-11 검토).
+    """
+    name = type(exc).__name__
+    for source in (exc, getattr(exc, "orig", None)):
+        for attr in ("status_code", "sqlstate", "pgcode", "code"):
+            value = getattr(source, attr, None)
+            if isinstance(value, bool):
+                continue
+            if isinstance(value, int) or (isinstance(value, str) and _SAFE_CODE.match(value)):
+                return f"{name}({value})"
+    return name
+
+
+def local_time(moment: datetime) -> datetime:
+    """메시지 시각을 **날짜·요일·시:분으로 읽을 때** 쓰는 현지 시각(한국 시간).
+
+    저장소마다 돌려주는 시간대가 다르다 — 인메모리는 가져온 그대로(+09:00), PostgreSQL(timestamptz)은 UTC.
+    그 datetime의 자기 시간대로 날짜를 읽으면 화요일 08:01(KST)이 월요일 23:01이 된다. 날짜·요일을 글자로
+    만드는 곳(그래프 에피소드 본문, 상대 날짜 풀이, 프롬프트 예시의 날짜)은 반드시 이것을 거친다.
+    시간대가 없는 값은 UTC로 본다 (`ai.prompt.today_kst`와 같은 기준).
+    """
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=UTC)
+    return moment.astimezone(KST)
+
+
+GRAPH_UNIT_CHARS = 1000
+
+
+def graph_units(text: str) -> int:
+    """그래프 수집 상한에서 메시지 한 건을 세는 양: 기본 1, 1,000자마다 1씩 더한다.
+
+    에피소드 하나의 모델 비용은 본문 길이에 따라 는다 — 4,000자 메시지를 1건으로 세면 상한이 헐거워진다.
+    """
+    return 1 + len(text) // GRAPH_UNIT_CHARS
+
 
 SpeakerRole = Literal["me", "contact"]
 ImportStatus = Literal["completed", "failed"]

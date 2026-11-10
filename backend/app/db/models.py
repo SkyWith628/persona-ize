@@ -32,6 +32,8 @@ class ContactRow(Base):
     user_id: Mapped[str] = mapped_column(String(128), nullable=False)
     alias: Mapped[str] = mapped_column(String(50), nullable=False)
     relationship_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    # 이 상대의 메시지를 처음 그래프에 넣을 때의 이름 (0009). 이름을 바꿔도 그래프 노드는 이 이름이다.
+    graph_name: Mapped[str | None] = mapped_column(String(50), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     __table_args__ = (Index("ix_contacts_user_created", "user_id", "created_at"),)
@@ -241,6 +243,8 @@ class UsageCounterRow(Base):
     rewrites: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # 그날 그래프에 넣은 양 (0009). 메시지 1건 = 1, 긴 메시지는 가중. 대화를 지워도 줄지 않는다.
+    graph_episodes: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 

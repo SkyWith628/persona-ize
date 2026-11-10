@@ -92,6 +92,7 @@ class PostgresUsageRepo:
             rewrites=row.rewrites,
             input_tokens=row.input_tokens,
             output_tokens=row.output_tokens,
+            graph_episodes=row.graph_episodes,
         )
 
     async def get(self, user_id: str, day: date) -> UsageCounter:

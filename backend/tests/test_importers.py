@@ -399,7 +399,7 @@ def test_detect_format(text: str, expected: str) -> None:
         ('{"name": "x"}', "telegram", "messages"),
         ("이건 JSON이 아님", "json", "JSON"),
         ("한 줄짜리 글", "plain", "한 건도"),
-        ("[박지현] [오전 9:25] 날짜 구분선이 없는 PC 조각", "kakao", "날짜를 알 수 없는"),
+        ("[박지현] [오전 9:25] 날짜 구분선이 없는 PC 조각", "kakao", "날짜가 없어"),
     ],
 )
 def test_broken_input_is_rejected_with_a_reason(text: str, fmt: str, needle: str) -> None:

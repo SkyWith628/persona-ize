@@ -24,6 +24,12 @@ RequestedCondition = Literal["A", "B", "C", "D", "auto"]
 Channel = Literal["web", "mobile", "desktop", "api"]
 """요청이 온 곳. `rewrite_requests.channel` (0008)."""
 
+INT4_MAX = 2_147_483_647
+"""PostgreSQL INTEGER 열에 들어가는 가장 큰 값 (draft_version·persona_version)."""
+
+IDEMPOTENCY_KEY_MAX = 128
+"""`rewrite_requests.idempotency_key` 열 길이."""
+
 FeedbackReasonCode = Literal[
     "too_stiff",  # 너무 딱딱함
     "too_casual",  # 너무 가벼움
@@ -105,11 +111,11 @@ class RewriteInput(BaseModel):
     user_id: str
     contact_id: UUID
     draft_text: str
-    draft_version: int = Field(ge=1)
+    draft_version: int = Field(ge=1, le=INT4_MAX)
     situation: str = ""
     # 워크플로에는 A~D만 들어간다. auto는 RewriteService가 먼저 A~D로 바꾼다.
     condition: RequestedCondition = "B"
-    persona_version: int | None = None
+    persona_version: int | None = Field(None, ge=-INT4_MAX, le=INT4_MAX)
     # 검색 기준 시각. 이 시각 이전 대화만 검색한다 (평가 사례의 as_of). None이면 지금.
     as_of: datetime | None = None
     adjust: Adjust | None = None

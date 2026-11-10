@@ -230,13 +230,6 @@ def test_c2_unstorable_characters_are_rejected_before_storage_and_never_logged(
         surrogate_alias = (
             b'{"alias": "' + MARK.encode() + b"-SURR" + LONE_SURROGATE + b'", "relationship_type": "friend"}'
         )
-        surrogate_import = (
-            b'{"messages": [{"id": "m2", "speaker": "me", "sent_at": "2026-10-05T09:01:00+09:00", "text": "'
-            + MARK.encode()
-            + b" private text "
-            + LONE_SURROGATE
-            + b'"}]}'
-        )
         imports = f"/v1/conversations/{conv['id']}/imports"
         cases = {
             "상대 이름에 NUL": lambda: c.post(
@@ -259,9 +252,8 @@ def test_c2_unstorable_characters_are_rejected_before_storage_and_never_logged(
                 },
                 headers=h,
             ),
-            "메시지 본문에 짝 없는 대리 문자": lambda: c.post(
-                imports, content=surrogate_import, headers={**h, **JSON_HEADERS}
-            ),
+            # 메시지 **본문**의 깨진 글자는 여기서 막지 않는다 — 가져오기 쪽이 `?`로 바꿔 읽는다
+            # (실제 내보내기 파일을 통째로 거절하지 않으려고 — test_import_raw_api 참고).
             "초안에 NUL": lambda: c.post(
                 "/v1/rewrites",
                 json={"contact_id": contact, "draft_text": f"{MARK}-DRAFT 초안\u0000 내용", "condition": "A"},

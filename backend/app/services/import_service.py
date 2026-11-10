@@ -24,18 +24,28 @@ import hashlib
 import json
 import logging
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.ai.embeddings import Embedder
 from app.ai.episodes import DEFAULT_WINDOW, build_episodes
-from app.core.errors import InvalidInputError
-from app.domain.conversation import Conversation, DeletionResult, ImportJob, NewMessage, SpeakerRole
+from app.core.errors import InvalidInputError, NotFoundError, VersionConflictError
+from app.domain.conversation import (
+    Conversation,
+    DeletionResult,
+    ImportJob,
+    NewMessage,
+    SpeakerRole,
+    exception_kind,
+)
+from app.domain.usage import QuotaExceededError
 from app.importers import ParsedImport
+from app.importers.base import MAX_YEAR, MIN_YEAR, has_unstorable_text, in_range, repair_unicode
 from app.importers.pii import mask_pii as mask_text
 from app.repositories.base import ContactRepo, ConversationRepo
+from app.services.locks import KeyedLocks
 
 if TYPE_CHECKING:
     from app.graph.ingest import GraphIngestService
@@ -49,6 +59,7 @@ RawSpeakerRole = Literal["me", "contact", "skip"]
 # 내 이름으로 쓰지 않는 표기 (카카오톡 안드로이드의 '회원님' 등). 그래프 에피소드의 화자 이름으로 부적절하다.
 GENERIC_ME_NAMES = {"회원님", "me", "나"}
 ME_NAME_MAX = 50  # conversations.me_name 열 길이
+OFFLOAD_CHARS = 50_000  # 본문 합계가 이보다 크면 정규화·가림을 스레드에서 한다
 
 
 class ImportMessage(BaseModel):
@@ -67,6 +78,36 @@ class ImportPayload(BaseModel):
     )
     messages: list[ImportMessage] = Field(min_length=1)
 
+    @model_validator(mode="before")
+    @classmethod
+    def _readable(cls, data: Any) -> Any:
+        """저장할 수 없는 문자(NUL·깨진 유니코드)를 모델 검증보다 먼저 본다.
+
+        본문(`text`)의 깨진 글자는 `?`로 바꿔 읽고(NUL은 `normalize_messages`가 뺀다), id·화자·시각 등
+        그 밖의 값에 있으면 어느 항목인지 알려 주며 돌려보낸다. 그대로 두면 DB 오류(500)가 났다.
+        """
+        if not isinstance(data, dict):
+            return data
+        if has_unstorable_text({k: v for k, v in data.items() if k != "messages"}):
+            raise ValueError("speaker_map·source에 저장할 수 없는 문자가 있습니다 (NUL 또는 깨진 유니코드).")
+        messages = data.get("messages")
+        if not isinstance(messages, list):
+            return data
+        repaired: list[Any] | None = None
+        for idx, item in enumerate(messages):
+            if not isinstance(item, dict):
+                continue
+            if has_unstorable_text([v for k, v in item.items() if k != "text"]):
+                raise ValueError(
+                    f"messages[{idx}]: id·speaker·sent_at에 저장할 수 없는 문자가 있습니다 "
+                    "(NUL 또는 깨진 유니코드)."
+                )
+            text = item.get("text")
+            if isinstance(text, str) and repair_unicode(text) is not text:
+                repaired = repaired if repaired is not None else list(messages)
+                repaired[idx] = {**item, "text": repair_unicode(text)}
+        return data if repaired is None else {**data, "messages": repaired}
+
 
 def normalize_messages(payload: ImportPayload) -> list[NewMessage]:
     """화자 지정·시간대·중복 id를 검사해 저장 형식으로 바꾼다. 문제는 모아서 한 번에 422."""
@@ -75,6 +116,9 @@ def normalize_messages(payload: ImportPayload) -> list[NewMessage]:
     seen: set[str] = set()
     out: list[NewMessage] = []
     for idx, m in enumerate(payload.messages):
+        if has_unstorable_text(m.id):  # id는 열쇠라 고쳐 쓰지 않고 돌려보낸다
+            problems.append(f"messages[{idx}]: 메시지 id에 저장할 수 없는 문자가 있습니다 (NUL 등)")
+            continue
         where = f"messages[{idx}] (id={m.id})"
         role: SpeakerRole | None
         if m.speaker in ("me", "contact"):
@@ -87,7 +131,12 @@ def normalize_messages(payload: ImportPayload) -> list[NewMessage]:
         if m.sent_at.tzinfo is None:
             problems.append(f"{where}: sent_at에 시간대가 없습니다 (예: +09:00)")
             continue
-        text = m.text.replace("\x00", "").strip()  # NUL은 PostgreSQL text에 넣을 수 없다
+        if not in_range(m.sent_at):  # 0001년·9999년은 시간대 변환이 넘쳐 500이 났다
+            problems.append(f"{where}: sent_at이 {MIN_YEAR}~{MAX_YEAR}년을 벗어납니다")
+            continue
+        # NUL과 짝 없는 대리 문자는 PostgreSQL text에 넣을 수 없다 — NUL은 빼고, 깨진 글자는 ?로 바꾼다
+        # (원문 파서의 `clean_text`와 같은 처리). 멀쩡한 글은 그대로다.
+        text = m.text.replace("\x00", "").encode("utf-8", errors="replace").decode("utf-8").strip()
         if not text:
             problems.append(f"{where}: text가 비어 있습니다")
             continue
@@ -110,6 +159,12 @@ ROLE_NAMES = ("me", "contact")
 def mask_messages(messages: list[NewMessage]) -> list[NewMessage]:
     """본문의 개인정보 패턴을 가린 사본 (`app.importers.pii`). id·시각·화자는 그대로."""
     return [m.model_copy(update={"text": mask_text(m.text)[0]}) for m in messages]
+
+
+def _prepare_messages(payload: ImportPayload, mask: bool) -> list[NewMessage]:
+    """검증·정규화와 (API 경로면) 가림. 스레드에서 돈다."""
+    messages = normalize_messages(payload)
+    return mask_messages(messages) if mask else messages
 
 
 def source_hash(messages: list[NewMessage]) -> str:
@@ -140,6 +195,7 @@ class ImportService:
         # off: 그래프 안 씀 / sync: 요청 안에서 수집(스크립트·평가) / background: 응답 뒤 수집(API)
         self.graph_mode: GraphMode = graph_mode if graph_ingest is not None else "off"
         self._tasks: set[asyncio.Task[None]] = set()
+        self._conv_locks = KeyedLocks()  # 대화방 id → 저장·묶음 재생성·삭제를 한 번에 하나씩
 
     async def create_conversation(
         self,
@@ -149,24 +205,54 @@ class ImportService:
         source: str,
         source_key: str | None,
         me_name: str | None = None,
+        *,
+        max_per_user: int | None = None,
     ) -> Conversation:
+        """대화방을 만든다. `max_per_user`(API 경로의 `MAX_CONVERSATIONS_PER_USER`)를 넘으면 422."""
         contact = await self._contacts.get(user_id, contact_id)  # 소유권
+        if max_per_user is not None:
+            owned, _ = await self._conversations.count_owned(user_id)
+            if owned >= max_per_user:
+                raise QuotaExceededError(
+                    f"대화방은 계정당 {max_per_user:,}개까지 만들 수 있습니다 (지금 {owned:,}개). "
+                    "쓰지 않는 대화방을 지운 뒤 다시 시도하세요."
+                )
         key = (source_key or f"conv-{uuid4().hex[:8]}").strip()
+        # '회원님'(안드로이드 내보내기의 본인 표기) 같은 말은 내 이름이 아니다. 그대로 두면 그래프 에피소드의
+        # 화자가 '회원님'이 된다 — 비워 두면 첫 가져오기의 화자 지정이나 기본 이름('사용자')을 쓴다.
+        name = (me_name or "").strip()
         return await self._conversations.create(
-            user_id, contact.id, (title or f"{contact.alias}와의 대화").strip(), source, key, me_name
+            user_id,
+            contact.id,
+            (title or f"{contact.alias}와의 대화").strip(),
+            source,
+            key,
+            name if name and name not in GENERIC_ME_NAMES else None,
         )
 
     async def import_messages(
-        self, user_id: str, conversation_id: UUID, payload: ImportPayload, *, mask_pii: bool = False
+        self,
+        user_id: str,
+        conversation_id: UUID,
+        payload: ImportPayload,
+        *,
+        mask_pii: bool = False,
+        max_user_messages: int | None = None,
     ) -> ImportJob:
-        """JSON 메시지 가져오기. `mask_pii`는 API 경로만 켠다 (스크립트·평가는 원문 그대로)."""
+        """JSON 메시지 가져오기. `mask_pii`와 `max_user_messages`(계정당 보관 한도)는 API 경로만 준다.
+
+        스크립트·평가는 둘 다 주지 않는다 (원문 그대로, 한도 없음).
+        """
         conv = await self._conversations.get(user_id, conversation_id)  # 소유권
         if len(payload.messages) > self._max_messages:
             raise InvalidInputError(f"한 번에 {self._max_messages}개까지 가져올 수 있습니다.")
-        messages = normalize_messages(payload)
-        if mask_pii:
-            messages = mask_messages(messages)
-        return await self._save(user_id, conv, messages)
+        # 정규화·가림은 CPU 작업이다(8MB 본문이면 수백 ms) — 큰 본문은 이벤트 루프 밖에서 돌려 다른 요청을
+        # 막지 않는다. 작은 본문은 그 자리에서 한다 (스레드를 오가는 비용이 더 크다).
+        if sum(len(m.text) for m in payload.messages) > OFFLOAD_CHARS:
+            messages = await asyncio.to_thread(_prepare_messages, payload, mask_pii)
+        else:
+            messages = _prepare_messages(payload, mask_pii)
+        return await self._save(user_id, conv, messages, max_user_messages=max_user_messages)
 
     async def import_parsed(
         self,
@@ -176,6 +262,7 @@ class ImportService:
         speaker_map: dict[str, RawSpeakerRole],
         *,
         keep_recent: int | None = None,
+        max_user_messages: int | None = None,
     ) -> ImportJob:
         """파서 결과(`app.importers.parse_import`)에 화자 지정을 입혀 저장한다.
 
@@ -216,8 +303,13 @@ class ImportService:
                 f"한 번에 {self._max_messages}개까지 가져올 수 있습니다 (지금 {len(messages)}개). "
                 "keep_recent로 최근 메시지만 가져오세요."
             )
-        conv = await self._adopt_me_name(user_id, conv, parsed, speaker_map)
-        return await self._save(user_id, conv, messages)
+        return await self._save(
+            user_id,
+            conv,
+            messages,
+            me_name_from=(parsed, speaker_map),
+            max_user_messages=max_user_messages,
+        )
 
     async def _adopt_me_name(
         self, user_id: str, conv: Conversation, parsed: ParsedImport, speaker_map: dict[str, RawSpeakerRole]
@@ -240,13 +332,74 @@ class ImportService:
             return conv
         return await self._conversations.set_me_name(user_id, conv.id, names[0])
 
-    async def _save(self, user_id: str, conv: Conversation, messages: list[NewMessage]) -> ImportJob:
-        """정규화된 메시지를 저장하고 묶음을 다시 만든다. 같은 내용(해시)이면 기존 작업을 돌려준다."""
-        digest = source_hash(messages)
+    async def _save(
+        self,
+        user_id: str,
+        conv: Conversation,
+        messages: list[NewMessage],
+        *,
+        me_name_from: tuple[ParsedImport, dict[str, RawSpeakerRole]] | None = None,
+        max_user_messages: int | None = None,
+    ) -> ImportJob:
+        """정규화된 메시지를 저장하고 묶음을 다시 만든다. 같은 내용(해시)이면 기존 작업을 돌려준다.
 
+        저장과 묶음 다시 만들기는 **대화방 단위로 한 번에 하나씩** 한다. 같은 방에 가져오기 두 건이 겹치면
+        서로의 묶음 교체가 엇갈려 묶음이 두 벌 남았고, 같은 파일을 동시에 올리면 유일 제약에 걸려 한쪽이
+        500이었다 (2026-11-11 검토). 그래프 수집은 잠금 밖에서 시작한다 (오래 걸린다).
+        """
+        digest = source_hash(messages)
+        if max_user_messages is None:
+            job, start_graph = await self._save_locked(user_id, conv, messages, digest, me_name_from)
+        else:
+            # 계정당 보관 한도: 세고 넣는 사이에 같은 사용자의 다른 가져오기가 끼어들지 못하게 한다.
+            async with self._conv_locks.hold(("quota", user_id)):
+                await self._check_message_quota(user_id, conv, messages, max_user_messages)
+                job, start_graph = await self._save_locked(user_id, conv, messages, digest, me_name_from)
+        if start_graph:
+            job = await self._start_graph_ingest(user_id, conv.id, job)
+        return job
+
+    async def _save_locked(
+        self,
+        user_id: str,
+        conv: Conversation,
+        messages: list[NewMessage],
+        digest: str,
+        me_name_from: tuple[ParsedImport, dict[str, RawSpeakerRole]] | None,
+    ) -> tuple[ImportJob, bool]:
+        async with self._conv_locks.hold(conv.id):
+            if me_name_from is not None:  # 첫 가져오기인지는 잠금 안에서 봐야 한다
+                conv = await self._adopt_me_name(user_id, conv, *me_name_from)
+            return await self._store(user_id, conv, messages, digest)
+
+    async def _check_message_quota(
+        self, user_id: str, conv: Conversation, messages: list[NewMessage], limit: int
+    ) -> None:
+        """이번에 **새로** 들어갈 메시지까지 합쳐 계정당 한도를 넘으면 아무것도 저장하지 않고 422.
+
+        이미 있는 메시지(같은 파일을 다시 올림)는 세지 않는다.
+        """
+        existing = await self._conversations.message_keys(user_id, conv.id)
+        new = sum(1 for m in messages if m.source_key not in existing)
+        if new == 0:
+            return
+        _, total = await self._conversations.count_owned(user_id)
+        if total + new > limit:
+            raise QuotaExceededError(
+                f"가져온 메시지는 계정당 {limit:,}건까지 보관할 수 있습니다 "
+                f"(지금 {total:,}건, 이번에 새로 {new:,}건). 오래된 대화방을 지우거나 "
+                "keep_recent로 최근 메시지만 가져오세요."
+            )
+
+    async def _store(
+        self, user_id: str, conv: Conversation, messages: list[NewMessage], digest: str
+    ) -> tuple[ImportJob, bool]:
+        """(작업, 그래프 수집을 시작할 것인가). 대화방 잠금 안에서 부른다."""
         existing = await self._conversations.find_job(user_id, conv.id, digest)
         if existing is not None and existing.status == "completed":
-            return existing
+            # 저장은 끝났다. 그래프 수집만 덜 됐으면(상한에 걸렸거나 실패) 같은 파일을 다시 올렸을 때
+            # 남은 것을 이어서 넣는다 — 작업의 graph_episodes는 이번 실행에서 넣은 수가 된다.
+            return existing, await self._should_retry_graph(user_id, existing)
         # 묶음 생성이 실패했던 작업(failed)은 같은 내용을 다시 올리면 같은 작업 id로 다시 시도한다.
 
         inserted, duplicates = await self._conversations.add_messages(user_id, conv.id, messages)
@@ -262,17 +415,36 @@ class ImportService:
         )
         try:
             job.episodes = await self.reindex(user_id, conv)
+        except NotFoundError:
+            raise  # 저장하는 사이에 대화방이 지워졌다 — 남길 작업도 없다 (404)
         except Exception as exc:  # noqa: BLE001 - 임베딩·저장 장애는 작업 실패로 기록하고 재시도 가능하게 둔다
-            log.warning("import reindex failed conversation=%s: %s", conv.id, exc)
+            log.warning("import reindex failed conversation=%s: %s", conv.id, exception_kind(exc))
             job.status = "failed"
             job.error_code = "reindex_failed"
-            job.error_message = str(exc)[:500]
+            job.error_message = exception_kind(exc)  # 종류만 — 문구에는 원문이 섞일 수 있다
         if self.graph_mode != "off" and job.status == "completed" and inserted > 0:
             job.graph_status = "pending"
-        job = await self._conversations.save_job(job)
-        if job.graph_status == "pending":
-            job = await self._start_graph_ingest(user_id, conv.id, job)
-        return job
+        try:
+            job = await self._conversations.save_job(job)
+        except VersionConflictError:
+            # 다른 서버 프로세스가 같은 내용을 방금 저장했다 (프로세스 안에서는 잠금이 막는다).
+            # 메시지는 이미 들어가 있으니 그쪽 작업을 돌려준다.
+            other = await self._conversations.find_job(user_id, conv.id, digest)
+            if other is None:
+                raise
+            return other, False
+        return job, job.graph_status == "pending"
+
+    async def _should_retry_graph(self, user_id: str, job: ImportJob) -> bool:
+        """끝난 가져오기를 다시 올렸을 때 그래프 수집을 다시 시도할 것인가.
+
+        상한에 걸렸던 작업은 지금 예산이 있을 때만(없으면 상태를 그대로 둔다), 실패했던 작업은 언제나.
+        """
+        if self.graph_mode == "off" or self._graph_ingest is None:
+            return False
+        if job.graph_status == "failed":
+            return True
+        return job.graph_status == "limited" and not await self._graph_ingest.is_limited(user_id)
 
     async def _start_graph_ingest(self, user_id: str, conversation_id: UUID, job: ImportJob) -> ImportJob:
         assert self._graph_ingest is not None
@@ -280,7 +452,7 @@ class ImportService:
             try:
                 await self._graph_ingest.ingest_user(user_id, job.id)
             except Exception as exc:  # noqa: BLE001 - 작업 상태에 failed로 남아 있다
-                log.warning("sync graph ingest failed: %s", exc)
+                log.warning("sync graph ingest failed: %s", exception_kind(exc))
             return await self._conversations.get_job(user_id, job.id)
         task = asyncio.create_task(self._graph_ingest_background(user_id, conversation_id, job.id))
         self._tasks.add(task)
@@ -292,7 +464,7 @@ class ImportService:
         try:
             await self._graph_ingest.ingest_user(user_id, job_id)
         except Exception as exc:  # noqa: BLE001 - 상태는 ingest가 failed로 기록했다
-            log.warning("background graph ingest failed job=%s: %s", job_id, exc)
+            log.warning("background graph ingest failed job=%s: %s", job_id, exception_kind(exc))
 
     async def wait_graph_tasks(self) -> None:
         """테스트·종료용: 떠 있는 백그라운드 수집을 기다린다."""
@@ -306,6 +478,10 @@ class ImportService:
         사용자의 삭제 요청은 원문 삭제가 우선이고, 그래프 잔여물은 재시도 대상으로 남긴다.
         """
         conv = await self._conversations.get(user_id, conversation_id)  # 소유권
+        async with self._conv_locks.hold(conv.id):  # 진행 중인 가져오기의 저장이 끝난 뒤에 지운다
+            return await self._delete_conversation(user_id, conv)
+
+    async def _delete_conversation(self, user_id: str, conv: Conversation) -> DeletionResult:
         messages = await self._conversations.list_messages(user_id, conv.id)
         graph_removed = 0
         graph_error: str | None = None
@@ -314,8 +490,8 @@ class ImportService:
             try:
                 graph_removed = await self._graph_ingest.remove_episodes(user_id, names)
             except Exception as exc:  # noqa: BLE001 - DB 삭제는 계속한다
-                log.warning("graph removal failed conversation=%s: %s", conv.id, exc)
-                graph_error = str(exc)[:500]
+                graph_error = exception_kind(exc)
+                log.warning("graph removal failed conversation=%s: %s", conv.id, graph_error)
         deleted_messages, deleted_episodes = await self._conversations.delete_conversation(user_id, conv.id)
         return DeletionResult(
             conversation_id=conv.id,
@@ -326,10 +502,25 @@ class ImportService:
         )
 
     async def reindex(self, user_id: str, conv: Conversation) -> int:
-        """대화방의 묶음을 전부 다시 만들고 임베딩한다. 임베딩 모델을 바꿨을 때도 이걸 돌린다."""
+        """대화방의 묶음을 전부 다시 만든다. 임베딩 모델을 바꿨을 때도 이걸 돌린다.
+
+        본문(`context_text`)이 그대로인 묶음은 저장돼 있는 벡터를 다시 쓴다 — **같은 임베딩 버전일 때만**.
+        메시지 몇 건을 더 가져올 때마다 방 전체(수천 묶음)를 다시 임베딩하던 것을 새 묶음만 하게 된다.
+        모델(버전)이 바뀌면 다시 쓸 것이 없으므로 전부 새로 계산한다.
+        """
         all_messages = await self._conversations.list_messages(user_id, conv.id)
         drafts = build_episodes(all_messages, conv.source_key, self._window)
-        vectors = await self._embedder.embed_passages([d.context_text for d in drafts])
+        version = self._embedder.version
+        known = await self._conversations.episode_vectors(user_id, conv.id) if drafts else {}
+        vectors_by_text = {
+            d.context_text: known[f"{version}\n{d.context_text}"]
+            for d in drafts
+            if f"{version}\n{d.context_text}" in known
+        }
+        fresh = list(dict.fromkeys(d.context_text for d in drafts if d.context_text not in vectors_by_text))
+        if fresh:
+            vectors_by_text.update(zip(fresh, await self._embedder.embed_passages(fresh), strict=True))
+        vectors = [vectors_by_text[d.context_text] for d in drafts]
         return await self._conversations.replace_episodes(
-            user_id, conv.id, conv.contact_id, drafts, vectors, self._embedder.version
+            user_id, conv.id, conv.contact_id, drafts, vectors, version
         )

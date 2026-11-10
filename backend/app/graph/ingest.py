@@ -2,7 +2,7 @@
 
 - group_id = user_id. 사용자 그래프는 서로 섞이지 않는다.
 - Graphiti는 넣는 순서대로 이전 사실을 무효화하므로 시간 순이 필수다. 그래서 수집은 **사용자 단위로 직렬**이다
-  (`ingest_user`: 사용자별 asyncio.Lock, 미수집 메시지를 대화방 가리지 않고 전체 시각 순으로). 가져오기 직후
+  (`ingest_user`: 사용자별 잠금, 미수집 메시지를 대화방 가리지 않고 전체 시각 순으로). 가져오기 직후
   백그라운드 수집도 이 경로를 탄다 — 다른 방의 가져오기가 겹치면 뒤 작업이 잠금을 기다렸다가 남은 것을 넣는다
   (11-09 백로그 A3; 그 전엔 대화방별 태스크라 방 사이 순서가 어긋날 수 있었다).
 - 메시지마다 `graph_ingested_at`을 찍어 재실행이 멱등하다. 에피소드 하나가 haiku로 10~15초 걸린다.
@@ -10,37 +10,66 @@
 - 수집 도중 대화방(또는 상대·계정)이 지워지면 그 방의 남은 메시지는 넣지 않고, 모델을 부르는 사이에
   지워졌으면 방금 넣은 에피소드를 되돌린다 — 지운 대화가 그래프에 남지 않게.
 
-비용 상한 (메시지 1건 = 에피소드 1건 = 모델 호출 여러 번)
-- `user_message_cap`: 사용자 한 명의 메시지 중 그래프에 **들어가 있는** 수의 상한
-  (대화를 지우면 그만큼 다시 여유가 생긴다).
-- `daily_global_cap`: 하루(사용량 날짜, 기본 KST) 동안 전체 사용자가 넣는 수의 상한. DB의 오늘 수집분과 이
-  프로세스가 센 값 중 큰 쪽을 쓴다 — 수집 뒤 대화를 지워도 오늘 쓴 예산이 되살아나지 않는다
-  (프로세스가 떠 있는 동안).
-- 상한은 **API 경로**(`ingest_user`: 가져오기 뒤 수집, 서버 시작 이어받기)에만 건다. 운영자가 직접 돌리는
-  스크립트의 `ingest_pending`·`ingest_conversation`은 기본이 상한 없음이라 합성 적재·평가 결과가 설정에 따라
-  달라지지 않는다.
-- 상한에 닿으면 시각 순으로 예산만큼만 넣고 멈춘다. 작업은 `limited`(graph_error에 `user_cap`/`daily_cap`),
-  남은 메시지는 미수집으로 둔다. 문체 검색(C)은 상한과 무관하다.
-- `resume_all`은 예산이 0인 사용자를 건너뛴다(모델 호출 없음). 날이 바뀌어 하루 예산이 생기면 이어서 넣는다.
+비용 상한 (메시지 1건 = 에피소드 1건 = 모델 호출 여러 번) — 2026-11-11 검토 뒤 다시 짰다
+- 세는 단위: 메시지 1건이 1, 본문 1,000자마다 1을 더한다 (`domain.conversation.graph_units`).
+  4,000자 메시지는 5로 센다 — 에피소드의 모델 비용이 본문 길이를 따라가기 때문이다.
+- **지워지지 않는 카운터**: API 경로로 넣을 때마다 `usage_counters.graph_episodes`(사용자·일)에 더한다.
+  대화를 지워도 줄지 않는다. 예전에는 "지금 그래프에 들어 있는 수"만 봐서 가져오기→삭제를 되풀이하면
+  상한이 무력했다.
+- `user_message_cap`: 사용자가 오늘 더 넣을 수 있는 양 = 상한 − max(지금 그래프에 든 양, 오늘 넣은 양).
+  대화를 지워도 오늘은 여유가 되살아나지 않는다 (내일은 지금 든 양 기준으로 다시 생긴다).
+- `daily_global_cap`: 하루(사용량 날짜, 기본 KST) 동안 전체 사용자가 넣는 양 = 오늘 카운터의 합계.
+  계정을 지우면 그 사용자의 카운터 행도 지워지므로, 이 프로세스가 센 값과 견줘 큰 쪽을 쓴다.
+- 예산이 모자라면 **가장 최근 메시지부터** 예산만큼 골라, 고른 것을 시각 순으로 넣는다 (사건 맥락은 최근
+  것이 쓸모 있다 — 예전에는 가장 오래된 것부터 채웠다). 나중에 예산이 생겨 더 오래된 메시지를 넣게 되면
+  그 실행은 앞 실행보다 과거의 메시지를 넣는다. Graphiti는 사실의 선후를 발화 시각(valid_at)으로 따지지만,
+  넣는 순서가 뒤바뀐 구간에서는 무효화 판단이 덜 정확할 수 있다.
+- 상한과 카운터는 **API 경로**(`ingest_user`: 가져오기 뒤 수집, 재시작·주기 이어받기)에만 건다. 운영자가
+  직접 돌리는 경로(`ingest_pending`·`ingest_conversation`, `ingest_user(enforce_caps=False)` —
+  합성 적재, 평가, `scripts/graph_reset.py`)는 상한도 카운터도 건드리지 않는다.
+- 상한에 닿으면 작업은 `limited`(graph_error에 `user_cap`/`daily_cap`), 남은 메시지는 미수집으로 둔다.
+  같은 사용자의 다른 작업이 `pending`/`running`으로 남아 있으면(프로세스가 죽었던 경우) 함께 `limited`로
+  정리한다 — 화면이 끝없이 "정리 중"으로 보이지 않게. 문체 검색(C)은 상한과 무관하다.
+- `resume_all`은 예산이 0인 사용자를 건너뛴다(모델 호출 없음). 날이 바뀌어 예산이 생기면 이어서 넣는다.
+- 한계: 잠금과 프로세스 집계는 서버 프로세스 하나 안에서만 유효하다.
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from datetime import UTC, date, datetime, time, timedelta, timezone
 from uuid import UUID
 
 from app.core.errors import NotFoundError
-from app.domain.conversation import Conversation, GraphStatus, Message
+from app.domain.conversation import Conversation, GraphStatus, Message, exception_kind, graph_units
 from app.graph.episodes import build_graph_episodes
 from app.graph.store import GraphStore
 from app.repositories.base import ContactRepo, ConversationRepo
+from app.services.locks import KeyedLocks
 
 log = logging.getLogger(__name__)
 
 USER_CAP = "user_cap"
 DAILY_CAP = "daily_cap"
+_BUDGET = "budget"  # 예산 확인과 예약을 한 번에 하나씩 하는 잠금의 키
+
+Pending = tuple[Message, Conversation, str]  # (메시지, 대화방, 에피소드 본문)
+
+
+def pick_recent(pending: list[Pending], budget: int) -> list[Pending]:
+    """시각 순 목록에서 예산에 드는 **가장 최근** 구간을 고른다 (결과도 시각 순).
+
+    최근 것부터 거슬러 올라가다 예산을 넘기는 메시지를 만나면 멈춘다 — 고른 구간은 끊기지 않는다.
+    """
+    used = 0
+    start = len(pending)
+    while start > 0:
+        units = graph_units(pending[start - 1][0].text)
+        if used + units > budget:
+            break
+        used += units
+        start -= 1
+    return pending[start:]
 
 
 class GraphIngestService:
@@ -58,12 +87,13 @@ class GraphIngestService:
         self._conversations = conversations
         self._contacts = contacts
         self._prepared = False
-        self._locks: dict[str, asyncio.Lock] = {}  # user_id → 수집 잠금 (프로세스 안에서만 유효)
+        self._locks = KeyedLocks()  # ("user", user_id) → 수집 잠금 / _BUDGET → 예산 확인·예약
         self.user_message_cap = user_message_cap  # 0 = 무제한
         self.daily_global_cap = daily_global_cap  # 0 = 무제한
         self._day_tz = timezone(timedelta(hours=day_offset_hours))
-        self._global_day: date | None = None  # 아래 카운터가 세는 날
-        self._global_used = 0  # 오늘 이 프로세스가 넣은(예약 포함) 수와 DB 값 중 큰 쪽
+        # 오늘 이 프로세스가 API 경로로 넣은 양 — DB 카운터가 (계정 삭제로) 줄어도 남는다.
+        self._tally_day: date | None = None
+        self._tally = 0
 
     @property
     def capped(self) -> bool:
@@ -75,44 +105,32 @@ class GraphIngestService:
         start = datetime.combine(local.date(), time.min, tzinfo=self._day_tz)
         return local.date(), start.astimezone(UTC)
 
-    async def _sync_global(self) -> None:
-        """오늘의 전체 수집 수를 DB와 맞춘다 (날이 바뀌면 0부터)."""
-        today, since = self._today()
-        if self._global_day != today:
-            self._global_day, self._global_used = today, 0
-        in_db = await self._conversations.count_graph_ingested(None, since)
-        self._global_used = max(self._global_used, in_db)
+    def _process_tally(self, day: date, add: int = 0) -> int:
+        if self._tally_day != day:
+            self._tally_day, self._tally = day, 0
+        self._tally = max(self._tally + add, 0)
+        return self._tally
 
-    def _reserve_global(self) -> bool:
-        """하루 전체 예산에서 1건을 잡는다. 남은 게 없으면 False."""
-        if not self.daily_global_cap:
-            return True
+    async def used_by(self, user_id: str) -> int:
+        """이 사용자가 상한에서 쓴 양: max(지금 그래프에 든 양, 오늘 넣은 양)."""
         today, _ = self._today()
-        if self._global_day != today:
-            self._global_day, self._global_used = today, 0
-        if self._global_used >= self.daily_global_cap:
-            return False
-        self._global_used += 1
-        return True
-
-    def _release_global(self) -> None:
-        if self.daily_global_cap and self._global_used > 0:
-            self._global_used -= 1
+        in_graph = await self._conversations.graph_units_in_graph(user_id)
+        return max(in_graph, await self._conversations.graph_usage(today, user_id))
 
     async def remaining(self, user_id: str) -> tuple[int | None, str | None]:
-        """(지금 더 넣을 수 있는 메시지 수, 먼저 닿는 상한 `user_cap`/`daily_cap`).
+        """(지금 더 넣을 수 있는 양, 먼저 닿는 상한 `user_cap`/`daily_cap`).
 
-        상한이 없으면 (None, None).
+        상한이 없으면 (None, None). 양의 단위는 `graph_units`(보통 메시지 1건 = 1).
         """
         left: int | None = None
         reason: str | None = None
         if self.daily_global_cap:
-            await self._sync_global()
-            left = max(self.daily_global_cap - self._global_used, 0)
+            today, _ = self._today()
+            used = max(await self._conversations.graph_usage(today), self._process_tally(today))
+            left = max(self.daily_global_cap - used, 0)
             reason = DAILY_CAP
         if self.user_message_cap:
-            used = await self._conversations.count_graph_ingested(user_id)
-            user_left = max(self.user_message_cap - used, 0)
+            user_left = max(self.user_message_cap - await self.used_by(user_id), 0)
             if left is None or user_left <= left:
                 left, reason = user_left, USER_CAP
         return left, reason
@@ -124,6 +142,25 @@ class GraphIngestService:
         left, _ = await self.remaining(user_id)
         return left == 0
 
+    async def _reserve(self, user_id: str, units: int) -> tuple[str | None, date]:
+        """예산에서 units를 잡고 카운터에 더한다. 모자라면 잡지 않고 (이유, 날짜)를 돌려준다.
+
+        확인과 예약 사이에 다른 사용자의 수집이 끼어들지 못하게 프로세스 안에서 한 번에 하나씩 한다.
+        """
+        async with self._locks.hold(_BUDGET):
+            today, _ = self._today()
+            left, reason = await self.remaining(user_id)
+            if left is not None and units > left:
+                return reason or DAILY_CAP, today
+            await self._conversations.add_graph_usage(user_id, today, units)
+            self._process_tally(today, units)
+            return None, today
+
+    async def _release(self, user_id: str, day: date, units: int) -> None:
+        """에피소드를 넣지 못했다 — 잡아 둔 예산을 돌려놓는다."""
+        await self._conversations.add_graph_usage(user_id, day, -units)
+        self._process_tally(day, -units)
+
     async def ingest_user(
         self, user_id: str, job_id: UUID | None = None, *, enforce_caps: bool = True
     ) -> int:
@@ -131,16 +168,21 @@ class GraphIngestService:
 
         잠금을 기다리는 동안 다른 작업이 먼저 넣은 메시지는 pending에서 빠지므로 중복 수집은 없다.
         job_id를 주면 그 작업의 graph_* 상태를 이번 실행 결과로 갱신한다
-        (다른 방의 메시지가 섞여 들어갈 수 있다). 상한(`GRAPH_INGEST_*_CAP`)을 따른다.
+        (다른 방의 메시지가 섞여 들어갈 수 있다). 상한(`GRAPH_INGEST_*_CAP`)을 따르고 카운터에 센다 —
+        운영자가 직접 다시 넣을 때만 `enforce_caps=False`(상한 없음, 카운터도 그대로).
         """
-        lock = self._locks.setdefault(user_id, asyncio.Lock())
-        if lock.locked():
+        key = ("user", user_id)
+        if self._locks.busy(key):
             await self._job(user_id, job_id, "pending", 0, None)
-        async with lock:
-            done = await self.ingest_pending(user_id, None, job_id, enforce_caps=enforce_caps)
+        async with self._locks.hold(key):
+            done, stopped = await self._run(user_id, None, job_id, metered=enforce_caps)
             if done:
                 # 이번 실행이 다른 작업(예: 어제 상한에 걸린 작업)의 남은 메시지까지 넣었을 수 있다.
                 await self._conversations.close_stale_graph_jobs(user_id)
+            if stopped is not None:
+                # 상한 때문에 남겼다. pending/running으로 남은 다른 작업(죽은 프로세스의 흔적)도 정리한다.
+                # 지금 잠금을 기다리는 작업은 자기 차례에 상태를 다시 쓴다.
+                await self._conversations.limit_stale_graph_jobs(user_id, stopped)
             return done
 
     async def ingest_conversation(
@@ -158,20 +200,32 @@ class GraphIngestService:
     ) -> int:
         """대화방들의 미수집 메시지를 시각 순으로 넣는다. 넣은 수를 돌려준다.
 
-        `enforce_caps`가 참이면 상한 안에서만 넣고, 남기면 작업을 `limited`로 표시한다.
+        `enforce_caps`가 참이면 상한 안에서만 넣고(카운터에도 센다), 남기면 작업을 `limited`로 표시한다.
+        기본(운영자 경로)은 상한도 카운터도 없다.
         """
+        done, _ = await self._run(user_id, conversation_ids, job_id, metered=enforce_caps)
+        return done
+
+    async def _run(
+        self, user_id: str, conversation_ids: list[UUID] | None, job_id: UUID | None, *, metered: bool
+    ) -> tuple[int, str | None]:
+        """(넣은 수, 상한 때문에 남겼으면 그 이유). `metered`면 상한을 따르고 카운터에 센다."""
         convs = (
             [await self._conversations.get(user_id, cid) for cid in conversation_ids]
             if conversation_ids is not None
             else await self._conversations.list(user_id)
         )
-        pending: list[tuple[Message, Conversation, str]] = []  # (message, conversation, episode body)
+        pending: list[Pending] = []
         for conv in convs:
             contact = await self._contacts.get(user_id, conv.contact_id)
             messages = await self._conversations.list_messages(user_id, conv.id)
+            if contact.graph_name is None and any(m.graph_ingested_at is None for m in messages):
+                # 이 상대를 처음 그래프에 넣는다 — 지금 이름을 그래프 이름으로 남긴다. 나중에 별칭을
+                # 바꿔도 에피소드 본문과 검색은 이 이름을 쓴다 (노드가 둘로 갈리지 않게).
+                contact = await self._contacts.remember_graph_name(user_id, contact.id, contact.alias)
             episodes = {
                 e.message_id: e
-                for e in build_graph_episodes(messages, conv.source_key, conv.me_name, contact.alias)
+                for e in build_graph_episodes(messages, conv.source_key, conv.me_name, contact.name_in_graph)
             }
             pending.extend((m, conv, episodes[m.id].body) for m in messages if m.graph_ingested_at is None)
         pending.sort(key=lambda item: item[0].sent_at)
@@ -179,38 +233,40 @@ class GraphIngestService:
         await self._job(user_id, job_id, "running", 0, None)
         if not pending:
             await self._job(user_id, job_id, "completed", 0, None)
-            return 0
+            return 0, None
 
-        enforce = enforce_caps and self.capped
-        budget: int | None = None
-        limit_reason: str | None = None  # 예산을 다 쓰면 멈추는 이유 (먼저 닿는 상한)
-        if enforce:
+        chosen = pending
+        stopped: str | None = None  # 상한 때문에 남긴 이유
+        if metered and self.capped:
             budget, limit_reason = await self.remaining(user_id)
-            if budget == 0:
-                log.info("graph ingest skipped user=%s: %s", user_id, limit_reason)
-                await self._job(user_id, job_id, "limited", 0, limit_reason)
-                return 0
+            if budget is not None:
+                chosen = pick_recent(pending, budget)
+                if len(chosen) < len(pending):
+                    stopped = limit_reason or DAILY_CAP
+            if not chosen:
+                log.info("graph ingest skipped user=%s: %s", user_id, stopped)
+                await self._job(user_id, job_id, "limited", 0, stopped)
+                return 0, stopped
 
         if not self._prepared:
             await self._store.prepare()
             self._prepared = True
 
         done = 0
-        stopped: str | None = None
         gone: set[UUID] = set()  # 수집 도중 지워진 대화방 — 남은 메시지를 그래프에 넣지 않는다
         try:
-            for message, conv, body in pending:
+            for message, conv, body in chosen:
                 if conv.id in gone:
                     continue
                 if not await self._exists(user_id, conv.id):
                     gone.add(conv.id)
                     continue
-                if enforce:
-                    if budget is not None and done >= budget:
-                        stopped = limit_reason or DAILY_CAP
-                        break
-                    if not self._reserve_global():  # 다른 사용자의 수집이 그 사이 하루 예산을 썼다
-                        stopped = DAILY_CAP
+                units = graph_units(message.text)
+                reserved_on: date | None = None
+                if metered:
+                    refused, reserved_on = await self._reserve(user_id, units)
+                    if refused is not None:  # 다른 사용자의 수집이 그 사이 하루 예산을 썼다
+                        stopped = refused
                         break
                 name = f"{conv.source_key}:{message.source_key}"
                 try:
@@ -222,12 +278,13 @@ class GraphIngestService:
                         source_description=f"과거 대화 ({conv.title})",
                     )
                 except Exception:
-                    if enforce:
-                        self._release_global()
+                    if reserved_on is not None:
+                        await self._release(user_id, reserved_on, units)
                     raise
                 if not await self._exists(user_id, conv.id):
                     # 모델을 부르는 사이(10~15초)에 대화방이 지워졌다. 삭제는 이미 끝났으므로 방금 넣은
                     # 에피소드를 여기서 되돌린다 — 지운 대화가 그래프에 남으면 안 된다.
+                    # 잡아 둔 예산은 돌려놓지 않는다 (모델은 이미 불렸다).
                     gone.add(conv.id)
                     await self._store.remove_episodes(user_id, [name])
                     continue
@@ -235,8 +292,9 @@ class GraphIngestService:
                 done += 1
                 await self._job(user_id, job_id, "running", done, None)
         except Exception as exc:
-            log.warning("graph ingest failed user=%s after %d episodes: %s", user_id, done, exc)
-            await self._job(user_id, job_id, "failed", done, str(exc)[:500])
+            kind = exception_kind(exc)  # 예외 문구에는 에피소드 본문(대화 원문)이 섞일 수 있다
+            log.warning("graph ingest failed user=%s after %d episodes: %s", user_id, done, kind)
+            await self._job(user_id, job_id, "failed", done, kind)
             raise
         if gone:
             log.info("graph ingest skipped %d deleted conversation(s) user=%s", len(gone), user_id)
@@ -249,9 +307,9 @@ class GraphIngestService:
                 len(pending) - done,
             )
             await self._job(user_id, job_id, "limited", done, stopped)
-            return done
+            return done, stopped
         await self._job(user_id, job_id, "completed", done, None)
-        return done
+        return done, None
 
     async def _exists(self, user_id: str, conversation_id: UUID) -> bool:
         try:
@@ -282,10 +340,10 @@ class GraphIngestService:
         """그래프를 지우고 메시지를 다시 수집 대상으로 되돌린다. (그래프에서 지운 수, 되돌린 메시지 수).
 
         대화방을 주면 그 방의 에피소드만 지운다(다른 방 사실은 남는다). 안 주면 사용자 group 전체를
-        DETACH DELETE 한다 — 스키마·프롬프트를 바꿔 다시 뽑을 때. 실제 재수집은 `ingest_user`로.
+        DETACH DELETE 한다 — 스키마·프롬프트를 바꿔 다시 뽑을 때. 실제 재수집은
+        `ingest_user(user_id, enforce_caps=False)`로 (운영자 작업이라 상한을 따르지 않는다).
         """
-        lock = self._locks.setdefault(user_id, asyncio.Lock())
-        async with lock:  # 진행 중인 수집과 겹치지 않게
+        async with self._locks.hold(("user", user_id)):  # 진행 중인 수집과 겹치지 않게
             if conversation_id is None:
                 removed = await self._store.remove_group(user_id)
             else:
@@ -299,19 +357,25 @@ class GraphIngestService:
         return removed, reset
 
     async def resume_all(self) -> dict[str, int]:
-        """서버 시작 시: 미수집 메시지가 남은 사용자마다 이어서 넣고, 끝난 작업의 상태를 정리한다.
+        """서버 시작·주기 작업: 미수집 메시지가 남은 사용자마다 이어서 넣고, 작업 상태를 정리한다.
 
         프로세스가 죽어 pending/running인 채 남은 작업을 살린다. 사용자 단위로 순서대로(잠금 안에서) 돈다.
-        상한 때문에 지금 넣을 수 없는 사용자는 건너뛴다 — 재시작할 때마다 다시 돌지 않는다.
+        상한 때문에 지금 넣을 수 없는 사용자는 건너뛰되(모델 호출 없음), 그 사용자의 pending/running
+        작업은 `limited`로 바꾼다 — 재시작할 때마다 다시 돌지도, "정리 중"으로 남지도 않는다.
         """
         done: dict[str, int] = {}
         for user_id in await self._conversations.users_with_pending_graph():
-            if await self.is_limited(user_id):
-                continue
+            if self._locks.busy(("user", user_id)):
+                continue  # 지금 수집 중이다 — 그 실행이 끝나면서 상태를 정리한다
+            if self.capped:
+                left, reason = await self.remaining(user_id)
+                if left == 0:
+                    await self._conversations.limit_stale_graph_jobs(user_id, reason or DAILY_CAP)
+                    continue
             try:
                 done[user_id] = await self.ingest_user(user_id)
             except Exception as exc:  # noqa: BLE001 - 한 사용자 실패가 다른 사용자를 막지 않는다
-                log.warning("graph resume failed user=%s: %s", user_id, exc)
+                log.warning("graph resume failed user=%s: %s", user_id, exception_kind(exc))
                 continue
             await self._conversations.close_stale_graph_jobs(user_id)
         return done

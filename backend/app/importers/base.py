@@ -32,6 +32,7 @@ MAX_MESSAGE_CHARS = 4000  # NewMessage.text 검증과 같은 값
 MAX_ID_CHARS = 64  # messages.source_key 열 길이
 MAX_PROBLEMS = 20
 DEFAULT_TZ_OFFSET_MINUTES = 540  # 한국 시간
+MIN_YEAR, MAX_YEAR = 1990, 2100  # 이 밖의 시각은 깨진 줄로 본다 (카카오톡 2010~, 텔레그램 2013~)
 
 
 @dataclass
@@ -82,6 +83,39 @@ def tz_from_offset(minutes: int) -> timezone:
     return timezone(timedelta(minutes=minutes))
 
 
+def has_unstorable_text(value: object) -> bool:
+    """문자열(목록·사전이면 그 안쪽까지)에 NUL이나 짝 없는 대리 문자(surrogate)가 있는가.
+
+    둘 다 PostgreSQL의 text·JSONB에 넣을 수 없다 — 검사 없이 저장하면 DB 오류(500)가 난다.
+    """
+    if isinstance(value, str):
+        if "\x00" in value:
+            return True
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError:
+            return True
+        return False
+    if isinstance(value, dict):
+        return any(has_unstorable_text(k) or has_unstorable_text(v) for k, v in value.items())
+    if isinstance(value, list | tuple):
+        return any(has_unstorable_text(v) for v in value)
+    return False
+
+
+def repair_unicode(text: str) -> str:
+    """짝 없는 대리 문자를 `?`로 바꾼 글. 멀쩡한 글은 받은 객체 그대로 돌려준다.
+
+    JSON의 `\\ud800` 같은 이스케이프로 들어온다. pydantic은 이런 문자열을 `str`로 받지 않으므로
+    요청 모델의 검증보다 앞에서 고친다.
+    """
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        return text.encode("utf-8", errors="replace").decode("utf-8")
+    return text
+
+
 def normalize_text(text: str) -> str:
     """줄 끝 공백·줄바꿈 표기 차이를 없앤 본문 (저장·해시 공통)."""
     lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
@@ -102,26 +136,56 @@ def line_list(numbers: list[int], unit: str = "줄", limit: int = 5) -> str:
     return f"{shown}번째 {unit}" + (" 등" if len(numbers) > limit else "")
 
 
-def finalize(parsed: ParsedImport) -> ParsedImport:
-    """파서 공통 뒷정리. 순서: 본문 정리 → 너무 긴 메시지 제외 → 같은 분 안 순서 → id.
+def in_range(moment: datetime) -> bool:
+    """메시지 시각으로 쓸 수 있는 범위인가 (시간대 변환이 넘치는 0001년·9999년 같은 값을 거른다)."""
+    try:
+        return MIN_YEAR <= moment.astimezone(UTC).year <= MAX_YEAR
+    except (OverflowError, ValueError):
+        return False
 
-    개인정보 가림은 이 함수 **앞에서** 끝나 있어야 한다 (id는 저장되는 본문으로 만든다).
+
+def clean(parsed: ParsedImport) -> ParsedImport:
+    """본문 정리 → 빈 메시지·너무 긴 메시지·범위 밖 시각 제외. 여러 번 불러도 결과가 같다.
+
+    **개인정보 가림보다 먼저** 부른다 — 가림 정규식이 수십만 자짜리 '메시지'를 훑지 않게.
     """
     kept: list[ParsedMessage] = []
-    too_long = 0
+    too_long = out_of_range = 0
     for m in parsed.messages:
-        m.text = normalize_text(m.text)
         m.speaker = m.speaker.strip()
+        if len(m.text) > MAX_MESSAGE_CHARS * 2:
+            # 정리해도 상한을 넘는다 — 긴 글을 정리하는 비용도 쓰지 않는다
+            m.text = m.text.strip()
+        else:
+            m.text = normalize_text(m.text)
         if not m.text or not m.speaker:
             parsed.skipped_lines += 1
             continue
         if len(m.text) > MAX_MESSAGE_CHARS:
             too_long += 1
             continue
+        if not in_range(m.sent_at):
+            out_of_range += 1
+            continue
         kept.append(m)
     if too_long:
         parsed.skipped_lines += too_long
         parsed.problem(f"{MAX_MESSAGE_CHARS}자를 넘는 메시지 {too_long}건은 가져오지 않습니다.")
+    if out_of_range:
+        parsed.skipped_lines += out_of_range
+        parsed.problem(
+            f"날짜가 {MIN_YEAR}~{MAX_YEAR}년을 벗어난 메시지 {out_of_range}건은 가져오지 않습니다."
+        )
+    parsed.messages = kept
+    return parsed
+
+
+def finalize(parsed: ParsedImport) -> ParsedImport:
+    """파서 공통 뒷정리. 순서: 정리(`clean`) → 같은 분 안 순서 → id.
+
+    개인정보 가림은 `clean`과 이 함수 **사이에** 한다 (id는 저장되는 본문으로 만든다).
+    """
+    kept = clean(parsed).messages
 
     # 같은 분(초가 있으면 같은 초) 안의 순서를 밀리초로 남긴다.
     order: dict[datetime, int] = {}
