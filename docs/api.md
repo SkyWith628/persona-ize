@@ -16,7 +16,7 @@
 |---|---|
 | `GET /v1/auth/config` (인증 불필요) | 가입 화면이 쓸 설정: `{allow_register, invite_required, require_consent, consent_version, app_env}` |
 | `POST /v1/auth/register` `{username, password, invite_code?, consent?}` | 가입 + 로그인. 아이디는 영문·숫자·`_`·`-` 3~32자, 대소문자만 다른 이름은 409. 비밀번호 8자 이상. 초대 코드가 틀리면 403 `invalid_invite`, 동의가 필요한데 없으면 422 `consent_required`. 운영 모드에서 관리자 이름은 화면 가입 불가(409) |
-| `POST /v1/auth/login` `{username, password}` | 로그인. 실패가 잦으면 429 `too_many_attempts` + `Retry-After` |
+| `POST /v1/auth/login` `{username, password}` | 로그인. 같은 곳(IP)에서 같은 아이디를 계속 틀리면 그 조합만 429 `too_many_attempts` + `Retry-After`(IP 단독·아이디 단독은 훨씬 높은 횟수에서) |
 | `POST /v1/auth/token` `{username, password, client?}` | Bearer 토큰 발급: `{access_token, token_type: "bearer", expires_at, user_id, username}`. `client`는 `mobile`·`desktop`·`api` |
 | `POST /v1/auth/logout` | 쿠키 세션과 Bearer 토큰을 폐기 |
 | `GET /v1/auth/me` | 내 정보 + CSRF 토큰 재조회 |
@@ -128,8 +128,8 @@ settings: `formality·friendliness·directness`(1~5), `length`(shorter/same/long
 | 404 | `not_found` (남의 것도 404) |
 | 409 | `conflict` (버전 충돌, 같은 키·다른 본문, 이미 있는 이름) |
 | 413 | `payload_too_large` |
-| 422 | `invalid_input`, `consent_required`, `quota_exceeded`(사용자별 저장 한도) |
-| 429 | `usage_exceeded`(사용자 하루 한도), `budget_exceeded`(서비스 전체 하루 한도), `rate_limited`·`too_many_attempts`(+`Retry-After`) |
+| 422 | `invalid_input`(NUL·깨진 유니코드가 든 본문도 저장 전에 여기서 끝난다), `consent_required`, `quota_exceeded`(사용자별 저장 한도) |
+| 429 | `usage_exceeded`(사용자 하루 한도), `budget_exceeded`(서비스 전체 하루 한도), `rate_limited`, `too_many_attempts` — 모두 `Retry-After`가 붙는다(하루 한도는 한국 시간 자정까지 남은 초) |
 | 503 | `model_unavailable`, `admin_unavailable` |
 
 운영에서는 프록시(Caddy)가 직접 만드는 오류도 같은 모양이다: 413 `payload_too_large`, 502~504 `service_unavailable` + `Retry-After: 10`(배포·재시작 중).
@@ -139,7 +139,8 @@ settings: `formality·friendliness·directness`(1~5), `length`(shorter/same/long
 - 쿠키+CSRF(지금 `apps/ios`가 쓰는 방식)는 그대로 동작한다. Bearer 토큰(`POST /v1/auth/token`)을 쓰면 쿠키·CSRF 없이 `Authorization` 헤더 하나로 된다.
 - 첨삭 요청에 `channel: "mobile"`(또는 `desktop`)을 넣으면 관리자 화면에서 채널별로 보인다. `condition: "auto"`를 쓰면 서버가 조건을 고른다.
 - 같은 요청의 재시도는 같은 `Idempotency-Key`로 보낸다(동시에 두 번 보내지는 않는다).
-- 429 `rate_limited`·`too_many_attempts`는 `Retry-After`만큼 기다린다. `usage_exceeded`·`budget_exceeded`는 다음 날(KST) 풀린다.
+- 429는 `Retry-After`만큼 기다린다. `usage_exceeded`·`budget_exceeded`는 다음 날(KST) 풀린다.
+- 살아 있는지 자주 볼 때는 쿼리 없는 `/healthz`를 쓴다. `/healthz?deep=true`(DB·그래프까지 확인)는 요청 제한 대상이고 결과가 최대 5초 묵는다.
 
 ## 그래프 담당용 Cypher (개발: Neo4j Browser http://localhost:7474)
 
