@@ -47,18 +47,6 @@ class ContactDeletionOut(BaseModel):
     graph_errors: list[str]
 
 
-class AccountDeleteIn(BaseModel):
-    password: str = Field(min_length=1, max_length=128)
-
-
-class AccountDeletionOut(BaseModel):
-    contacts: int
-    conversations: int
-    messages: int
-    graph_nodes_removed: int
-    graph_error: str | None
-
-
 class PersonaPut(BaseModel):
     settings: PersonaSettings
     expected_version: int | None = Field(
@@ -124,33 +112,6 @@ class UsageOut(BaseModel):
     input_tokens: int
     output_tokens: int
     token_limit: int
-
-
-class Credentials(BaseModel):
-    username: str = Field(min_length=3, max_length=32)
-    password: str = Field(min_length=1, max_length=128)
-
-
-class AuthOut(BaseModel):
-    user_id: str
-    username: str
-    csrf_token: str = Field(description="쓰기 요청의 X-CSRF-Token 헤더 값")
-    expires_at: datetime
-
-
-class PasswordChange(BaseModel):
-    current_password: str = Field(min_length=1, max_length=128)
-    new_password: str = Field(min_length=1, max_length=128)
-
-
-class PasswordChangeOut(BaseModel):
-    revoked_sessions: int = Field(description="함께 로그아웃된 다른 세션 수")
-
-
-class MeOut(BaseModel):
-    user_id: str
-    username: str
-    csrf_token: str
 
 
 class ErrorOut(BaseModel):

@@ -642,3 +642,52 @@ def test_housekeeping_task_runs_only_when_interval_is_set() -> None:
 
     assert "housekeeping" not in task_names()
     assert "housekeeping" in task_names(housekeeping_interval_hours=6)
+
+
+@pytest.mark.anyio
+async def test_periodic_loop_also_resumes_pending_graph_ingest(monkeypatch: pytest.MonkeyPatch) -> None:
+    """주기 작업은 정리 뒤에 그래프 미수집분도 이어서 넣는다 — 끄는 스위치는 GRAPH_RESUME_ON_START."""
+    from types import SimpleNamespace
+
+    from app.core import periodic
+
+    class FakeIngest:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def resume_all(self) -> dict[str, int]:
+            self.calls += 1
+            return {"user-1": 3}
+
+    ingest = FakeIngest()
+    on = SimpleNamespace(graph_ingest=ingest, settings=_settings())
+    assert await periodic.resume_graph_once(on) == {"user-1": 3}
+    off = SimpleNamespace(graph_ingest=ingest, settings=_settings(graph_resume_on_start=False))
+    assert await periodic.resume_graph_once(off) == {}
+    assert await periodic.resume_graph_once(SimpleNamespace(graph_ingest=None, settings=_settings())) == {}
+    assert ingest.calls == 1
+
+    # 루프: 정리가 실패해도 수집은 돌고, 수집이 실패해도 루프는 계속된다
+    sleeps: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        if len(sleeps) > 2:
+            raise asyncio.CancelledError
+
+    async def broken_housekeeping(_state) -> dict[str, int]:  # noqa: ANN001
+        raise RuntimeError("db down")
+
+    resumes: list[int] = []
+
+    async def flaky_resume(_state) -> dict[str, int]:  # noqa: ANN001
+        resumes.append(len(resumes))
+        if len(resumes) == 1:
+            raise RuntimeError("neo4j down")
+        return {}
+
+    monkeypatch.setattr(periodic, "run_housekeeping_once", broken_housekeeping)
+    monkeypatch.setattr(periodic, "resume_graph_once", flaky_resume)
+    with pytest.raises(asyncio.CancelledError):
+        await periodic.housekeeping_loop(on, 3600.0, sleep=fake_sleep)
+    assert resumes == [0, 1]
