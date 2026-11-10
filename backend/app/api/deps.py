@@ -1,8 +1,11 @@
 """의존성 주입과 인증.
 
-인증 순서: ① 세션 쿠키 `pi_session`(HttpOnly) → 유효하면 그 사용자. 쓰기 요청(POST/PUT/PATCH/DELETE)은
-`X-CSRF-Token` 헤더가 세션의 토큰과 같아야 한다(403). ② 쿠키가 없고 `AUTH_ALLOW_HEADER_STUB`이면
-`X-User-Id` 헤더를 그대로 사용자 id로 쓴다 — 개발·테스트·평가 스크립트용이며 배포에서는 끈다.
+인증 순서: ① `Authorization: Bearer <토큰>`(비브라우저 클라이언트 — `POST /v1/auth/token`이 발급) → 유효하면
+그 사용자, 아니면 401. 브라우저가 알아서 붙이는 값이 아니므로 CSRF 검사를 하지 않는다. ② 세션 쿠키
+`pi_session`(HttpOnly) → 유효하면 그 사용자. 쓰기 요청(POST/PUT/PATCH/DELETE)은 `X-CSRF-Token` 헤더가
+세션의 토큰과 같아야 한다(403). ③ 둘 다 없고 `AUTH_ALLOW_HEADER_STUB`이면 `X-User-Id` 헤더를 그대로
+사용자 id로 쓴다 — 개발·테스트·평가 스크립트용이며 배포에서는 끈다(운영 모드는 켜진 채로 시작하지 않는다).
+CSRF를 건너뛰는 것은 **세션을 Bearer 헤더로 찾았을 때뿐**이다 — Bearer 헤더가 있으면 쿠키는 보지 않는다.
 어디서도 요청 본문의 user_id를 신뢰하지 않는다 — 항상 이 의존성에서 받은 값을 쓴다.
 
 저장소는 `DATABASE_URL`이 있으면 PostgreSQL, 비어 있으면 인메모리다 (테스트·A/B 실험용).
@@ -23,7 +26,7 @@ from app.ai.retrieval.base import NullRetriever, Retriever
 from app.ai.retrieval.composite import CompositeRetriever
 from app.ai.retrieval.vector import VectorStyleRetriever
 from app.ai.workflow import RewriteWorkflow
-from app.core.config import Settings, get_settings
+from app.core.config import Settings
 from app.domain.auth import Session
 from app.repositories.auth import AuthRepo, InMemoryAuthRepo
 from app.repositories.base import ContactRepo, ConversationRepo, RewriteRepo
@@ -37,6 +40,9 @@ from app.services.rewrite_service import RewriteService
 SESSION_COOKIE = "pi_session"
 CSRF_HEADER = "X-CSRF-Token"
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+BEARER_SCHEME = "bearer"
+AUTH_VIA_BEARER = "bearer"  # request.state.auth_via — 이 요청의 세션을 어디서 찾았는가
+AUTH_VIA_COOKIE = "cookie"
 
 Storage = Literal["memory", "postgres"]
 
@@ -179,18 +185,61 @@ def get_state(request: Request) -> AppState:
     return request.app.state.container
 
 
+def bearer_token(request: Request) -> str | None:
+    """`Authorization: Bearer <토큰>`의 토큰. 헤더가 없거나 다른 방식(Basic 등)이면 None."""
+    scheme, _, value = (request.headers.get("Authorization") or "").partition(" ")
+    token = value.strip()
+    return token if scheme.lower() == BEARER_SCHEME and token else None
+
+
+def _bearer_rejected() -> UnauthorizedError:
+    return UnauthorizedError(
+        "토큰이 만료되었거나 맞지 않습니다. 다시 로그인하세요.",
+        headers={"WWW-Authenticate": 'Bearer error="invalid_token"'},
+    )
+
+
 async def current_session(request: Request, state: AppState) -> Session:
-    """쿠키의 세션. 없거나 만료·폐기면 401."""
+    """Bearer 토큰 또는 쿠키의 세션. 없거나 만료·폐기면 401. 헤더 스텁(X-User-Id)으로는 통과할 수 없다.
+
+    CSRF는 여기서 보지 않는다 — 쿠키로 들어온 쓰기 요청은 `require_csrf`를 함께 부른다.
+    """
+    token = bearer_token(request)
+    if token is not None:
+        session = await state.auth_service.resolve(token)
+        if session is None:
+            raise _bearer_rejected()
+        request.state.auth_via = AUTH_VIA_BEARER
+        return session
     session = await state.auth_service.resolve(request.cookies.get(SESSION_COOKIE))
     if session is None:
         raise UnauthorizedError("로그인이 필요합니다.")
+    request.state.auth_via = AUTH_VIA_COOKIE
     return session
+
+
+def require_csrf(request: Request, state: AppState, session: Session) -> None:
+    """쿠키로 인증한 요청이면 `X-CSRF-Token`이 세션의 토큰과 같아야 한다(403). Bearer 인증은 검사하지 않는다.
+
+    `current_session` 뒤에 부른다. 인증 방식을 알 수 없으면 쿠키로 보고 검사한다(안전한 쪽).
+    """
+    if getattr(request.state, "auth_via", AUTH_VIA_COOKIE) == AUTH_VIA_BEARER:
+        return
+    if not state.auth_service.csrf_ok(session, request.headers.get(CSRF_HEADER)):
+        raise ForbiddenError("CSRF 토큰이 없거나 맞지 않습니다 (X-CSRF-Token).")
 
 
 async def current_user_id(
     request: Request, state: State, x_user_id: Annotated[str | None, Header()] = None
 ) -> str:
-    """세션 쿠키(+CSRF) 우선, 없으면 개발용 헤더 스텁 (설정으로 끌 수 있다)."""
+    """Bearer 토큰 → 세션 쿠키(+CSRF) → 개발용 헤더 스텁(설정으로 끌 수 있다) 순서."""
+    bearer = bearer_token(request)
+    if bearer is not None:
+        session = await state.auth_service.resolve(bearer)
+        if session is None:
+            raise _bearer_rejected()
+        request.state.auth_via = AUTH_VIA_BEARER
+        return str(session.user_id)
     token = request.cookies.get(SESSION_COOKIE)
     if token:
         session = await state.auth_service.resolve(token)
@@ -200,12 +249,18 @@ async def current_user_id(
             session, request.headers.get(CSRF_HEADER)
         ):
             raise ForbiddenError("CSRF 토큰이 없거나 맞지 않습니다 (X-CSRF-Token).")
+        request.state.auth_via = AUTH_VIA_COOKIE
         return str(session.user_id)
     if state.settings.auth_allow_header_stub and x_user_id and x_user_id.strip():
         return x_user_id.strip()
     raise HTTPException(status_code=401, detail={"code": "unauthorized", "message": "로그인이 필요합니다."})
 
 
+def app_settings(request: Request) -> Settings:
+    """이 앱이 시작할 때 받은 설정 (`create_app`에 넘긴 값 — 전역 `get_settings()`와 다를 수 있다)."""
+    return request.app.state.container.settings
+
+
 State = Annotated[AppState, Depends(get_state)]
 UserId = Annotated[str, Depends(current_user_id)]
-SettingsDep = Annotated[Settings, Depends(get_settings)]
+SettingsDep = Annotated[Settings, Depends(app_settings)]

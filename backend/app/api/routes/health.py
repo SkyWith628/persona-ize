@@ -1,4 +1,8 @@
-"""헬스체크. 기본은 가볍게(설정 정보), `?deep=true`면 DB·Neo4j 연결까지 확인한다 (Docker·배포 점검용)."""
+"""헬스체크. 기본은 가볍게(설정 정보), `?deep=true`면 DB·Neo4j 연결까지 확인한다 (Docker·배포 점검용).
+
+운영 모드(`APP_ENV=production`)에서는 모델 이름·저장소 종류 같은 설정 정보를 빼고 `status`만 준다
+(`deep`이면 `checks`도). 이 경로는 Host 검사와 요청 제한을 받지 않는다 — 컨테이너·프록시가 내부 주소로 부른다.
+"""
 
 from __future__ import annotations
 
@@ -34,14 +38,15 @@ async def _check_postgres(state) -> None:  # noqa: ANN001
 
 @router.get("/healthz")
 async def healthz(state: State, deep: bool = False) -> JSONResponse:
-    body: dict[str, Any] = {
-        "status": "ok",
-        "llm_provider": state.settings.llm_provider,
-        "llm_model": state.settings.llm_model if state.settings.llm_provider != "fake" else "fake-echo",
-        "prompt_version": state.settings.prompt_version,
-        "storage": state.storage,
-        "graph": state.graph_enabled,
-    }
+    body: dict[str, Any] = {"status": "ok"}
+    if not state.settings.is_production:
+        body.update(
+            llm_provider=state.settings.llm_provider,
+            llm_model=state.settings.llm_model if state.settings.llm_provider != "fake" else "fake-echo",
+            prompt_version=state.settings.prompt_version,
+            storage=state.storage,
+            graph=state.graph_enabled,
+        )
     if deep:
         checks: dict[str, str] = {}
         checks["postgres"] = await _check(_check_postgres(state)) if state.engine is not None else "skipped"

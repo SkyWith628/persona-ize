@@ -1,6 +1,12 @@
-"""도메인 예외. API 계층에서 HTTP 상태로 번역한다 (project-design §7 오류 표)."""
+"""도메인 예외. API 계층에서 HTTP 상태로 번역한다 (project-design §7 오류 표).
+
+응답 모양은 `core/http_errors.py`가 `{"code", "message"}`로 통일한다. `headers`가 있으면 응답 헤더에 싣는다
+(예: 429의 `Retry-After`, Bearer 401의 `WWW-Authenticate`).
+"""
 
 from __future__ import annotations
+
+from collections.abc import Mapping
 
 
 class DomainError(Exception):
@@ -9,9 +15,10 @@ class DomainError(Exception):
     status_code = 400
     code = "domain_error"
 
-    def __init__(self, message: str) -> None:
+    def __init__(self, message: str, *, headers: Mapping[str, str] | None = None) -> None:
         super().__init__(message)
         self.message = message
+        self.headers: dict[str, str] | None = dict(headers) if headers else None
 
 
 class NotFoundError(DomainError):
@@ -35,6 +42,12 @@ class InvalidInputError(DomainError):
     code = "invalid_input"
 
 
+class ConsentRequiredError(InvalidInputError):
+    """`REQUIRE_CONSENT`인데 가입 요청에 consent=true가 없다."""
+
+    code = "consent_required"
+
+
 class ModelUnavailableError(DomainError):
     """모델 호출 실패·타임아웃. 워크플로는 원문 유지로 축소 동작한다."""
 
@@ -56,7 +69,31 @@ class UsageLimitError(DomainError):
 
 
 class TooManyAttemptsError(DomainError):
-    """로그인 실패가 잦아 잠시 막혔다."""
+    """로그인 실패가 잦아 잠시 막혔다. `retry_after`(초)를 주면 `Retry-After` 헤더로도 알린다."""
 
     status_code = 429
     code = "too_many_attempts"
+
+    def __init__(self, message: str, *, retry_after: int | None = None) -> None:
+        headers = {"Retry-After": str(max(int(retry_after), 1))} if retry_after is not None else None
+        super().__init__(message, headers=headers)
+
+
+class UnauthorizedError(DomainError):
+    """로그인이 없거나 세션·토큰이 만료·폐기됐다."""
+
+    status_code = 401
+    code = "unauthorized"
+
+
+class ForbiddenError(DomainError):
+    """로그인은 했지만 허용되지 않는다 (CSRF 불일치, 가입 닫힘, 관리자 아님)."""
+
+    status_code = 403
+    code = "forbidden"
+
+
+class InvalidInviteError(ForbiddenError):
+    """`REGISTER_INVITE_CODE`가 설정돼 있는데 가입 요청의 초대 코드가 없거나 다르다."""
+
+    code = "invalid_invite"
