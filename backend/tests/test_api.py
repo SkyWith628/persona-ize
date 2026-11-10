@@ -52,7 +52,7 @@ def test_vertical_flow(client: TestClient, user_a: dict[str, str]) -> None:
     body = r.json()
     assert body["result"]["status"] == "recommended"  # fake는 원문 그대로 → 검증 통과
     assert body["result"]["result_text"] == DRAFT
-    assert body["result"]["prompt_version"] == "rewrite-v2"
+    assert body["result"]["prompt_version"] == "rewrite-v3"
 
     got = client.get(f"/v1/rewrites/{body['id']}", headers=user_a)
     assert got.status_code == 200

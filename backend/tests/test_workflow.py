@@ -145,3 +145,55 @@ def test_prompt_v2_has_address_rule_and_same_placeholders() -> None:
     )
     assert "호칭 규칙" in v2.system and "새 호칭" in v2.system and "warnings" in v2.system
     assert "[원문]" in v2.user and "[문체 예시" in v2.user  # user.md는 v1과 같은 자리표시자
+
+
+def test_prompt_v3_states_today_and_older_versions_do_not() -> None:
+    """v3는 [오늘]을 넣는다 — 원문의 '다음 달'을 그래프의 절대 날짜와 견주려면 기준일이 필요하다."""
+    from datetime import UTC, date, datetime
+    from uuid import uuid4
+
+    from app.ai.prompt import available_versions, build_prompt
+    from app.domain.contact import Contact
+
+    assert "rewrite-v3" in available_versions()
+    contact = Contact(
+        id=uuid4(), user_id="u", alias="최유진", relationship_type="friend", created_at=datetime.now(UTC)
+    )
+    kwargs = dict(
+        contact=contact,
+        persona=PersonaSettings(),
+        intent="schedule",
+        preserved=[],
+        draft_text="다음 달 둘째 주 토요일 저녁 어때?",
+        situation="일정 조율",
+        retrieved=[],
+        today=date(2026, 11, 10),
+    )
+    v3 = build_prompt(version="rewrite-v3", **kwargs)
+    assert "[오늘] 2026-11-10 (화요일)" in v3.user
+    assert "날짜 대조" in v3.system and "호칭 규칙" in v3.system  # v2 규칙은 그대로
+    assert "[원문]" in v3.user and "[문체 예시" in v3.user
+    v2 = build_prompt(version="rewrite-v2", **kwargs)
+    assert "[오늘]" not in v2.user  # 옛 버전 재현성: 본문이 바뀌지 않는다
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("as_of", "expected"),
+    [
+        (datetime(2026, 10, 20, 14, 59, tzinfo=UTC), "2026-10-20"),  # KST 23:59
+        (datetime(2026, 10, 20, 15, 0, tzinfo=UTC), "2026-10-21"),  # KST 자정 — 날짜가 넘어간다
+    ],
+)
+async def test_workflow_passes_as_of_date_in_kst_to_prompt(as_of: datetime, expected: str) -> None:
+    provider = ScriptedProvider([GOOD])
+    null = NullRetriever()
+    wf = RewriteWorkflow(
+        provider=provider,
+        retrievers={"A": null, "B": null, "C": null, "D": null},
+        prompt_version="rewrite-v3",
+    )
+    _, inp, contact, persona = make(provider)
+    r = await wf.run(inp.model_copy(update={"as_of": as_of}), contact, persona)
+    assert r.status == "recommended"
+    assert f"[오늘] {expected}" in provider.prompts[0]

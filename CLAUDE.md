@@ -33,7 +33,7 @@ mode: work
 
 ## 컨벤션
 - LLM: **Claude** (`anthropic` SDK, `messages.parse` 구조화 출력, `output_config.effort`). OpenAI 코드 추가 금지. 임베딩은 로컬 sentence-transformers(기본) 또는 Voyage
-- 프롬프트는 코드가 아니라 `backend/app/prompts/<version>/*.md`. 버전 올릴 때 폴더를 복사해 새 이름으로. 기본은 `rewrite-v2`(호칭 규칙: 설정에 없는 호칭을 넣지 않는다, 11-09). v1은 비교용으로 남긴다. 평가는 `run_eval.py --prompt rewrite-v1`로 옛 버전 재현
+- 프롬프트는 코드가 아니라 `backend/app/prompts/<version>/*.md`. 버전 올릴 때 폴더를 복사해 새 이름으로. 기본은 `rewrite-v3`(v2의 호칭 규칙 + `[오늘]` 날짜와 날짜 대조 규칙, 11-10). v1·v2는 비교용으로 남긴다. 평가는 `run_eval.py --prompt rewrite-v2`로 옛 버전 재현. 프롬프트에 새 값을 넣을 때는 `build_prompt`에 인자를 더하고 새 버전의 user.md에만 자리표시자를 둔다(옛 버전 본문은 그대로)
 - 호칭은 **페르소나 설정**이 공급한다. `synthetic_loader.persona_from_aliases`가 상사·지인·친구·가족·연인에 characters.csv 호칭을 넣고 동료는 비운다 — 모델은 설정에 없는 호칭을 만들지 않으므로 호칭이 필요하면 설정에 넣는다
 - 사실 보존 실패는 다른 점수로 상쇄하지 않는다. 검증 실패 → 원문 유지, 자동 전송 없음
 - 합성 데이터만 외부(Claude API, Neo4j)에 보낸다

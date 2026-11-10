@@ -14,7 +14,7 @@ const REL_LABEL = { superior: "상사", colleague: "동료", subordinate: "후�
 const DEMO_DRAFTS = {
   박지현: "이번 주 금요일은 어렵고 다음 주 수요일까지는 가능합니다.",
   이서연: "어제는 제가 좀 예민했던 것 같아요. 미안합니다.",
-  최유진: "다음 달 둘째 주 토요일 저녁 어때?",
+  최유진: "이번 달 셋째 주 토요일 저녁 어때?", // 11월 시연 기준. 약속이 '11월에 밥'이라 달을 시연 날짜에 맞춘다
   김준호: "토요일 오전에 차 좀 빌려줄 수 있어?",
 };
 const LAST_CONTACT_KEY = "pi_proto_last_contact";

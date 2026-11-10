@@ -12,7 +12,7 @@ from dataclasses import dataclass
 
 from app.ai.intent import classify_intent
 from app.ai.preserve import extract_preserved_items
-from app.ai.prompt import build_prompt, build_regenerate_suffix
+from app.ai.prompt import build_prompt, build_regenerate_suffix, today_kst
 from app.ai.providers.base import LLMProvider
 from app.ai.retrieval.base import Retriever
 from app.ai.validation import validate_output
@@ -63,6 +63,7 @@ class RewriteWorkflow:
             draft_text=inp.draft_text,
             situation=inp.situation,
             retrieved=retrieved,
+            today=today_kst(inp.as_of),  # 검색 기준 시각과 같은 날을 '오늘'로 준다
         )
 
         attempts = 0
