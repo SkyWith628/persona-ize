@@ -94,6 +94,13 @@ class Settings(BaseSettings):
     # 주기 작업·보존
     housekeeping_interval_hours: int = Field(0, ge=0, description="서버 안에서 정리 작업을 도는 주기. 0=끔")
     rewrite_retention_days: int = Field(0, ge=0, description="첨삭 이력 보존 일수. 0=무기한")
+    # 사용자별 저장 한도 (2026-11-11 보안 검토): 한 계정이 디스크·임베딩 CPU·메모리를 끝없이 쓰지 못하게.
+    max_contacts_per_user: int = Field(200, ge=1, description="상대 수")
+    max_conversations_per_user: int = Field(500, ge=1, description="대화방 수")
+    max_messages_per_user: int = Field(50_000, ge=1, description="가져온 메시지 총수")
+    # 운영 모드는 비용 상한이 꺼진 설정(그래프 수집 상한 0, 초대 코드 없는 공개 가입 + 전체 차단기 0)에서
+    # 시작을 거부한다. 알고도 그렇게 띄우려면 이것을 true로 둔다.
+    allow_uncapped_costs: bool = Field(False, description="운영 모드에서 비용 상한 없는 설정을 허용")
     # 관리자 화면의 비용 환산 단가(USD). 0이면 환산하지 않는다 — 값은 Console 요금표에서 채운다.
     cost_rewrite_input_per_mtok: float = Field(0.0, ge=0)
     cost_rewrite_output_per_mtok: float = Field(0.0, ge=0)
