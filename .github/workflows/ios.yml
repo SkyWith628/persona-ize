@@ -1,15 +1,12 @@
 name: iPhone build
 on:
-  push:
-    branches: [design/iphone-mobile]
-    paths: ['apps/ios/**', '.github/workflows/ios.yml']
   pull_request:
     paths: ['apps/ios/**', '.github/workflows/ios.yml']
 permissions:
   contents: read
 jobs:
   build:
-    runs-on: macos-26
+    runs-on: macos-15
     timeout-minutes: 35
     defaults:
       run:
