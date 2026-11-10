@@ -420,6 +420,8 @@ scripts/ops/compose.sh down -v              # 연습이 끝나면 볼륨까지 �
 - 개발 DB 복사본에서 0007 → 0008 → 0009 마이그레이션과 기존 데이터(상대 20, 메시지 112, 첨삭 21)로 새 API·화면.
 - 검토에서 서버를 23초 멈추던 30KB 요청: 실제 서버에서 0.09초에 422, 그동안 헬스체크 지연 없음.
 - `backend/constraints.txt`: 다시 빌드한 이미지의 `pip freeze`가 고정 파일과 79줄 모두 일치.
+- GitHub Actions(`main` 푸시, 2026-11-11): `backend`·`data-files`·`deploy` 세 작업 통과. `deploy` 잡은 러너에서 처음 돌았고
+  고친 것 없이 5분 14초 — 운영 이미지 빌드 3분 44초(빌드 캐시 없이), 이미지 자체 점검 10초, 운영 스택 기동 48초, Caddy 경유 스모크 10초.
 
 ### 하지 못한 것
 - **실제 리눅스 VM, 실제 도메인, Let's Encrypt 발급·갱신.** 인증서 자동 발급은 Caddy의 기본 동작에 기대고 있고,
@@ -428,7 +430,7 @@ scripts/ops/compose.sh down -v              # 연습이 끝나면 볼륨까지 �
 - **운영 구성(Caddy 뒤)에서의 실제 Claude 호출.** 새 코드 자체는 실제 모델로 확인했다(2026-11-11: 첨삭 6회, 그래프 수집 3건 — `decisions.md` "배포 준비 ⑥"). 운영 스택에 실제 키를 넣은 스모크(`deploy.sh --smoke-full`)는 첫 배포 때 돌린다.
 - **ARM 서버**(Graviton, Ampere). 이미지를 amd64에서만 빌드했다.
 - **작은 서버에서의 성능.** 2 vCPU·4GB에서 빌드가 되는지, 가져오기가 얼마나 걸리는지 재지 못했다.
-- **GitHub Actions.** `ci.yml`의 deploy 잡과 `release.yml`은 YAML 문법과 각 단계의 명령만 로컬에서 확인했다.
+- **`release.yml`(태그 푸시 → GHCR).** YAML 문법만 확인했고 실행된 적이 없다. `ci.yml`의 deploy 잡은 `main` 푸시에서 통과했다(위).
 - **IPv6로 들어오는 접속의 클라이언트 IP.** Docker가 IPv6를 프록시로 넘길 때 주소가 게이트웨이로 바뀔 수 있다.
   그러면 IP 기준 제한이 IPv6 사용자를 한 묶음으로 본다. DNS에 AAAA 레코드를 두지 않으면 피할 수 있다.
 - **서버 재부팅 뒤 자동 복구.** `restart: unless-stopped`에 기대고 있다. 컨테이너를 한꺼번에 재시작하는 것까지만
