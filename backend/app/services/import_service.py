@@ -10,6 +10,11 @@
 - 그래프 수집은 사용자 단위 직렬(`GraphIngestService.ingest_user`) — 방 사이 시간 순서를 지키기 위해.
 - 지금은 요청 안에서 동기로 끝낸다. 응답 모양(202 + job)은 설계대로 두어 뒤에 비동기 작업으로 바꿀 수
   있게 한다.
+- 원문 가져오기(`import_parsed`): `app.importers`가 읽은 결과에 화자 지정(me/contact/skip)을 입혀 같은 경로로
+  저장한다. 파서가 못 읽은 줄은 미리보기(`POST /v1/imports/parse`)의 `skipped_lines`·`problems`로 보여 주고,
+  화자 지정 누락·결과 0건·상한 초과는 아무것도 저장하지 않고 422.
+- 개인정보 가림(`mask_pii`)은 API 경로에서만 켠다. 이 서비스를 직접 부르는 평가·합성 적재 스크립트는 기본값
+  (가림 없음)이라 결과가 바뀌지 않는다.
 """
 
 from __future__ import annotations
@@ -28,6 +33,8 @@ from app.ai.embeddings import Embedder
 from app.ai.episodes import DEFAULT_WINDOW, build_episodes
 from app.core.errors import InvalidInputError
 from app.domain.conversation import Conversation, DeletionResult, ImportJob, NewMessage, SpeakerRole
+from app.importers import ParsedImport
+from app.importers.pii import mask_pii as mask_text
 from app.repositories.base import ContactRepo, ConversationRepo
 
 if TYPE_CHECKING:
@@ -36,6 +43,12 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 GraphMode = Literal["off", "sync", "background"]
+RawSpeakerRole = Literal["me", "contact", "skip"]
+"""원문 가져오기의 화자 지정. skip은 그 화자의 메시지를 버린다 (단체방에서 상대 한 명만 남길 때)."""
+
+# 내 이름으로 쓰지 않는 표기 (카카오톡 안드로이드의 '회원님' 등). 그래프 에피소드의 화자 이름으로 부적절하다.
+GENERIC_ME_NAMES = {"회원님", "me", "나"}
+ME_NAME_MAX = 50  # conversations.me_name 열 길이
 
 
 class ImportMessage(BaseModel):
@@ -74,20 +87,29 @@ def normalize_messages(payload: ImportPayload) -> list[NewMessage]:
         if m.sent_at.tzinfo is None:
             problems.append(f"{where}: sent_at에 시간대가 없습니다 (예: +09:00)")
             continue
-        if not m.text.strip():
+        text = m.text.replace("\x00", "").strip()  # NUL은 PostgreSQL text에 넣을 수 없다
+        if not text:
             problems.append(f"{where}: text가 비어 있습니다")
             continue
         if m.id in seen:
             problems.append(f"{where}: 메시지 id가 중복됩니다")
             continue
         seen.add(m.id)
-        out.append(NewMessage(source_key=m.id, speaker_role=role, sent_at=m.sent_at, text=m.text.strip()))
+        out.append(NewMessage(source_key=m.id, speaker_role=role, sent_at=m.sent_at, text=text))
     if unknown_speakers:
         names = ", ".join(sorted(unknown_speakers))
         problems.insert(0, f"화자 지정이 필요합니다. speaker_map에 me/contact를 지정하세요: {names}")
     if problems:
         raise InvalidInputError("가져오기 입력 오류: " + " / ".join(problems[:10]))
     return out
+
+
+ROLE_NAMES = ("me", "contact")
+
+
+def mask_messages(messages: list[NewMessage]) -> list[NewMessage]:
+    """본문의 개인정보 패턴을 가린 사본 (`app.importers.pii`). id·시각·화자는 그대로."""
+    return [m.model_copy(update={"text": mask_text(m.text)[0]}) for m in messages]
 
 
 def source_hash(messages: list[NewMessage]) -> str:
@@ -134,20 +156,102 @@ class ImportService:
             user_id, contact.id, (title or f"{contact.alias}와의 대화").strip(), source, key, me_name
         )
 
-    async def import_messages(self, user_id: str, conversation_id: UUID, payload: ImportPayload) -> ImportJob:
+    async def import_messages(
+        self, user_id: str, conversation_id: UUID, payload: ImportPayload, *, mask_pii: bool = False
+    ) -> ImportJob:
+        """JSON 메시지 가져오기. `mask_pii`는 API 경로만 켠다 (스크립트·평가는 원문 그대로)."""
         conv = await self._conversations.get(user_id, conversation_id)  # 소유권
         if len(payload.messages) > self._max_messages:
             raise InvalidInputError(f"한 번에 {self._max_messages}개까지 가져올 수 있습니다.")
         messages = normalize_messages(payload)
+        if mask_pii:
+            messages = mask_messages(messages)
+        return await self._save(user_id, conv, messages)
+
+    async def import_parsed(
+        self,
+        user_id: str,
+        conversation_id: UUID,
+        parsed: ParsedImport,
+        speaker_map: dict[str, RawSpeakerRole],
+        *,
+        keep_recent: int | None = None,
+    ) -> ImportJob:
+        """파서 결과(`app.importers.parse_import`)에 화자 지정을 입혀 저장한다.
+
+        지도에 없는 화자가 하나라도 있으면 아무것도 저장하지 않고 422(이름 나열). `skip`은 그 화자의 메시지를
+        버리고, `keep_recent`는 그 뒤 최근 N건만 남긴다. 결과가 0건이거나 상한을 넘으면 422.
+        개인정보 가림은 파서 단계에서 끝나 있다 (미리보기와 저장의 메시지 id가 같도록).
+        """
+        conv = await self._conversations.get(user_id, conversation_id)  # 소유권
+        if parsed.chats is not None:
+            names = ", ".join(f"{c.name}(id={c.id}, {c.messages}건)" for c in parsed.chats[:10])
+            raise InvalidInputError(f"대화가 여러 개인 내보내기입니다. chat_id로 하나를 골라 주세요: {names}")
+        unknown = sorted(
+            {
+                m.speaker
+                for m in parsed.messages
+                if m.speaker not in speaker_map and m.speaker not in ROLE_NAMES
+            }
+        )
+        if unknown:
+            raise InvalidInputError(
+                "화자 지정이 필요합니다. speaker_map에 me/contact/skip을 지정하세요: " + ", ".join(unknown)
+            )
+        messages: list[NewMessage] = []
+        for m in parsed.messages:
+            role = speaker_map.get(m.speaker, m.speaker)
+            if role in ROLE_NAMES:  # skip은 버린다
+                messages.append(
+                    NewMessage(source_key=m.id, speaker_role=role, sent_at=m.sent_at, text=m.text)  # type: ignore[arg-type]
+                )
+        if keep_recent is not None:
+            messages = sorted(messages, key=lambda x: x.sent_at)[-keep_recent:]
+        if not messages:
+            raise InvalidInputError(
+                "가져올 메시지가 없습니다. 모든 화자를 건너뛰도록(skip) 지정했는지 확인하세요."
+            )
+        if len(messages) > self._max_messages:
+            raise InvalidInputError(
+                f"한 번에 {self._max_messages}개까지 가져올 수 있습니다 (지금 {len(messages)}개). "
+                "keep_recent로 최근 메시지만 가져오세요."
+            )
+        conv = await self._adopt_me_name(user_id, conv, parsed, speaker_map)
+        return await self._save(user_id, conv, messages)
+
+    async def _adopt_me_name(
+        self, user_id: str, conv: Conversation, parsed: ParsedImport, speaker_map: dict[str, RawSpeakerRole]
+    ) -> Conversation:
+        """대화방에 내 이름이 없고 첫 가져오기면, 'me'로 지정된 화자 이름을 내 이름으로 쓴다.
+
+        그래프 에피소드 본문이 '사용자' 대신 실제 이름으로 만들어진다. 이미 메시지가 있는 방은 건드리지 않는다
+        (앞서 '사용자'로 들어간 에피소드와 이름이 갈리면 그래프에 내가 두 사람으로 생긴다).
+        """
+        if conv.me_name:
+            return conv
+        names = [
+            name
+            for name, _ in parsed.speakers()
+            if speaker_map.get(name) == "me" and name not in GENERIC_ME_NAMES and len(name) <= ME_NAME_MAX
+        ]
+        if len(names) != 1:
+            return conv
+        if (await self._conversations.conversation_stats(user_id, conv.id)).messages:
+            return conv
+        return await self._conversations.set_me_name(user_id, conv.id, names[0])
+
+    async def _save(self, user_id: str, conv: Conversation, messages: list[NewMessage]) -> ImportJob:
+        """정규화된 메시지를 저장하고 묶음을 다시 만든다. 같은 내용(해시)이면 기존 작업을 돌려준다."""
         digest = source_hash(messages)
 
         existing = await self._conversations.find_job(user_id, conv.id, digest)
-        if existing is not None:
+        if existing is not None and existing.status == "completed":
             return existing
+        # 묶음 생성이 실패했던 작업(failed)은 같은 내용을 다시 올리면 같은 작업 id로 다시 시도한다.
 
         inserted, duplicates = await self._conversations.add_messages(user_id, conv.id, messages)
         job = ImportJob(
-            id=uuid4(),
+            id=existing.id if existing is not None else uuid4(),
             user_id=user_id,
             conversation_id=conv.id,
             source_hash=digest,

@@ -14,23 +14,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from app.domain.persona import PersonaSettings, RelationshipType
+from app.domain.persona import DEFAULT_PERSONAS, PersonaSettings, RelationshipType
 from app.services.import_service import ImportMessage, ImportPayload
 
 if TYPE_CHECKING:
     from app.api.deps import AppState
 
-
-# 관계 유형별 기본 페르소나. 평가 하니스(run_eval)와 시연 준비(prepare_demo)가 같이 쓴다.
-DEFAULT_PERSONAS: dict[str, PersonaSettings] = {
-    "superior": PersonaSettings(formality=5, friendliness=2, directness=3, forbidden_phrases=["ㅋㅋ", "ㅠ"]),
-    "colleague": PersonaSettings(formality=3, friendliness=4, directness=4),
-    "subordinate": PersonaSettings(formality=3, friendliness=3, directness=4),
-    "friend": PersonaSettings(formality=1, friendliness=5, directness=5, emoji="rare"),
-    "family": PersonaSettings(formality=1, friendliness=5, directness=5),
-    "partner": PersonaSettings(formality=1, friendliness=5, directness=3, emoji="often"),
-    "acquaintance": PersonaSettings(formality=4, friendliness=2, directness=3),
-}
+# 관계 유형별 기본 페르소나의 정본은 `app.domain.persona.DEFAULT_PERSONAS` (7종 전부).
+# 시연 준비(prepare_demo)가 `synthetic_loader.DEFAULT_PERSONAS`로 가져다 쓰므로 여기서도 같은 이름으로 보인다.
 
 
 def load_aliases(characters_csv: Path | None) -> dict[str, list[str]]:

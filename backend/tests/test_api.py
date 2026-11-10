@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from fastapi.testclient import TestClient
 
 DRAFT = "오늘 정리해서 내일 오전까지 보내드릴게요."
@@ -204,11 +206,19 @@ def test_usage_token_limit_blocks_next_request(user_a: dict[str, str]) -> None:
 
 
 def test_web_index_and_static(client: TestClient) -> None:
-    """데모 화면이 서빙된다 (인증 없이 HTML·JS·CSS는 열리고, API는 로그인 뒤)."""
+    """화면이 서빙된다 (인증 없이 HTML·JS·CSS는 열리고, API는 로그인 뒤).
+
+    파일 이름을 고정하지 않는다 — 첫 화면이 가리키는 정적 자원이 전부 열리는지만 본다
+    (화면 구조가 바뀌어도 유효).
+    """
     r = client.get("/")
-    assert r.status_code == 200 and "Persona_ize" in r.text and "/static/app.js" in r.text
-    assert client.get("/static/app.js").status_code == 200
-    assert "text/css" in client.get("/static/app.css").headers["content-type"]
+    assert r.status_code == 200 and "Persona_ize" in r.text
+    refs = sorted(set(re.findall(r'(?:src|href)="(/static/[^"]+)"', r.text)))
+    assert any(ref.endswith(".js") for ref in refs) and any(ref.endswith(".css") for ref in refs)
+    for ref in refs:
+        assert client.get(ref).status_code == 200, ref
+    css = next(ref for ref in refs if ref.endswith(".css"))
+    assert "text/css" in client.get(css).headers["content-type"]
 
 
 def test_delete_contact_api_removes_history_and_conversations(

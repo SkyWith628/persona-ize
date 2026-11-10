@@ -8,14 +8,16 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 
 from app.core.errors import NotFoundError, VersionConflictError
 from app.db.models import ConversationRow, EpisodeMessageRow, EpisodeRow, ImportJobRow, MessageRow
 from app.db.session import SessionFactory
 from app.domain.conversation import (
+    ContactDataStats,
     Conversation,
+    ConversationStats,
     Episode,
     EpisodeDraft,
     EpisodeHit,
@@ -360,10 +362,10 @@ class PostgresConversationRepo:
                 update(ImportJobRow)
                 .where(
                     ImportJobRow.user_id == user_id,
-                    ImportJobRow.graph_status.in_(("pending", "running")),
+                    ImportJobRow.graph_status.in_(("pending", "running", "limited")),
                     ImportJobRow.conversation_id.not_in(pending_convs),
                 )
-                .values(graph_status="completed")
+                .values(graph_status="completed", graph_error=None)
             )
         return int(result.rowcount or 0)
 
@@ -387,3 +389,128 @@ class PostgresConversationRepo:
                 )
             )
         return int(result.rowcount or 0)
+
+    async def conversation_stats(self, user_id: str, conversation_id: UUID) -> ConversationStats:
+        async with self._sessions() as s:
+            conv = await self._owned(s, user_id, conversation_id)
+            total, mine, ingested, first, last = (
+                await s.execute(
+                    select(
+                        func.count(MessageRow.id),
+                        func.count(MessageRow.id).filter(MessageRow.speaker_role == "me"),
+                        func.count(MessageRow.graph_ingested_at),
+                        func.min(MessageRow.sent_at),
+                        func.max(MessageRow.sent_at),
+                    ).where(MessageRow.conversation_id == conv.id, MessageRow.user_id == user_id)
+                )
+            ).one()
+            episodes = await s.scalar(
+                select(func.count()).select_from(EpisodeRow).where(EpisodeRow.conversation_id == conv.id)
+            )
+        return ConversationStats(
+            conversation_id=conv.id,
+            messages=int(total or 0),
+            my_messages=int(mine or 0),
+            episodes=int(episodes or 0),
+            graph_ingested=int(ingested or 0),
+            first_message_at=first,
+            last_message_at=last,
+        )
+
+    async def latest_job(self, user_id: str, conversation_id: UUID) -> ImportJob | None:
+        stmt = (
+            select(ImportJobRow)
+            .where(ImportJobRow.user_id == user_id, ImportJobRow.conversation_id == conversation_id)
+            .order_by(ImportJobRow.created_at.desc())
+            .limit(1)
+        )
+        async with self._sessions() as s:
+            row = await s.scalar(stmt)
+        return _job(row) if row is not None else None
+
+    async def contact_stats(
+        self, user_id: str, contact_id: UUID | None = None
+    ) -> dict[UUID, ContactDataStats]:
+        """상대가 많아도 쿼리 두 번: 대화방⟕메시지 집계 + 묶음 집계."""
+        messages = (
+            select(
+                ConversationRow.contact_id,
+                func.count(func.distinct(ConversationRow.id)),
+                func.count(MessageRow.id),
+                func.count(MessageRow.id).filter(MessageRow.speaker_role == "me"),
+                func.count(MessageRow.graph_ingested_at),
+            )
+            .select_from(ConversationRow)
+            .outerjoin(MessageRow, MessageRow.conversation_id == ConversationRow.id)
+            .where(ConversationRow.user_id == user_id)
+            .group_by(ConversationRow.contact_id)
+        )
+        episodes = (
+            select(EpisodeRow.contact_id, func.count())
+            .where(EpisodeRow.user_id == user_id)
+            .group_by(EpisodeRow.contact_id)
+        )
+        if contact_id is not None:
+            messages = messages.where(ConversationRow.contact_id == contact_id)
+            episodes = episodes.where(EpisodeRow.contact_id == contact_id)
+        async with self._sessions() as s:
+            message_rows = (await s.execute(messages)).all()
+            episode_rows = dict((await s.execute(episodes)).all())
+        return {
+            cid: ContactDataStats(
+                contact_id=cid,
+                conversations=int(convs),
+                messages=int(total),
+                my_messages=int(mine),
+                episodes=int(episode_rows.get(cid, 0)),
+                graph_ingested=int(ingested),
+            )
+            for cid, convs, total, mine, ingested in message_rows
+        }
+
+    async def count_graph_ingested(self, user_id: str | None = None, since: datetime | None = None) -> int:
+        stmt = select(func.count()).select_from(MessageRow).where(MessageRow.graph_ingested_at.is_not(None))
+        if user_id is not None:
+            stmt = stmt.where(MessageRow.user_id == user_id)
+        if since is not None:
+            stmt = stmt.where(MessageRow.graph_ingested_at >= since)
+        async with self._sessions() as s:
+            return int(await s.scalar(stmt) or 0)
+
+    async def find_messages(self, user_id: str, refs: list[str]) -> dict[str, Message]:
+        if not refs:
+            return {}
+        async with self._sessions() as s:
+            convs = (
+                await s.execute(
+                    select(ConversationRow.id, ConversationRow.source_key).where(
+                        ConversationRow.user_id == user_id
+                    )
+                )
+            ).all()
+            # 참조는 `대화방키:메시지키`. 대화방 키에 ':'이 들어 있어도 되도록 접두로 맞춘다.
+            wanted: dict[UUID, dict[str, str]] = {}  # conversation_id → {메시지키: 참조}
+            for conv_id, conv_key in convs:
+                prefix = f"{conv_key}:"
+                for ref in refs:
+                    if ref.startswith(prefix):
+                        wanted.setdefault(conv_id, {})[ref[len(prefix) :]] = ref
+            if not wanted:
+                return {}
+            rows = (
+                await s.scalars(
+                    select(MessageRow).where(
+                        MessageRow.user_id == user_id,
+                        or_(
+                            *(
+                                and_(
+                                    MessageRow.conversation_id == conv_id,
+                                    MessageRow.source_key.in_(list(keys)),
+                                )
+                                for conv_id, keys in wanted.items()
+                            )
+                        ),
+                    )
+                )
+            ).all()
+        return {wanted[r.conversation_id][r.source_key]: _message(r) for r in rows}

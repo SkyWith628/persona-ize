@@ -14,7 +14,8 @@ from pydantic import BaseModel, Field
 
 SpeakerRole = Literal["me", "contact"]
 ImportStatus = Literal["completed", "failed"]
-GraphStatus = Literal["skipped", "pending", "running", "completed", "failed"]
+# limited: 그래프 수집 상한(GRAPH_INGEST_*_CAP)에 닿아 멈췄다. 미수집 메시지는 남아 있다 (DB 열 16자).
+GraphStatus = Literal["skipped", "pending", "running", "completed", "failed", "limited"]
 
 
 class Conversation(BaseModel):
@@ -100,5 +101,34 @@ class ImportJob(BaseModel):
     error_message: str | None = None
     graph_status: GraphStatus = Field("skipped", description="그래프 수집 단계. 그래프를 안 쓰면 skipped")
     graph_episodes: int = 0
-    graph_error: str | None = None
+    graph_error: str | None = Field(
+        None, description="failed면 오류 문장, limited면 닿은 상한(user_cap / daily_cap)"
+    )
     created_at: datetime
+
+
+class ConversationStats(BaseModel):
+    """대화방 하나의 집계 (`GET /v1/conversations/{id}/stats`)."""
+
+    conversation_id: UUID
+    messages: int = 0
+    my_messages: int = 0
+    episodes: int = 0
+    graph_ingested: int = 0
+    first_message_at: datetime | None = None
+    last_message_at: datetime | None = None
+
+    @property
+    def graph_pending(self) -> int:
+        return max(self.messages - self.graph_ingested, 0)
+
+
+class ContactDataStats(BaseModel):
+    """상대 한 명에게 쌓인 대화 자료의 집계 (`GET /v1/data/summary`, 조건 auto 판단)."""
+
+    contact_id: UUID
+    conversations: int = 0
+    messages: int = 0
+    my_messages: int = 0
+    episodes: int = 0
+    graph_ingested: int = 0

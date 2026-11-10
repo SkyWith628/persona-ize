@@ -495,3 +495,26 @@ async def test_reset_wipes_group_or_one_conversation_then_reingests() -> None:
     assert store.added == [] and store.removed_groups[-1] == "u"
     assert await ingest.ingest_user("u") == 3
     assert await ingest.reset("someone-else") == (0, 0)
+
+
+async def test_conversation_deleted_during_ingest_leaves_nothing_in_graph() -> None:
+    """수집 도중 대화방을 지우면: 넣던 에피소드는 되돌리고, 그 방의 남은 메시지는 넣지 않는다."""
+    _, conversations, store, ingest, svc, _, _, c1, c2 = await _setup(graph_mode="off")
+    job1 = await svc.import_messages("u", c1.id, ImportPayload(messages=MESSAGES_C1))
+    await svc.import_messages("u", c2.id, ImportPayload(messages=MESSAGES_C2))
+    orig = store.add_episode
+
+    async def add_then_delete(**kw):  # noqa: ANN003, ANN202
+        await orig(**kw)
+        if kw["name"] == "c1:m01":
+            # 모델 호출이 도는 사이에 사용자가 c1을 지운다. 삭제 시점에 c1:m01은 아직 '수집됨' 표시 전이라
+            # 삭제 경로는 이 에피소드를 모른다 — 수집 쪽이 되돌려야 한다.
+            deleted = await svc.delete_conversation("u", c1.id)
+            assert deleted.graph_episodes == 0
+
+    store.add_episode = add_then_delete  # type: ignore[method-assign]
+    # 전체 시각 순: c1:m01 → c2:m01 → c1:m02. 작업(job1)도 대화방과 함께 지워졌지만 수집은 계속된다.
+    assert await ingest.ingest_user("u", job1.id) == 1
+    assert [a["name"] for a in store.added] == ["c2:m01"]
+    assert await conversations.users_with_pending_graph() == []
+    assert await ingest.ingest_user("u") == 0

@@ -18,7 +18,7 @@ from app.ai.retrieval.base import Retriever
 from app.ai.validation import validate_output
 from app.core.errors import ModelRefusalError, ModelUnavailableError
 from app.domain.contact import Contact
-from app.domain.persona import PersonaSettings
+from app.domain.persona import PersonaSettings, apply_adjust
 from app.domain.rewrite import (
     AttemptRecord,
     Condition,
@@ -45,11 +45,14 @@ class RewriteWorkflow:
         self, inp: RewriteInput, contact: Contact, persona: PersonaSettings | None
     ) -> RewriteResult:
         t0 = time.perf_counter()
+        if inp.condition not in self.retrievers:
+            # auto는 RewriteService가 A~D로 바꿔서 넘긴다. 여기까지 오면 호출 쪽 실수다.
+            raise ValueError(f"워크플로는 A~D 조건만 받습니다: {inp.condition}")
         intent = classify_intent(inp.draft_text, inp.situation)
         preserved = extract_preserved_items(inp.draft_text)
 
-        # A 조건은 페르소나를 쓰지 않는다 (기준선).
-        persona_used = None if inp.condition == "A" else persona
+        # A 조건은 페르소나를 쓰지 않는다 (기준선). 조정(adjust)은 이번 요청의 사본에만 덮어쓴다.
+        persona_used = None if inp.condition == "A" else apply_adjust(persona, inp.adjust)
 
         retriever = self.retrievers[inp.condition]
         retrieved = await self._retrieve_safely(retriever, inp)
@@ -64,6 +67,8 @@ class RewriteWorkflow:
             situation=inp.situation,
             retrieved=retrieved,
             today=today_kst(inp.as_of),  # 검색 기준 시각과 같은 날을 '오늘'로 준다
+            adjust=inp.adjust,
+            contact_known=inp.condition != "A",  # 설정이 없어도(B~D) 누구에게 쓰는지는 밝힌다
         )
 
         attempts = 0
@@ -128,6 +133,7 @@ class RewriteWorkflow:
         assert last_report is not None
 
         if output is not None and last_report.passed:
+            cited = set(output.evidence_ids)
             return RewriteResult(
                 status="recommended",
                 result_text=output.rewritten_text.strip(),
@@ -144,6 +150,10 @@ class RewriteWorkflow:
                 retrieval_version=retriever.version,
                 token_usage=usage,
                 latency_ms=latency_ms,
+                adjust=inp.adjust,
+                # 근거의 출처 메시지 참조만 남긴다. 원문 사본은 두지 않는다 —
+                # 근거 조회 때 남아 있는 메시지를 다시 읽는다.
+                evidence_refs={e.id: list(e.source_message_ids) for e in retrieved if e.id in cited},
             )
 
         # 재생성까지 실패 또는 모델 장애: 원문 유지, 자동 전송 없음.
@@ -163,6 +173,7 @@ class RewriteWorkflow:
             retrieval_version=retriever.version,
             token_usage=usage,
             latency_ms=latency_ms,
+            adjust=inp.adjust,
         )
 
     @staticmethod

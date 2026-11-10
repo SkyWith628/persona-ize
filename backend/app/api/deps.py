@@ -132,7 +132,14 @@ def _build_graph(settings: Settings, embedder: Any, contacts: ContactRepo, conve
     store = GraphitiStore(build_graphiti(settings, embedder))
     return (
         store,
-        GraphIngestService(store, conversations, contacts),
+        GraphIngestService(
+            store,
+            conversations,
+            contacts,
+            user_message_cap=settings.graph_ingest_user_message_cap,
+            daily_global_cap=settings.graph_ingest_daily_global_cap,
+            day_offset_hours=settings.usage_day_offset_hours,
+        ),
         GraphContextRetriever(store, contacts, top_k=settings.graph_search_top_k, embedder=embedder),
     )
 
@@ -168,7 +175,15 @@ def build_state(settings: Settings) -> AppState:
         usage=usage,
         auth=auth,
         auth_service=AuthService(settings, auth),
-        rewrite_service=RewriteService(settings, contacts, rewrites, workflow, usage),
+        rewrite_service=RewriteService(
+            settings,
+            contacts,
+            rewrites,
+            workflow,
+            usage,
+            conversations=conversations,
+            graph_enabled=graph_store is not None,
+        ),
         import_service=import_service,
         deletion_service=DeletionService(
             contacts, conversations, rewrites, import_service, usage, auth, graph_store

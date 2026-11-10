@@ -12,7 +12,18 @@ from datetime import UTC, date, datetime, timedelta, timezone
 
 from pydantic import BaseModel
 
+from app.core.errors import UsageLimitError
+
 KST = timezone(timedelta(hours=9))
+
+
+class BudgetExceededError(UsageLimitError):
+    """서비스 전체(모든 사용자 합계)의 하루 한도에 닿았다 (`USAGE_GLOBAL_DAILY_*`).
+
+    사용자 한도(`usage_exceeded`)와 구분해 `budget_exceeded`로 내보낸다. 둘 다 429.
+    """
+
+    code = "budget_exceeded"
 
 
 def usage_day(now: datetime | None = None, offset_hours: int = 9) -> date:
@@ -42,6 +53,9 @@ class UsageStatus(BaseModel):
     input_tokens: int
     output_tokens: int
     token_limit: int
+    # 그래프 수집 (D 조건 재료). 상한 0은 무제한.
+    graph_messages_ingested: int = 0
+    graph_message_cap: int = 0
 
     @property
     def remaining_rewrites(self) -> int:

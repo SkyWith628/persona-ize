@@ -13,8 +13,28 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from app.domain.persona import Adjust
+
 Condition = Literal["A", "B", "C", "D"]
 """실험 조건. A 일반 첨삭 / B +페르소나 / C +본인 과거 표현 / D +그래프 맥락."""
+
+RequestedCondition = Literal["A", "B", "C", "D", "auto"]
+"""요청이 고를 수 있는 조건. auto는 서비스가 이 상대에 쓸 수 있는 가장 풍부한 조건(A~D)으로 바꾼다."""
+
+Channel = Literal["web", "mobile", "desktop", "api"]
+"""요청이 온 곳. `rewrite_requests.channel` (0008)."""
+
+FeedbackReasonCode = Literal[
+    "too_stiff",  # 너무 딱딱함
+    "too_casual",  # 너무 가벼움
+    "too_servile",  # 너무 굽신거림
+    "not_my_style",  # 내 말투가 아님
+    "fact_changed",  # 사실이 바뀜
+    "too_long",
+    "too_short",
+    "other",
+]
+"""선택형 거절·수정 사유. `feedback.reason_code` (0008). 관리자 화면은 자유 서술 대신 이것만 집계한다."""
 
 Intent = Literal["request", "refusal", "apology", "schedule", "report", "other"]
 
@@ -87,10 +107,13 @@ class RewriteInput(BaseModel):
     draft_text: str
     draft_version: int = Field(ge=1)
     situation: str = ""
-    condition: Condition = "B"
+    # 워크플로에는 A~D만 들어간다. auto는 RewriteService가 먼저 A~D로 바꾼다.
+    condition: RequestedCondition = "B"
     persona_version: int | None = None
     # 검색 기준 시각. 이 시각 이전 대화만 검색한다 (평가 사례의 as_of). None이면 지금.
     as_of: datetime | None = None
+    adjust: Adjust | None = None
+    channel: Channel = "web"
 
 
 class RewriteResult(BaseModel):
@@ -109,6 +132,20 @@ class RewriteResult(BaseModel):
     retrieval_version: str
     token_usage: dict[str, int] = Field(default_factory=dict)
     latency_ms: int
+    adjust: Adjust | None = Field(None, description="이번 요청에만 적용한 조정 (없으면 None)")
+    # 근거 id → 출처 메시지 참조(`대화방키:메시지키`). 원문 사본은 두지 않는다 — 근거 조회 때 남아 있는
+    # 메시지를 다시 읽으므로 대화를 지우면 근거도 사라진다 (`GET /v1/rewrites/{id}/evidence`).
+    evidence_refs: dict[str, list[str]] = Field(default_factory=dict)
+
+
+class Feedback(BaseModel):
+    request_id: UUID
+    accepted: bool
+    edited_text: str | None = None
+    reason: str | None = Field(None, max_length=500)
+    consent_to_reuse: bool = False
+    reason_code: FeedbackReasonCode | None = None
+    created_at: datetime | None = Field(None, description="저장 시각 (저장소가 채운다)")
 
 
 class RewriteRecord(BaseModel):
@@ -119,16 +156,10 @@ class RewriteRecord(BaseModel):
     contact_id: UUID
     persona_version_id: UUID | None
     draft_version: int
-    condition: Condition = "B"  # 요청한 실험 조건 (0007 이전 행은 B로 채워짐)
+    condition: Condition = "B"  # 실제 적용된 조건 A~D (auto 요청도 고른 값으로. 0007 이전 행은 B)
+    channel: Channel = "web"
     input_hash: str
     idempotency_key: str | None
     created_at: datetime
     result: RewriteResult
-
-
-class Feedback(BaseModel):
-    request_id: UUID
-    accepted: bool
-    edited_text: str | None = None
-    reason: str | None = Field(None, max_length=500)
-    consent_to_reuse: bool = False
+    feedback: Feedback | None = None

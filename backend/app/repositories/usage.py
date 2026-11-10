@@ -29,6 +29,10 @@ class UsageRepo(Protocol):
         """day 이전(미포함) 날짜의 카운터를 지운다. 지운 수."""
         ...
 
+    async def totals(self, day: date) -> UsageCounter:
+        """그날 모든 사용자의 합계 (전체 차단기용). user_id는 '*'."""
+        ...
+
 
 class InMemoryUsageRepo:
     def __init__(self) -> None:
@@ -64,6 +68,16 @@ class InMemoryUsageRepo:
         for k in gone:
             del self._rows[k]
         return len(gone)
+
+    async def totals(self, day: date) -> UsageCounter:
+        rows = [r for (_, d), r in self._rows.items() if d == day]
+        return UsageCounter(
+            user_id="*",
+            day=day,
+            rewrites=sum(r.rewrites for r in rows),
+            input_tokens=sum(r.input_tokens for r in rows),
+            output_tokens=sum(r.output_tokens for r in rows),
+        )
 
 
 class PostgresUsageRepo:
@@ -164,3 +178,23 @@ class PostgresUsageRepo:
         async with self._sessions.begin() as s:
             result = await s.execute(delete(UsageCounterRow).where(UsageCounterRow.day < day))
         return int(result.rowcount or 0)
+
+    async def totals(self, day: date) -> UsageCounter:
+        from sqlalchemy import func, select
+
+        from app.db.models import UsageCounterRow
+
+        stmt = select(
+            func.coalesce(func.sum(UsageCounterRow.rewrites), 0),
+            func.coalesce(func.sum(UsageCounterRow.input_tokens), 0),
+            func.coalesce(func.sum(UsageCounterRow.output_tokens), 0),
+        ).where(UsageCounterRow.day == day)
+        async with self._sessions() as s:
+            rewrites, input_tokens, output_tokens = (await s.execute(stmt)).one()
+        return UsageCounter(
+            user_id="*",
+            day=day,
+            rewrites=int(rewrites),
+            input_tokens=int(input_tokens),
+            output_tokens=int(output_tokens),
+        )

@@ -12,7 +12,9 @@ from uuid import UUID
 
 from app.domain.contact import Contact
 from app.domain.conversation import (
+    ContactDataStats,
     Conversation,
+    ConversationStats,
     EpisodeDraft,
     EpisodeHit,
     GraphStatus,
@@ -45,6 +47,25 @@ class ContactRepo(Protocol):
         """상대·페르소나 버전·첨삭 이력을 지운다 (대화방은 먼저 지워야 한다). 없으면 NotFoundError."""
         ...
 
+    async def update(
+        self,
+        user_id: str,
+        contact_id: UUID,
+        *,
+        alias: str | None = None,
+        relationship_type: RelationshipType | None = None,
+    ) -> Contact:
+        """별칭·관계 유형을 바꾼다 (None은 그대로). 없으면 NotFoundError."""
+        ...
+
+    async def list_personas(self, user_id: str, contact_id: UUID, limit: int = 50) -> list[PersonaVersion]:
+        """페르소나 버전 목록, 최신 먼저."""
+        ...
+
+    async def latest_persona_versions(self, user_id: str) -> dict[UUID, int]:
+        """상대 id → 최신 페르소나 버전 번호 (페르소나가 없는 상대는 빠진다). 목록·요약의 N+1 방지용."""
+        ...
+
 
 class RewriteRepo(Protocol):
     async def find_by_idempotency(self, user_id: str, key: str) -> RewriteRecord | None: ...
@@ -60,20 +81,41 @@ class RewriteRepo(Protocol):
         idempotency_key: str | None,
         result: RewriteResult,
         condition: str = "B",
+        channel: str = "web",
     ) -> RewriteRecord: ...
 
-    async def get(self, user_id: str, request_id: UUID) -> RewriteRecord: ...
-
-    async def list(
-        self, user_id: str, contact_id: UUID | None = None, limit: int = 20
-    ) -> list[RewriteRecord]:
-        """최근 순. contact_id가 있으면 그 상대 것만."""
+    async def get(self, user_id: str, request_id: UUID) -> RewriteRecord:
+        """요청+결과(+피드백이 있으면 `feedback`). 없거나 남의 것이면 NotFoundError."""
         ...
 
-    async def save_feedback(self, user_id: str, feedback: Feedback) -> Feedback: ...
+    async def list(
+        self,
+        user_id: str,
+        contact_id: UUID | None = None,
+        limit: int = 20,
+        before: datetime | None = None,
+    ) -> list[RewriteRecord]:
+        """최근 순. contact_id가 있으면 그 상대 것만, before가 있으면 created_at < before (페이지 넘김)."""
+        ...
+
+    async def save_feedback(self, user_id: str, feedback: Feedback) -> Feedback:
+        """요청당 피드백 하나(다시 보내면 덮어쓴다). 받은 값을 그대로 돌려준다."""
+        ...
+
+    async def delete(self, user_id: str, request_id: UUID) -> None:
+        """첨삭 요청 하나와 결과·피드백을 지운다. 없거나 남의 것이면 NotFoundError."""
+        ...
 
     async def delete_by_contact(self, user_id: str, contact_id: UUID) -> int:
         """그 상대의 첨삭 요청·결과·피드백을 지운다 (상대 삭제). 지운 요청 수."""
+        ...
+
+    async def stats_by_contact(self, user_id: str) -> dict[UUID, tuple[int, datetime | None]]:
+        """상대 id → (첨삭 요청 수, 마지막 요청 시각). 이력이 없는 상대는 빠진다."""
+        ...
+
+    async def purge_before(self, before: datetime) -> int:
+        """before 이전에 만든 첨삭 요청·결과·피드백을 지운다 (보존 기간, 모든 사용자). 지운 요청 수."""
         ...
 
 
@@ -159,7 +201,7 @@ class ConversationRepo(Protocol):
         ...
 
     async def close_stale_graph_jobs(self, user_id: str) -> int:
-        """미수집 메시지가 남지 않은 대화방의 pending/running 작업을 completed로. 바꾼 수."""
+        """미수집 메시지가 남지 않은 대화방의 pending/running/limited 작업을 completed로. 바꾼 수."""
         ...
 
     async def reset_graph_ingested(self, user_id: str, conversation_id: UUID | None = None) -> int:
@@ -168,4 +210,26 @@ class ConversationRepo(Protocol):
 
     async def purge_jobs(self, before: datetime) -> int:
         """before 이전에 만든 가져오기 작업을 지운다 (그래프 수집 중인 pending/running은 남김). 지운 수."""
+        ...
+
+    async def conversation_stats(self, user_id: str, conversation_id: UUID) -> ConversationStats:
+        """대화방 하나의 메시지·묶음·그래프 수집 집계. 없으면 NotFoundError."""
+        ...
+
+    async def latest_job(self, user_id: str, conversation_id: UUID) -> ImportJob | None:
+        """이 대화방의 가장 최근 가져오기 작업."""
+        ...
+
+    async def contact_stats(
+        self, user_id: str, contact_id: UUID | None = None
+    ) -> dict[UUID, ContactDataStats]:
+        """상대 id → 대화방·메시지·묶음·그래프 수집 집계. 대화방이 없는 상대는 빠진다."""
+        ...
+
+    async def count_graph_ingested(self, user_id: str | None = None, since: datetime | None = None) -> int:
+        """그래프에 들어간 메시지 수. user_id가 없으면 전체 사용자, since가 있으면 그 시각 이후 수집분만."""
+        ...
+
+    async def find_messages(self, user_id: str, refs: list[str]) -> dict[str, Message]:
+        """`대화방키:메시지키` 참조 → 지금 남아 있는 메시지. 지워진 것은 결과에 없다."""
         ...
