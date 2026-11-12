@@ -63,6 +63,7 @@ curl -s -X POST localhost:8000/v1/rewrites -H "X-User-Id: me" -H "Idempotency-Ke
 | `graph/` | 지식그래프 | 스키마, 호칭 병합·질의 정답, Graphiti 스파이크 |
 | `docs/` | 전원 | 설계·결정·일정 |
 | `backend/app/web/` | 팀장 | PC 웹 앱(빌드 없는 ES 모듈, 서버 `/`에서 서빙)·운영 대시보드(`/admin`)·시연 프로토타입(`/static/proto.html`). `apps/web/`(React)는 보류 |
+| `apps/ios/` | 팀장 | 아이폰 앱(SwiftUI)·보조 키보드 확장. 설치는 `apps/ios/README.md`, 화면 설계는 `docs/iphone-mobile.md` |
 | `docker/`, `scripts/ops/` | 팀장 | 운영 구성(Caddy·백업)과 배포·복원 스크립트 |
 
 협업 규칙(GitHub Desktop, PR, 폴더 소유): [CONTRIBUTING.md](CONTRIBUTING.md) · 역할·일정: [docs/team-roles-and-schedule.md](docs/team-roles-and-schedule.md) · **역할별 플레이북**: [시나리오](docs/roles/scenario.md) · [평가·품질](docs/roles/evaluation.md) · [지식그래프](docs/roles/graph.md) · **평가 사례·합성 대화 쓰는 법: [docs/dataset-guide.md](docs/dataset-guide.md)**
@@ -89,7 +90,7 @@ Windows에 `make`가 없으면 Makefile의 명령을 그대로 실행한다.
 ## 상태 (2026-11-11)
 - 저장소: `github.com/SkyWith628/persona-ize` (비공개).
 - 백엔드: 상대·페르소나, 첨삭 워크플로(의도·보존 추출 → 검색 → 프롬프트 → 검증 → 재생성 1회 → 원문 유지), PostgreSQL(Alembic), C(pgvector 문체 kNN)·D(Graphiti 그래프 맥락) 검색, 삭제(대화방·상대·계정), 사용량 제어(사용자·전체), 세션 쿠키·Bearer 인증, 대화 가져오기(카카오톡·텔레그램·붙여넣기, 개인정보 패턴 가림, 그래프 수집 상한), 운영 대시보드 API.
-- 화면: PC 웹 앱(첫 화면·동의, 첨삭, 상대·페르소나, 대화 가져오기, 이력, 내 데이터, 설정), 운영 대시보드, 안내 문서 초안. 모바일(아이폰 앱·키보드)은 `design/iphone-mobile` 브랜치.
+- 화면: PC 웹 앱(첫 화면·동의, 첨삭, 상대·페르소나, 대화 가져오기, 이력, 내 데이터, 설정), 운영 대시보드, 안내 문서 초안. 아이폰 앱·보조 키보드는 `apps/ios/`(시뮬레이터까지 확인, 실기기 미검증).
 - 배포: 운영 모드 검사·보안 헤더·요청 제한, 운영용 Docker 구성(Caddy HTTPS, 백업), 배포·복원 스크립트, 스모크 테스트. 로컬 리허설(가짜 모델)까지 확인 — 실제 서버·실제 모델 확인은 [docs/backlog.md](docs/backlog.md) A2·A3.
 - 실측: Opus 5.5로 5사례 × A/B/C/D ([2주차 메모](evals/results/2026-11-08-week2-abc-run.md), [3주차 메모](evals/results/2026-11-08-week3-abcd-run.md)). 1주차 그래프 스파이크: [graph/graph-spike-report.md](graph/graph-spike-report.md).
 - 시연: `make demo-prepare` 뒤 [docs/demo-script.md](docs/demo-script.md) (demo 계정, 3장면, 보험).
