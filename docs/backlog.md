@@ -9,8 +9,7 @@
 | A3 | 실제 서버 배포: VM(4GB+)·도메인·DNS → `docs/deploy.md` 3장 순서 | Let's Encrypt 발급, 리눅스에서의 클라이언트 IP(IPv6 포함), 작은 서버에서 가져오기 소요 시간 실측 |
 | A4 | 첫 태그를 밀 때 `release.yml` 확인(`git tag v0.1.0 && git push origin v0.1.0` → GHCR에 운영 이미지) | 아직 실행된 적 없다(YAML 문법만 확인). `ci.yml`은 11/11 `main` 푸시에서 세 작업 모두 통과(`deploy` 잡 5분 14초) |
 | A5 | 카카오톡 실물 내보내기(안드로이드·iOS·PC 각 1개)로 파서 검증 | 지금은 합성 픽스처 기준. 못 읽는 줄은 미리보기의 `skipped_lines`·`problems`로 드러난다 |
-| A6 | `/privacy`·`/terms` 검토("확인 필요" 표시: Anthropic 보관 정책, 백업 잔존 기간, 문의처) | 공개 전 필수. 고치면 `CONSENT_VERSION`을 올린다 |
-| A7 | Console 요금표로 `COST_*` 단가 채우기(관리자 화면의 비용 환산) | 0이면 "단가 미설정"으로 표시 |
+| A6 | `/privacy`·`/terms`의 남은 "확인 필요" 채우기: 문의처(두 문서), 운영 주체·변경 알림 방법(terms 7), 접근 권한자와 절차(privacy 6), 서버 밖 백업 사본의 보관 기간(privacy 3) | 팀이 정해야 하는 값. 공개 전 필수. 공개 뒤에 고치면 `CONSENT_VERSION`을 올린다. Anthropic 보관 정책·백업 14일은 11/11에 채움 |
 
 ## B. 팀원 산출물이 오면 (대기 중)
 
