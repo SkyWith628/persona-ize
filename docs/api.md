@@ -104,7 +104,7 @@ settings: `formality·friendliness·directness`(1~5), `length`(shorter/same/long
 
 ## 관리자 (운영 대시보드)
 
-화면 `/admin`. API는 모두 `GET /v1/admin/*`. 접근: 로그인(세션 쿠키 또는 Bearer) + 아이디가 `ADMIN_USERNAMES`에 대소문자까지 같게 있는 계정. 미로그인 401 · 관리자 아님 403 `forbidden` · `X-User-Id`만으로는 401 · 인메모리 저장소 503 `admin_unavailable`.
+화면 `/admin`. API는 `GET /v1/admin/*`와 쓰기 하나(`POST /v1/admin/graph/retry-held`, 쿠키 인증이면 `X-CSRF-Token` 필수). 접근: 로그인(세션 쿠키 또는 Bearer) + 아이디가 `ADMIN_USERNAMES`에 대소문자까지 같게 있는 계정. 미로그인 401 · 관리자 아님 403 `forbidden` · `X-User-Id`만으로는 401 · 인메모리 저장소 503 `admin_unavailable`.
 통과한 호출은 `admin_access_log`에 남는다. **대화 원문·첨삭 문장·자유 서술 사유·편집본은 어떤 응답에도 없고**, 사용자 id는 `u_8f2…a1`로 줄인다.
 
 | 경로 | 내용 |
@@ -114,10 +114,11 @@ settings: `formality·friendliness·directness`(1~5), `length`(shorter/same/long
 | `GET /v1/admin/jobs?limit=50` | 최근 가져오기 작업. `graph_error`는 오류 종류만 |
 | `GET /v1/admin/feedback?limit=50` | 최근 거절 피드백 (선택형 사유만) |
 | `GET /v1/admin/access-log?limit=50` | 관리자 접근 기록 |
+| `POST /v1/admin/graph/retry-held` | 본문 없음 → `{released, users, started}`. 거듭 실패해 보류된 메시지**만** 풀고(실패 횟수·보류 표시를 지운다 — 그래프와 이미 들어간 메시지는 그대로) 그 사용자들의 수집을 백그라운드로 다시 시작한다. 바로 응답하며 진행은 `overview`의 `graph.pending_messages`·`held_messages`로 본다. 메시지마다 모델 호출 비용이 들고 수집 상한을 따른다(예산이 없으면 미수집으로 남아 나중에 이어진다). 풀 것이 없으면 0건·`started=false`, 그래프가 꺼진 서버는 409 `graph_disabled`. 접근 기록에 `graph_retry_held`와 결과(`graph_retry_held_done`, `released=N users=M`)가 남는다 |
 
 - 기간은 사용량과 같은 하루 경계(KST)의 달력 날짜 N일(오늘 포함). 표본이 없으면 `success_rate`·`acceptance_rate`·`latency_ms`는 null.
 - `tokens`는 `usage_counters` 기준. `estimated_cost_usd`는 `COST_*` 단가가 0이면 null(숫자를 지어내지 않는다).
-- `fallback_reasons[].count`는 요청 수. `by_reason_code`는 거절만, 사유 미선택은 `unspecified`. `graph.jobs`·`pending_messages`·`held_messages`(거듭 실패해 보류된 메시지)는 기간과 무관한 현재 상태.
+- `fallback_reasons[].count`는 요청 수. `by_reason_code`는 거절만, 사유 미선택은 `unspecified`. `graph.jobs`·`pending_messages`·`held_messages`(거듭 실패해 보류된 메시지 — `POST /v1/admin/graph/retry-held`로 다시 시도)는 기간과 무관한 현재 상태.
 
 ## 오류 모양
 
@@ -130,7 +131,7 @@ settings: `formality·friendliness·directness`(1~5), `length`(shorter/same/long
 | 401 | `unauthorized` |
 | 403 | `forbidden`(CSRF·권한), `invalid_invite` |
 | 404 | `not_found` (남의 것도 404) |
-| 409 | `conflict` (버전 충돌, 같은 키·다른 본문, 이미 있는 이름) |
+| 409 | `conflict` (버전 충돌, 같은 키·다른 본문, 이미 있는 이름), `graph_disabled` (그래프가 꺼진 서버에서 보류 다시 시도) |
 | 413 | `payload_too_large` |
 | 422 | `invalid_input`(NUL·깨진 유니코드가 든 본문도 저장 전에 여기서 끝난다), `consent_required`, `quota_exceeded`(사용자별 저장 한도) |
 | 429 | `usage_exceeded`(사용자 하루 한도), `budget_exceeded`(서비스 전체 하루 한도), `rate_limited`, `too_many_attempts` — 모두 `Retry-After`가 붙는다(하루 한도는 한국 시간 자정까지 남은 초) |
