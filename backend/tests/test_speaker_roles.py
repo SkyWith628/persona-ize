@@ -3,7 +3,8 @@
 메시지에는 원래 화자 이름이 없고 역할만 남아 있어 방 전체의 나↔상대 맞바꾸기다.
 - "이 메시지는 X가 한 말"로 요청한다 — 이미 그러면 아무 일도 하지 않는다(멱등).
 - 바뀌면 묶음을 다시 만들고(가져오기와 같은 작업), 그래프에 들어간 것은 지우고 다시 넣는다.
-- 그래프 수집이 돌고 있으면 409, 그래프에 닿지 못하면 아무것도 바꾸지 않고 503.
+- 그래프 수집이 돌고 있으면 넣던 에피소드까지만 끝내고 비켜 준다(제때 못 비키면 409).
+- 그래프에 닿지 못하면 아무것도 바꾸지 않고 503.
 - 돌고 있는 묶음 생성과 겹치면 그 뒤에 줄을 서고, 마지막 묶음은 바뀐 역할로 만들어진다.
 """
 
@@ -219,33 +220,98 @@ class GatedStore(FakeGraphStore):
         await super().add_episode(**kwargs)
 
 
-async def test_refused_with_409_while_graph_ingest_is_running() -> None:
+async def test_a_running_ingest_steps_aside_for_the_swap() -> None:
+    """수집이 도는 중에도 고친다: 도는 수집이 넣던 에피소드까지만 끝내고 비켜 준다 (2026-11-14)."""
     store = GatedStore()
-    conversations, svc, _, _, boss, conv = await _setup("background", store=store)
-    await svc.import_messages("u", conv.id, WRONG)
+    conversations, svc, _, ingest, _, conv = await _setup("background", store=store)
+    first = await svc.import_messages("u", conv.id, WRONG)
     await asyncio.wait_for(store.started.wait(), 2)  # 수집이 첫 에피소드에서 멈춰 있다
+    m2 = await _anchor(conversations, conv)
+
+    swap = asyncio.create_task(svc.set_speaker_role("u", conv.id, m2.id, "me", me_name="김민수"))
+    await asyncio.sleep(0.05)
+    assert not swap.done()  # 넣던 에피소드가 끝나길 기다린다
+    assert await _roles(conversations, conv) == {"m1": "me", "m2": "contact", "m3": "me", "m4": "contact"}
+
+    store.gate.set()  # 그 에피소드가 끝난다 → 수집이 멈추고 잠금을 넘긴다
+    r = await asyncio.wait_for(swap, 5)
+    # 옛 역할로 들어간 한 건은 지우고 다시 넣는다. 나머지 세 건은 아직 들어가지 않았었다
+    assert (r.changed, r.messages, r.graph_removed, r.graph_requeued) == (True, 4, 1, 1)
+    assert await _roles(conversations, conv) == {"m1": "contact", "m2": "me", "m3": "contact", "m4": "me"}
+
+    await svc.wait_graph_tasks()
+    assert ingest is not None and ingest._yield == {}  # 비켜 달라는 표시가 남지 않았다
+    assert sorted(a["name"] for a in store.added) == ["c1:m1", "c1:m2", "c1:m3", "c1:m4"]
+    assert all("박지현 → 박지현" not in a["body"] for a in store.added)  # 전부 바뀐 역할로 들어갔다
+    assert all(m.graph_ingested_at is not None for m in await conversations.list_messages("u", conv.id))
+    assert (await conversations.get_job("u", r.job.id)).graph_status == "completed"
+    assert (await conversations.get_job("u", first.id)).graph_status == "completed"  # 멈췄던 작업도 정리됐다
+
+
+async def test_refused_with_409_when_the_ingest_does_not_step_aside_in_time() -> None:
+    store = GatedStore()
+    conversations, svc, _, ingest, boss, conv = await _setup("background", store=store)
+    assert ingest is not None
+    ingest.yield_wait = 0.1  # 에피소드 하나가 이보다 오래 걸린다
+    await svc.import_messages("u", conv.id, WRONG)
+    await asyncio.wait_for(store.started.wait(), 2)
     m2 = await _anchor(conversations, conv)
     jobs_before = (await conversations.latest_job("u", conv.id)).id
 
     with pytest.raises(VersionConflictError) as err:
         await svc.set_speaker_role("u", conv.id, m2.id, "me", me_name="김민수")
-    assert "진행 중" in err.value.message
+    assert "바로 멈추지 않아" in err.value.message
     # 아무것도 바뀌지 않았다: 역할·이름·묶음·작업
     assert await _roles(conversations, conv) == {"m1": "me", "m2": "contact", "m3": "me", "m4": "contact"}
     assert (await conversations.get("u", conv.id)).me_name == "박지현"
     assert await _style_lines(conversations, boss) == set(ASKS)
     assert (await conversations.latest_job("u", conv.id)).id == jobs_before
     assert len(svc._conv_locks) == 0  # 대화방 잠금을 쥔 채 끝나지 않았다
+    assert ingest._yield == {}
 
+    # 포기한 뒤에도 원래 수집은 끝까지 간다 (멈춰 세운 채 버려두지 않는다)
     store.gate.set()
     await svc.wait_graph_tasks()
-    # 수집이 끝난 뒤에는 된다
+    await ingest.wait_tasks()
+    assert sorted(a["name"] for a in store.added) == ["c1:m1", "c1:m2", "c1:m3", "c1:m4"]
+    # 그 뒤에는 된다
     r = await svc.set_speaker_role("u", conv.id, m2.id, "me", me_name="김민수")
     assert (r.changed, r.graph_removed, r.graph_requeued) == (True, 4, 4)
     await svc.wait_graph_tasks()
     assert sorted(a["name"] for a in store.added) == ["c1:m1", "c1:m2", "c1:m3", "c1:m4"]
     assert all("박지현 → 박지현" not in a["body"] for a in store.added)
     assert (await conversations.get_job("u", r.job.id)).graph_status == "completed"
+
+
+async def test_a_failed_swap_does_not_leave_the_interrupted_ingest_stopped() -> None:
+    """수집을 멈춰 세운 뒤 그래프 정리가 실패하면(503) 멈춘 수집을 뒤에서 다시 띄운다."""
+    store = GatedStore()
+    conversations, svc, _, ingest, _, conv = await _setup("background", store=store)
+    assert ingest is not None
+    await svc.import_messages("u", conv.id, WRONG)
+    await asyncio.wait_for(store.started.wait(), 2)
+    m2 = await _anchor(conversations, conv)
+
+    async def broken(group_id, names) -> int:  # noqa: ANN001
+        raise ConnectionError("neo4j down")
+
+    store.remove_episodes = broken  # type: ignore[method-assign]
+    swap = asyncio.create_task(svc.set_speaker_role("u", conv.id, m2.id, "me"))
+    await asyncio.sleep(0.05)
+    store.gate.set()
+    with pytest.raises(GraphUnavailableError):
+        await asyncio.wait_for(swap, 5)
+    assert await _roles(conversations, conv) == {"m1": "me", "m2": "contact", "m3": "me", "m4": "contact"}
+
+    await svc.wait_graph_tasks()
+    await ingest.wait_tasks()
+    assert sorted(a["name"] for a in store.added) == [
+        "c1:m1",
+        "c1:m2",
+        "c1:m3",
+        "c1:m4",
+    ]  # 남은 세 건도 들어갔다
+    assert all(m.graph_ingested_at is not None for m in await conversations.list_messages("u", conv.id))
 
 
 class BrokenRemoval(FakeGraphStore):

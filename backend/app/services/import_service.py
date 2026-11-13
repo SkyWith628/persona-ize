@@ -684,7 +684,8 @@ class ImportService:
         맞바꾸기다. 기준 메시지가 이미 그 역할이면 아무것도 하지 않는다 — 같은 요청을 다시 보내도 도로
         뒤집히지 않는다(멱등). 바뀌면
         - 그래프: 이 방에서 이미 들어간 에피소드는 잘못된 역할로 만든 것이라 지우고 다시 수집 대상으로
-          돌린다. 이 사용자의 수집이 돌고 있으면 409(끝난 뒤 다시) — 기다리면 요청이 몇 시간 걸릴 수 있다.
+          돌린다. 이 사용자의 수집이 돌고 있으면 넣던 메시지까지만 끝내고 비켜 준다(보통 10초 안팎) —
+          그 시간 안에 비키지 않을 때만 409.
           그래프에 닿지 못하면 아무것도 바꾸지 않고 503.
         - 내 이름(`me_name`): 첫 가져오기에서 '나'로 지정한 화자의 이름이었으므로 준 값으로 바꾼다
           (안 주면 비운다 — 그래프 에피소드의 화자는 '사용자'가 된다).
@@ -713,7 +714,7 @@ class ImportService:
                 await swap()
             else:
                 try:
-                    done = await self._graph_ingest.reset_conversation_if_idle(user_id, conv.id, swap)
+                    done = await self._graph_ingest.reset_conversation(user_id, conv.id, swap)
                 except DomainError:
                     raise
                 except Exception as exc:
@@ -727,7 +728,7 @@ class ImportService:
                     ) from exc
                 if done is None:
                     raise VersionConflictError(
-                        "지난 약속·사건 정리가 진행 중입니다. 정리가 끝난 뒤 다시 시도하세요."
+                        "지난 약속·사건 정리가 바로 멈추지 않아 바꾸지 못했습니다. 잠시 뒤 다시 하세요."
                     )
                 removed, requeued = done
             stats = await self._conversations.conversation_stats(user_id, conv.id)

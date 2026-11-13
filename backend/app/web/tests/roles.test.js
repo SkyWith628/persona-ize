@@ -79,7 +79,7 @@ test("결과 알림: 바뀐 것, 말투 자료, 사건 정리", () => {
 });
 
 test("오류 문구: 정리 중(409)·그래프 장애(503)·사라진 대화방(404)만 따로 알린다", () => {
-  assert.match(swapErrorText({ status: 409, code: "conflict" }), /정리가 끝난 뒤에/);
+  assert.match(swapErrorText({ status: 409, code: "conflict" }), /바로 멈추지 않아/);
   assert.match(swapErrorText({ status: 503, code: "graph_unavailable" }), /바꾸지 않았어요/);
   assert.match(swapErrorText({ status: 404, code: "not_found" }), /새로 고친 뒤/);
   assert.equal(swapErrorText({ status: 503, code: "unavailable" }), null);

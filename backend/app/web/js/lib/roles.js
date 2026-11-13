@@ -80,7 +80,7 @@ export function swapResultView(result) {
  */
 export function swapErrorText(err) {
   if (!err) return null;
-  if (err.status === 409) return "지난 약속·사건 정리가 진행 중이라 지금은 바꿀 수 없어요. 정리가 끝난 뒤에 다시 해 주세요.";
+  if (err.status === 409) return "지난 약속·사건 정리가 바로 멈추지 않아 바꾸지 못했어요. 잠시 뒤에 다시 해 주세요.";
   if (err.status === 503 && err.code === "graph_unavailable") return "지난 약속·사건 기록에 닿지 못해 바꾸지 않았어요. 잠시 뒤 다시 해 주세요.";
   if (err.status === 404) return "대화방이 그 사이 바뀌었어요. 화면을 새로 고친 뒤 다시 해 주세요.";
   return null;

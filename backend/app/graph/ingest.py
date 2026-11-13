@@ -67,6 +67,9 @@ DAILY_CAP = "daily_cap"
 _BUDGET = "budget"  # 예산 확인과 예약을 한 번에 하나씩 하는 잠금의 키
 
 GIVE_UP_STREAK = 2  # 연달아 이만큼 보류되면 메시지 탓이 아니다 — 실행을 멈춘다
+YIELD_WAIT_SECONDS = (
+    45.0  # 화자 역할 고치기가 도는 수집이 비켜 주길 기다리는 시간 (에피소드 하나 + 재시도 여유)
+)
 
 Pending = tuple[Message, Conversation, str]  # (메시지, 대화방, 에피소드 본문)
 
@@ -143,6 +146,9 @@ class GraphIngestService:
         self._tally_day: date | None = None
         self._tally = 0
         self._stopping = False  # 서버가 내려가는 중 — 넣던 에피소드까지만 끝내고 멈춘다
+        # 사용자 id → 비켜 달라는 요청 수. 있으면 그 사용자의 수집은 에피소드 사이에서 멈춘다 (화자 고치기)
+        self._yield: dict[str, int] = {}
+        self.yield_wait = YIELD_WAIT_SECONDS
         self._tasks: set[asyncio.Task[dict[str, int]]] = set()  # 보류를 푼 뒤의 백그라운드 수집
 
     @property
@@ -321,8 +327,9 @@ class GraphIngestService:
         interrupted = False
         try:
             for message, conv, body in chosen:
-                if self._stopping:
-                    interrupted = True  # 서버가 내려간다 — 에피소드 사이에서 멈춘다
+                if self._stopping or self._yield.get(user_id):
+                    # 서버가 내려가거나, 이 사용자의 대화방을 고치려는 요청이 기다린다 — 여기서 멈춘다
+                    interrupted = True
                     break
                 if conv.id in gone:
                     continue
@@ -402,9 +409,9 @@ class GraphIngestService:
             await self._job(user_id, job_id, "failed", done, kind)
             raise
         if interrupted:
-            log.info(
-                "graph ingest stopped for shutdown user=%s done=%d left=%d", user_id, done, len(chosen) - done
-            )
+            why = "shutdown" if self._stopping else "a pending edit"
+            left = len(chosen) - done
+            log.info("graph ingest stopped for %s user=%s done=%d left=%d", why, user_id, done, left)
             await self._job(user_id, job_id, "pending", done, None)
             return done, None
         if gone:
@@ -511,29 +518,61 @@ class GraphIngestService:
         """테스트·종료용: `start_resume`으로 띄운 수집을 기다린다."""
         while self._tasks:
             await asyncio.gather(*list(self._tasks), return_exceptions=True)
+            # 이미 끝난 태스크만 있으면 gather가 양보 없이 돌아온다 — 정리 콜백(discard)이 돌 차례를 준다
+            await asyncio.sleep(0)
 
-    async def reset_conversation_if_idle(
+    async def reset_conversation(
         self, user_id: str, conversation_id: UUID, then: Callable[[], Awaitable[None]]
     ) -> tuple[int, int] | None:
-        """이 사용자의 수집이 돌고 있지 않을 때만, 대화방 하나를 그래프에서 지우고 `then`을 실행한다.
+        """대화방 하나를 그래프에서 지우고 `then`을 실행한다. 이 사용자의 수집이 돌고 있으면 비켜 달라고 한다.
 
         화자 역할을 고칠 때 쓴다: 에피소드 삭제 → 수집 표시 비우기 → `then`(역할 바꾸기)을 수집 잠금
-        안에서 차례로 해, 그 사이에 시작한 수집이 옛 역할의 본문을 넣지 못하게 한다. 수집이 돌고 있으면
-        (잠금을 기다리는 수집이 있어도) 아무것도 하지 않고 None — 끝나기까지 몇 분에서 몇 시간이 걸릴 수
-        있어 기다리지 않는다. 돌려주는 값은 `reset`과 같다. 다시 넣는 것은 부른 쪽이 한다.
+        안에서 차례로 해, 그 사이에 시작한 수집이 옛 역할의 본문을 넣지 못하게 한다.
+
+        수집이 돌고 있으면 끝나기(몇 분~몇 시간)를 기다리지 않는다: 비켜 달라는 표시를 남기면 도는 수집이
+        넣던 에피소드까지만 끝내고 멈추고(그 작업은 `pending`), 잠금을 넘겨받는다 — 보통 10초 안팎이다.
+        `yield_wait`초 안에 잠금을 못 잡으면 아무것도 하지 않고 None. 돌려주는 값은 `reset`과 같다.
+        멈춘 수집의 남은 메시지는 부른 쪽이 다시 시작하는 수집(`ingest_user`)이 함께 넣는다 — 여기서
+        실패해 부른 쪽이 수집을 시작하지 못하면 멈춘 수집을 뒤에서 다시 띄운다.
         """
         key = ("user", user_id)
-        if self._locks.busy(key):
+        interrupted = self._locks.busy(key)
+        acquired = finished = False
+        self._yield[user_id] = self._yield.get(user_id, 0) + 1
+        try:
+            async with asyncio.timeout(self.yield_wait) as limit:
+                async with self._locks.hold(key):
+                    acquired = True
+                    limit.reschedule(None)  # 잠금을 잡았다 — 여기서부터는 시간 제한이 없다
+                    conv = await self._conversations.get(user_id, conversation_id)
+                    messages = await self._conversations.list_messages(user_id, conv.id)
+                    names = [
+                        f"{conv.source_key}:{m.source_key}"
+                        for m in messages
+                        if m.graph_ingested_at is not None
+                    ]
+                    removed = await self._store.remove_episodes(user_id, names) if names else 0
+                    reset = await self._conversations.reset_graph_ingested(user_id, conv.id)
+                    await then()
+            finished = True
+            return removed, reset
+        except TimeoutError:
+            if acquired:
+                raise  # 잠금 안에서 난 시간 초과(그래프·DB) — 기다리다 포기한 것이 아니다
+            log.info("graph reset gave up waiting for the running ingest user=%s", user_id)
             return None
-        # 비어 있는 잠금은 양보 없이 잡힌다 — 위의 확인과 사이가 뜨지 않는다
-        async with self._locks.hold(key):
-            conv = await self._conversations.get(user_id, conversation_id)
-            messages = await self._conversations.list_messages(user_id, conv.id)
-            names = [f"{conv.source_key}:{m.source_key}" for m in messages if m.graph_ingested_at is not None]
-            removed = await self._store.remove_episodes(user_id, names) if names else 0
-            reset = await self._conversations.reset_graph_ingested(user_id, conv.id)
-            await then()
-        return removed, reset
+        finally:
+            self._release_yield(user_id)
+            if not finished and interrupted and not self._stopping:
+                # 멈춰 세웠는데 부른 쪽이 수집을 다시 시작하지 못한다 — 뒤에서 이어 넣는다
+                self.start_resume([user_id])
+
+    def _release_yield(self, user_id: str) -> None:
+        left = self._yield.get(user_id, 0) - 1
+        if left > 0:
+            self._yield[user_id] = left
+        else:
+            self._yield.pop(user_id, None)
 
     async def resume_all(self) -> dict[str, int]:
         """서버 시작·주기 작업: 미수집 메시지가 남은 사용자마다 이어서 넣고, 작업 상태를 정리한다.
