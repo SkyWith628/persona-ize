@@ -2,7 +2,8 @@
 
     parsed = parse_import(text, "auto", tz_offset_minutes=540, mask_pii=True)
 
-- `kakao`: 카카오톡 내보내기 (.txt 안드로이드·iOS·PC, .csv) — `kakao.py`. **실물 샘플 검증 전.**
+- `kakao`: 카카오톡 내보내기 (.txt 안드로이드·iOS·PC, .csv) — `kakao.py`.
+  **실물 검증은 PC .csv만(2026-11-13), .txt는 합성 픽스처 기준.**
 - `telegram`: 텔레그램 Desktop `result.json` — `telegram.py`
 - `plain`: `날짜 시각 | 화자 | 내용` 붙여넣기, `json`: 메시지 배열 — `plain.py`
 - 개인정보 가림 — `pii.py`. 공통 뒷정리(같은 분 안 순서, 내용 기반 id) — `base.py`

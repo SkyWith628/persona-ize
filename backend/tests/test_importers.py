@@ -236,6 +236,41 @@ def test_kakao_csv_quotes_newlines_and_bad_rows() -> None:
     assert "읽지 못한 행이 2개" in p.problems[0]
 
 
+def test_kakao_csv_real_export_shapes() -> None:
+    """실물 PC 내보내기(.csv)에서 본 꼴 (2026-11-13, 내용은 합성): BOM, 삭제된 메시지 행, 톡게시판 알림."""
+    text = (
+        "﻿Date,User,Message\r\n"
+        '2026-10-05 09:25:10,"박지현","박지현님이 김민수님을 초대했습니다."\r\n'
+        '2026-10-05 09:25:40,"박지현","단톡방입니다~"\r\n'
+        ',"","메시지가 삭제되었습니다."\r\n'
+        '2026-10-05 09:26:00,"김민수","사진"\r\n'
+        '2026-10-05 09:27:00,"김민수","회의는 수요일 2시입니다.\r\n자료는 화요일까지 올릴게요."\r\n'
+        "2026-10-05 09:27:05,\"김민수\",\"톡게시판 '공지': 회의는 수요일 2시.\r\n자료는 화요일까지.\"\r\n"
+        "2026-10-05 09:28:00,\"박지현\",\"톡게시판 '투표': 회식 날짜\"\r\n"
+        '2026-10-05 09:29:00,"박지현","톡게시판 얘기 나온 김에 투표해 주세요"\r\n'
+        '2026-10-05 09:30:00,"김민수","파일: 회의자료.pdf"\r\n'
+    )
+    p = parse_import(text)
+    assert (p.format, p.variant) == ("kakao", "csv")
+    assert _texts(p) == [
+        "단톡방입니다~",
+        "회의는 수요일 2시입니다.\n자료는 화요일까지 올릴게요.",
+        "톡게시판 얘기 나온 김에 투표해 주세요",  # 사람이 쓴 말은 남는다
+    ]
+    # 초대 / 삭제된 메시지 / 사진 / 톡게시판 2 / 파일 — 못 읽은 행으로 세지 않는다
+    assert (p.system_lines, p.skipped_lines, p.problems) == (6, 0, [])
+
+
+def test_kakao_txt_drops_deleted_message_and_board_notices() -> None:
+    text = ANDROID + (
+        "2026년 10월 7일 오전 9:00, 회원님 : 메시지가 삭제되었습니다.\n"
+        "2026년 10월 7일 오전 9:01, 회원님 : 톡게시판 '새글': 회의록 올렸습니다\n"
+    )
+    before, after = parse_import(ANDROID), parse_import(text)
+    assert _texts(after) == _texts(before)
+    assert after.system_lines == before.system_lines + 2
+
+
 def test_reupload_and_longer_overlapping_export_keep_the_same_ids() -> None:
     first = parse_import(ANDROID)
     again = parse_import(ANDROID)

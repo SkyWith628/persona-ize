@@ -69,6 +69,7 @@ _SYSTEM_PHRASE = re.compile(
 # 사진·이모티콘 등 자리표시 메시지 (본문 전체가 이것일 때만)
 _PLACEHOLDER = re.compile(
     r"^(?:사진(?: \d+장)?|동영상|이모티콘|\(이모티콘\)|음성메시지|삭제된 메시지입니다\.?|파일: .+"
+    r"|메시지가 삭제되었습니다\.?"
     r"|Photo|\d+ Photos|Video|Emoticon|\(Emoticon\)|Voice Message|This message was deleted\.?|File: .+)$",
     re.I,
 )
@@ -135,8 +136,14 @@ def is_csv(text: str) -> bool:
     return bool(_CSV_HEADER.match(first.strip()))
 
 
+# 톡게시판 알림: 공지·새글·투표를 올리면 카카오톡이 올린 사람 이름으로 대화에 남기는 줄. 본문이 여러 줄일 수
+# 있다. 사람이 대화에 쓴 말이 아니므로 말투 예시에서 뺀다 (실물 PC 내보내기 2026-11-13).
+_BOARD_NOTICE = re.compile(r"^톡게시판 '[^'\n]{1,30}'(?::|$)")
+
+
 def is_placeholder(text: str) -> bool:
-    return bool(_PLACEHOLDER.match(text.strip()))
+    stripped = text.strip()
+    return bool(_PLACEHOLDER.match(stripped) or _BOARD_NOTICE.match(stripped))
 
 
 def _month(name: str) -> int | None:
@@ -451,13 +458,17 @@ def _parse_csv(text: str, tz: timezone) -> ParsedImport:
             unreadable.append(rowno)
             parsed.skipped_lines += 1
             continue
+        body = ",".join(row[2:]).strip()  # 따옴표 없이 쉼표가 든 본문도 붙여서 살린다
+        if not row[0].strip() and not row[1].strip() and (is_placeholder(body) or _SYSTEM_PHRASE.match(body)):
+            # 삭제된 메시지는 날짜·이름 없이 `,"","메시지가 삭제되었습니다."`로 남는다 — 못 읽은 행이 아니다
+            parsed.system_lines += 1
+            continue
         moment = _csv_moment(row[0], tz)
         if moment is None:
             unreadable.append(rowno)
             parsed.skipped_lines += 1
             continue
         speaker = row[1].strip()
-        body = ",".join(row[2:]).strip()  # 따옴표 없이 쉼표가 든 본문도 붙여서 살린다
         if not speaker or not body or is_placeholder(body) or _SYSTEM_PHRASE.match(body):
             parsed.system_lines += 1
             continue

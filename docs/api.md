@@ -64,7 +64,7 @@ settings: `formality·friendliness·directness`(1~5), `length`(shorter/same/long
 | `GET /v1/conversations/{id}/stats` | `{messages, my_messages, episodes, graph_enabled, graph_ingested, graph_pending, graph_limited, first_message_at, last_message_at, latest_job}` — 가져오기 진행 표시용 |
 | `DELETE /v1/conversations/{id}` | 원문·묶음·그래프 에피소드 삭제. 이후 검색에 나오지 않는다 |
 
-- **지원 형식**: 카카오톡 내보내기(.txt — 안드로이드·iOS·PC, PC의 .csv), 텔레그램 Desktop 내보내기(`result.json` — 계정 전체 내보내기면 `chats` 목록이 오고 `chat_id`로 고른다), 붙여넣기(`날짜 시각 | 화자 | 내용`), JSON 배열. **카카오톡 파서는 합성 픽스처로만 검증했다(실물 내보내기 샘플 검증 전)** — 못 읽은 줄은 `skipped_lines`·`problems`로 드러난다.
+- **지원 형식**: 카카오톡 내보내기(.txt — 안드로이드·iOS·PC, PC의 .csv), 텔레그램 Desktop 내보내기(`result.json` — 계정 전체 내보내기면 `chats` 목록이 오고 `chat_id`로 고른다), 붙여넣기(`날짜 시각 | 화자 | 내용`), JSON 배열. **카카오톡 파서는 PC의 .csv만 실물 내보내기로 검증했다(2026-11-13). .txt 세 변형은 합성 픽스처 기준이다** — 못 읽은 줄은 `skipped_lines`·`problems`로 드러난다.
 - 문체 묶음(임베딩)은 요청 안에서 끝난다(실제 e5로 메시지 수천 건이면 수십 초~몇 분. 본문이 같은 묶음은 다시 임베딩하지 않는다). 같은 대화방의 가져오기·삭제는 한 번에 하나씩 처리한다. **그래프 수집은 백그라운드**: `graph_status` skipped(그래프 꺼짐) → pending → running → completed / failed / **limited**(수집 상한 도달 — 종료 상태, `graph_error`는 `user_cap` 또는 `daily_cap`).
 - 그래프 수집 상한(`GRAPH_INGEST_USER_MESSAGE_CAP`·`GRAPH_INGEST_DAILY_GLOBAL_CAP`)은 지워지지 않는 하루 카운터로 센다 — 대화를 지워도 그날 쓴 예산은 돌아오지 않는다. 메시지 1건이 1이고 1,000자마다 1을 더 센다. 예산이 모자라면 **가장 최근 메시지부터** 넣는다. `limited`·`failed`였던 파일을 다시 올리면 예산이 있을 때 이어서 수집한다.
 - 작업의 `error_message`·`graph_error`와 삭제 응답의 `graph_error(s)`에는 예외의 **종류**만 남는다(예: `RuntimeError`, `DBAPIError(23505)`) — 문장에 대화 원문이 섞일 수 있어서.
