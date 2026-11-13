@@ -595,8 +595,13 @@ class ImportService:
         if self._tasks:
             await asyncio.gather(*self._tasks, return_exceptions=True)
 
-    async def delete_conversation(self, user_id: str, conversation_id: UUID) -> DeletionResult:
+    async def delete_conversation(
+        self, user_id: str, conversation_id: UUID, *, remove_graph: bool = True
+    ) -> DeletionResult:
         """원문·묶음·가져오기 작업·그래프 에피소드를 지운다. 삭제 뒤 C/D 검색에 이 대화방이 나오지 않는다.
+
+        `remove_graph=False`: 그래프는 건드리지 않는다 — 계정 삭제처럼 부른 쪽이 그 사용자의 그래프를
+        통째로 지울 때만 쓴다(에피소드를 하나씩 지우는 일을 건너뛴다).
 
         그래프를 먼저 지운다 (메시지 목록이 필요하다). 그래프 삭제가 실패해도 DB는 지우고 사유를 돌려준다 —
         사용자의 삭제 요청은 원문 삭제가 우선이고, 그래프 잔여물은 재시도 대상으로 남긴다.
@@ -605,13 +610,15 @@ class ImportService:
         # 진행 중인 가져오기의 저장이 끝난 뒤에 지운다. 뒤에서 도는 묶음 생성은 기다리지 않는다 —
         # 지워진 방을 만나면 그쪽이 그만둔다.
         async with self._conv_locks.hold(conv.id):
-            return await self._delete_conversation(user_id, conv)
+            return await self._delete_conversation(user_id, conv, remove_graph=remove_graph)
 
-    async def _delete_conversation(self, user_id: str, conv: Conversation) -> DeletionResult:
+    async def _delete_conversation(
+        self, user_id: str, conv: Conversation, *, remove_graph: bool = True
+    ) -> DeletionResult:
         messages = await self._conversations.list_messages(user_id, conv.id)
         graph_removed = 0
         graph_error: str | None = None
-        if self._graph_ingest is not None:
+        if self._graph_ingest is not None and remove_graph:
             names = [f"{conv.source_key}:{m.source_key}" for m in messages if m.graph_ingested_at is not None]
             try:
                 graph_removed = await self._graph_ingest.remove_episodes(user_id, names)
