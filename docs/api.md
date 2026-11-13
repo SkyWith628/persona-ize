@@ -70,7 +70,7 @@ settings: `formality·friendliness·directness`(1~5), `length`(shorter/same/long
 - 그래프 수집 상한(`GRAPH_INGEST_USER_MESSAGE_CAP`·`GRAPH_INGEST_DAILY_GLOBAL_CAP`)은 지워지지 않는 하루 카운터로 센다 — 대화를 지워도 그날 쓴 예산은 돌아오지 않는다. 메시지 1건이 1이고 1,000자마다 1을 더 센다. 예산이 모자라면 **가장 최근 메시지부터** 넣는다. `limited`·`failed`였던 파일을 다시 올리면 예산이 있을 때 이어서 수집한다.
 - 작업의 `error_message`·`graph_error`와 삭제 응답의 `graph_error(s)`에는 예외의 **종류**만 남는다(예: `RuntimeError`, `DBAPIError(23505)`) — 문장에 대화 원문이 섞일 수 있어서.
 - 같은 내용을 다시 올리면 같은 작업을 돌려주고, 겹친 메시지는 건너뛴다. 메시지 id는 내용 기반(UTC 분 + 같은 분·같은 본문 순번 + 본문)이라 범위가 겹치는 내보내기를 올려도 중복 저장되지 않는다. `tz_offset_minutes`(기본 +540 = 한국 시간)를 바꾸면 id가 달라지므로 같은 대화는 같은 값으로 올린다.
-- 화자 지정을 잘못한 채 가져왔으면 대화방을 지우고 다시 가져온다(다시 올리면 전부 중복으로 건너뛴다).
+- 나와 상대를 거꾸로 지정한 채 가져왔으면 `PUT /v1/conversations/{id}/speaker-roles`로 맞바꾼다(다시 올리면 전부 중복으로 건너뛴다). 화자별로 따로 고치거나 `skip`한 화자를 되살리려면 대화방을 지우고 다시 가져온다.
 - `IMPORT_MASK_PII=true`(기본)면 API로 들어온 가져오기 본문에서 전화번호·이메일·주민등록번호·카드/계좌 번호 **모양**을 `[전화번호]`처럼 가려 저장한다. 패턴 기반이라 이름·주소는 가리지 못하고 표기가 다르면 놓칠 수 있다.
 - 한도: 본문 `MAX_BODY_BYTES`(8MB), 원문 `MAX_IMPORT_CHARS`(200만 자), 한 번에 `MAX_IMPORT_MESSAGES`(기본 5000, 운영 예시 2000)건, 사용자별 저장 한도(`MAX_CONTACTS_PER_USER` 200·`MAX_CONVERSATIONS_PER_USER` 500·`MAX_MESSAGES_PER_USER` 50000 — 넘으면 아무것도 저장하지 않고 422 `quota_exceeded`). 메시지 한 건은 4,000자까지, `sent_at`은 1990~2100년.
 - 대화 본문의 깨진 글자(NUL, 짝 없는 대리 문자)는 `?`로 바꿔 읽는다. 이름·제목·메시지 id 같은 다른 칸에 있으면 422.

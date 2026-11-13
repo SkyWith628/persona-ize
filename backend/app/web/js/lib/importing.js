@@ -445,11 +445,14 @@ export function graphPhaseView(stats, job, { stalled = false } = {}) {
     case "failed": {
       // 서버의 예외 문장은 보여 주지 않는다 — 짧은 코드일 때만 운영자에게 전할 수 있게 덧붙인다.
       const why = errorCode(stats?.latest_job?.graph_error || job?.graph_error);
+      // 연달아 보류되면 실행이 멈춘다(failed) — 그때도 건너뛴 건수를 숨기지 않는다
+      const held = stats?.graph_held ?? 0;
+      const skipped = held > 0 ? ` 메시지 ${formatNumber(held)}개는 여러 번 시도해도 정리되지 않아 건너뛰었어요.` : "";
       return {
         ...base,
         tone: "bad",
         title: "지난 약속·사건 정리 중 문제가 생겼어요",
-        detail: `말투 맞추기는 그대로 쓸 수 있어요. 나중에 대화를 다시 가져오면 남은 부분을 이어서 정리해요.${why ? ` (오류 종류: ${why})` : ""}`,
+        detail: `말투 맞추기는 그대로 쓸 수 있어요. 나중에 대화를 다시 가져오면 남은 부분을 이어서 정리해요.${skipped}${why ? ` (오류 종류: ${why})` : ""}`,
       };
     }
     case "limited": {

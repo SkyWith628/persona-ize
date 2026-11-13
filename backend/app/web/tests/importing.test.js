@@ -432,6 +432,11 @@ test("사건 정리: 보류된 메시지가 있으면 다 넣은 것처럼 보�
   const clean = graphPhaseView({ ...held, graph_ingested: 312, graph_held: 0 }, JOB);
   assert.equal(clean.tone, "ok");
   assert.equal(clean.title, "지난 약속·사건 정리 완료");
+  // 연달아 보류돼 실행이 멈춘 경우(failed)에도 건너뛴 건수를 알린다
+  const stopped = graphPhaseView({ ...STATS, graph_ingested: 0, graph_held: 2, graph_pending: 310, latest_job: { ...JOB, graph_status: "failed", graph_error: "TypeError" } }, JOB);
+  assert.equal(stopped.tone, "bad");
+  assert.match(stopped.detail, /메시지 2개는 여러 번 시도해도 정리되지 않아 건너뛰었어요/);
+  assert.match(stopped.detail, /오류 종류: TypeError/);
   // graph_held를 주지 않는 옛 응답도 깨지지 않는다
   const { graph_held: _omit, ...old } = held;
   assert.equal(graphPhaseView(old, JOB).tone, "ok");
