@@ -259,3 +259,122 @@ async def test_held_messages_on_postgres(pg_url: str) -> None:
         )
     finally:
         await engine.dispose()
+
+
+# ---------- 보류만 풀어 다시 시도 (관리자 화면의 "다시 시도") ----------
+
+
+async def test_release_held_touches_only_held_messages() -> None:
+    conversations, store, ingest, _, c1 = await _imported()
+    calls = _failing(store, {"c1:m01": 3})  # 세 번 실패해 보류된 뒤에는 성공한다
+    assert await ingest.ingest_user("u") == 2
+    before = await conversations.list_messages("u", c1.id)
+    assert before[0].graph_held_at is not None and before[1].graph_ingested_at is not None
+
+    assert await ingest.release_held() == {"u": 1}
+    after = await conversations.list_messages("u", c1.id)
+    assert (after[0].graph_attempts, after[0].graph_held_at, after[0].graph_ingested_at) == (0, None, None)
+    assert after[1] == before[1]  # 이미 들어간 메시지는 그대로 — 그래프도 지우지 않는다
+    assert [a["name"] for a in store.added] == ["c2:m01", "c1:m02"]
+    assert await conversations.users_with_pending_graph() == ["u"]
+    assert await ingest.release_held() == {}  # 풀 것이 없으면 아무것도 바꾸지 않는다
+
+    # 풀린 메시지만 다시 넣는다 (모델 호출 1번)
+    assert ingest.start_resume(["u"]) is True
+    await ingest.wait_tasks()
+    assert calls["c1:m01"] == 4 and calls["c1:m02"] == 1
+    assert [a["name"] for a in store.added] == ["c2:m01", "c1:m02", "c1:m01"]
+    assert await conversations.users_with_pending_graph() == []
+    assert ingest.start_resume([]) is False
+
+
+async def test_release_held_leaves_counted_but_unheld_messages_and_other_users() -> None:
+    conversations, _, ingest, _, c1 = await _imported()
+    rows = await conversations.list_messages("u", c1.id)
+    await conversations.record_graph_failure("u", rows[0].id, False, rows[0].sent_at)  # 세기만 했다
+    await conversations.record_graph_failure("u", rows[1].id, True, rows[1].sent_at)  # 보류
+
+    assert await conversations.release_held_graph("someone-else") == {}
+    assert await conversations.release_held_graph("u") == {"u": 1}
+    rows = await conversations.list_messages("u", c1.id)
+    assert [(m.graph_attempts, m.graph_held_at) for m in rows] == [(1, None), (0, None)]
+
+
+async def test_retry_after_release_follows_the_caps() -> None:
+    conversations, store, ingest, _, _ = await _imported()
+    calls = _failing(store, {"c1:m01": 3})
+    assert await ingest.ingest_user("u") == 2
+    ingest.user_message_cap = 2  # 이미 2건이 들어 있다 — 예산 0
+
+    assert await ingest.release_held() == {"u": 1}
+    assert await ingest.resume_users(["u"]) == {}  # 모델을 부르지 않는다
+    assert calls["c1:m01"] == 3
+    assert await conversations.users_with_pending_graph() == ["u"]  # 예산이 생기면 이어받는다
+
+    ingest.user_message_cap = 3
+    assert await ingest.resume_users(["u"]) == {"u": 1}
+    assert calls["c1:m01"] == 4
+
+
+async def test_a_released_message_that_still_fails_is_held_again() -> None:
+    conversations, store, ingest, _, c1 = await _imported()
+    calls = _failing(store, {"c1:m01": 99})
+    assert await ingest.ingest_user("u") == 2
+    await ingest.release_held()
+    assert await ingest.resume_users(["u"]) == {"u": 0}
+    assert calls["c1:m01"] == 6  # 다시 세 번까지만
+    m01 = (await conversations.list_messages("u", c1.id))[0]
+    assert m01.graph_attempts == 3 and m01.graph_held_at is not None
+
+
+async def test_release_held_on_postgres(pg_url: str) -> None:
+    from app.db.session import create_engine, create_session_factory
+    from app.repositories.postgres import PostgresContactRepo, PostgresConversationRepo
+
+    engine = create_engine(pg_url)
+    sessions = create_session_factory(engine)
+    try:
+        contacts, conversations = PostgresContactRepo(sessions), PostgresConversationRepo(sessions)
+        store = FakeGraphStore()
+        ingest = GraphIngestService(store, conversations, contacts, max_attempts=2)
+        svc = ImportService(contacts, conversations, FakeEmbedder(dim=384))
+        user, other = f"rel-{uuid.uuid4().hex[:8]}", f"rel-{uuid.uuid4().hex[:8]}"
+        convs = {}
+        for owner in (user, other):
+            boss = await contacts.create(owner, "박지현", "superior")
+            convs[owner] = await svc.create_conversation(owner, boss.id, "방", "json", "c1", me_name="김민수")
+            await svc.import_messages(owner, convs[owner].id, ImportPayload(messages=MESSAGES_C1))
+
+        calls = _failing(store, {"c1:m02": 4})  # 두 사용자 모두 m02가 두 번씩 실패해 보류된다
+        assert await ingest.ingest_user(user) == 1
+        assert await ingest.ingest_user(other) == 1
+        first = (await conversations.list_messages(other, convs[other].id))[0]
+        await conversations.record_graph_failure(other, first.id, False, first.sent_at)  # 세기만 한 것
+        held_before = await _admin_held(sessions)
+        assert held_before >= 2
+
+        # 사용자를 주면 그 사용자 것만 푼다
+        assert await conversations.release_held_graph(user) == {user: 1}
+        rows = await conversations.list_messages(user, convs[user].id)
+        assert [(m.graph_attempts, m.graph_held_at, m.graph_ingested_at is not None) for m in rows] == [
+            (0, None, True),
+            (0, None, False),
+        ]
+        assert await _admin_held(sessions) == held_before - 1
+        assert (await conversations.conversation_stats(user, convs[user].id)).graph_held == 0
+        assert user in await conversations.users_with_pending_graph()
+        assert other not in await conversations.users_with_pending_graph()
+
+        # 사용자를 안 주면 전부 (테스트 DB는 다른 테스트와 함께 쓴다 — 우리 것만 확인한다)
+        released = await ingest.release_held()
+        assert released[other] == 1 and user not in released
+        rows = await conversations.list_messages(other, convs[other].id)
+        # 이미 들어간 메시지의 횟수는 그대로다 (보류된 것만 지운다)
+        assert [(m.graph_attempts, m.graph_held_at) for m in rows] == [(1, None), (0, None)]
+
+        assert await ingest.resume_users([user, other]) == {user: 1, other: 1}
+        assert calls["c1:m02"] == 6
+        assert [a["name"] for a in store.added].count("c1:m02") == 2
+        assert (await conversations.conversation_stats(user, convs[user].id)).graph_pending == 0
+    finally:
+        await engine.dispose()

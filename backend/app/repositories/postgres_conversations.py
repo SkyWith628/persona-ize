@@ -441,6 +441,21 @@ class PostgresConversationRepo:
                 .values(**values)
             )
 
+    async def release_held_graph(self, user_id: str | None = None) -> dict[str, int]:
+        stmt = (
+            update(MessageRow)
+            .where(MessageRow.graph_ingested_at.is_(None), MessageRow.graph_held_at.is_not(None))
+            .values(graph_attempts=0, graph_held_at=None)
+            .returning(MessageRow.user_id)
+        )
+        if user_id is not None:
+            stmt = stmt.where(MessageRow.user_id == user_id)
+        released: dict[str, int] = {}
+        async with self._sessions.begin() as s:
+            for owner in (await s.scalars(stmt)).all():
+                released[owner] = released.get(owner, 0) + 1
+        return released
+
     async def close_stale_graph_jobs(self, user_id: str) -> int:
         pending_convs = (
             select(MessageRow.conversation_id)

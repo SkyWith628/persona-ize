@@ -477,6 +477,20 @@ class InMemoryConversationRepo:
                 for m in msgs
             ]
 
+    async def release_held_graph(self, user_id: str | None = None) -> dict[str, int]:
+        released: dict[str, int] = {}
+        for conv_id, msgs in self._messages.items():
+            conv = self._conversations.get(conv_id)
+            if conv is None or (user_id is not None and conv.user_id != user_id):
+                continue
+            held = {m.id for m in msgs if m.graph_ingested_at is None and m.graph_held_at is not None}
+            if not held:
+                continue
+            cleared = {"graph_attempts": 0, "graph_held_at": None}
+            self._messages[conv_id] = [m.model_copy(update=cleared) if m.id in held else m for m in msgs]
+            released[conv.user_id] = released.get(conv.user_id, 0) + len(held)
+        return released
+
     async def close_stale_graph_jobs(self, user_id: str) -> int:
         n = 0
         for jid, job in list(self._jobs.items()):

@@ -38,7 +38,8 @@
   때마다 같은 메시지를 다시 시도했다 — 모델이 늘 실패하는 메시지 하나가 뒤의 메시지를 영영 막고 비용을 썼다.
 - 이제 실패를 메시지마다 센다(`messages.graph_attempts`). 같은 실행 안에서 바로 다시 시도하고, 횟수를 다
   쓰면 그 메시지를 **보류**(`graph_held_at`)하고 다음 메시지로 넘어간다. 보류된 메시지는 미수집으로 세지
-  않으므로 다시 돌지 않는다. 운영자가 `scripts/graph_reset.py`로 풀 수 있다.
+  않으므로 다시 돌지 않는다. 운영자가 관리자 화면의 "다시 시도"(`release_held` → `start_resume`, 보류만 풂)나
+  `scripts/graph_reset.py`(그래프를 지우고 다시 만든다)로 풀 수 있다.
 - **일시 장애는 세지 않는다**(`is_transient`: 연결·시간 초과·요청 한도·인증·5xx·Neo4j 접속). 그때는 예전처럼
   실행을 멈추고 작업을 `failed`로 남긴다 — 장애 동안 메시지가 줄줄이 보류되면 안 된다.
 - 보류가 연달아 `GIVE_UP_STREAK`건 나오면 메시지 탓이 아니라 설정·모델 쪽 문제로 보고 실행을 멈춘다.
@@ -46,7 +47,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from collections.abc import Iterable
 from datetime import UTC, date, datetime, time, timedelta, timezone
 from uuid import UUID
 
@@ -139,6 +142,7 @@ class GraphIngestService:
         # 오늘 이 프로세스가 API 경로로 넣은 양 — DB 카운터가 (계정 삭제로) 줄어도 남는다.
         self._tally_day: date | None = None
         self._tally = 0
+        self._tasks: set[asyncio.Task[dict[str, int]]] = set()  # 보류를 푼 뒤의 백그라운드 수집
 
     @property
     def capped(self) -> bool:
@@ -378,7 +382,7 @@ class GraphIngestService:
         if gone:
             log.info("graph ingest skipped %d deleted conversation(s) user=%s", len(gone), user_id)
         if held:
-            log.warning("graph ingest held %d message(s) user=%s (graph_reset.py로 다시 시도)", held, user_id)
+            log.warning("graph ingest held %d message(s) user=%s (관리자 화면에서 다시 시도)", held, user_id)
         if stopped is not None:
             log.info(
                 "graph ingest limited user=%s reason=%s done=%d left=%d",
@@ -436,6 +440,49 @@ class GraphIngestService:
                 removed = await self._store.remove_episodes(user_id, names)
             reset = await self._conversations.reset_graph_ingested(user_id, conversation_id)
         return removed, reset
+
+    async def release_held(self) -> dict[str, int]:
+        """보류된 메시지를 풀어 다시 수집 대상으로 만든다 (모든 사용자). {사용자 id: 푼 건수}.
+
+        `reset`과 달리 그래프와 이미 들어간 메시지는 그대로 둔다. 풀기만 하고 수집은 하지 않는다 —
+        이어서 `start_resume`을 부르거나, 다음 재시작·주기 이어받기(`resume_all`)가 넣는다.
+        지금 돌고 있는 수집은 시작할 때 고른 목록만 넣으므로 잠금을 쥐지 않아도 겹치지 않는다.
+        """
+        return await self._conversations.release_held_graph()
+
+    async def resume_users(self, user_ids: Iterable[str]) -> dict[str, int]:
+        """이 사용자들의 미수집 메시지를 순서대로 이어서 넣는다 (API 경로 — 상한을 따르고 카운터에 센다).
+
+        `resume_all`과 같은 규칙이되, 지금 수집 중인 사용자도 건너뛰지 않고 잠금을 기다렸다가 넣는다
+        (도는 실행은 방금 풀린 메시지를 모른다). 예산이 0이면 모델을 부르지 않고 넘어간다 — 풀린
+        메시지는 미수집으로 남아 예산이 생기면 `resume_all`이 넣는다.
+        """
+        done: dict[str, int] = {}
+        for user_id in user_ids:
+            if await self.is_limited(user_id):
+                continue
+            try:
+                done[user_id] = await self.ingest_user(user_id)
+            except Exception as exc:  # noqa: BLE001 - 한 사용자 실패가 다른 사용자를 막지 않는다
+                log.warning("graph retry failed user=%s: %s", user_id, exception_kind(exc))
+        if done:
+            log.info("graph retry: %s", done)
+        return done
+
+    def start_resume(self, user_ids: Iterable[str]) -> bool:
+        """`resume_users`를 백그라운드 태스크로 띄운다 (요청은 기다리지 않는다). 띄웠으면 True."""
+        users = sorted(set(user_ids))
+        if not users:
+            return False
+        task = asyncio.create_task(self.resume_users(users), name="graph-retry-held")
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        return True
+
+    async def wait_tasks(self) -> None:
+        """테스트·종료용: `start_resume`으로 띄운 수집을 기다린다."""
+        while self._tasks:
+            await asyncio.gather(*list(self._tasks), return_exceptions=True)
 
     async def resume_all(self) -> dict[str, int]:
         """서버 시작·주기 작업: 미수집 메시지가 남은 사용자마다 이어서 넣고, 작업 상태를 정리한다.
