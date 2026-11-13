@@ -1,6 +1,7 @@
 """카카오톡 '대화 내보내기' 파서 (.txt — 안드로이드·iOS·PC 변형, PC/맥의 .csv).
 
-**실물 샘플 검증 전이다.** 알려진 변형(2차 자료, 서로 엇갈림)을 합성 픽스처로 만들어 맞췄다. 그래서 관대하게
+**실물은 PC .csv(11-13)와 PC .txt 단체방(11-14)만 맞춰 봤다.**
+안드로이드·iOS는 알려진 변형(2차 자료)을 합성 픽스처로 맞췄다. 그래서 관대하게
 읽고, 못 읽은 줄은 숨기지 않고 센다(`skipped_lines`, `problems`). 실제 내보내기 파일을 받으면
 `tests/test_importers.py`에 픽스처를 더하고 여기 정규식을 고친다.
 
@@ -63,7 +64,8 @@ _CSV_HEADER = re.compile(r'^"?Date"?,"?User"?,"?Message"?\s*$', re.I)
 _SYSTEM_PHRASE = re.compile(
     r"^.{1,60}?(?:님이 들어왔습니다|님이 나갔습니다|님을 초대했습니다|님을 초대하였습니다|님을 내보냈습니다"
     r"|joined this chatroom|left this chatroom|has left the chatroom)\.?$"
-    r"|^채팅방 관리자가 메시지를 가렸습니다\.?$|^.{1,60}?invited .{1,60}? to this chatroom\.?$",
+    r"|^채팅방 관리자가 메시지를 가렸습니다\.?$|^.{1,60}?invited .{1,60}? to this chatroom\.?$"
+    r"|^메시지가 삭제되었습니다\.?$",  # PC .txt: 지운 메시지는 화자·시각 없는 이 한 줄 (실물 11-14)
     re.I,
 )
 # 사진·이모티콘 등 자리표시 메시지 (본문 전체가 이것일 때만)

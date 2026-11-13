@@ -261,6 +261,39 @@ def test_kakao_csv_real_export_shapes() -> None:
     assert (p.system_lines, p.skipped_lines, p.problems) == (6, 0, [])
 
 
+def test_kakao_pc_txt_real_export_shapes() -> None:
+    """실물 PC 내보내기(.txt, 단체방)에서 본 꼴 (2026-11-14, 내용은 합성).
+
+    CRLF, `저장한 날짜 : 2026-11-14 08:13:04`, 대괄호 없는 초대 줄, 이모지·공백이 든 이름,
+    화자·시각 없이 한 줄로 남는 `메시지가 삭제되었습니다.`(구분선 바로 뒤에도, 메시지 뒤에도 온다).
+    """
+    text = (
+        "25년 기획 스터디 님과 카카오톡 대화\r\n"
+        "저장한 날짜 : 2026-11-14 08:13:04\r\n"
+        "\r\n"
+        "--------------- 2026년 10월 5일 월요일 ---------------\r\n"
+        "박지현 25년 기획님이 김민수, 이도윤님을 초대했습니다.\r\n"
+        "[박지현 25년 기획] [오후 3:12] 단톡방입니다~\r\n"
+        "메시지가 삭제되었습니다.\r\n"
+        "[🤍도윤🍭] [오후 3:13] 네 확인했어요\r\n"
+        "자료는 화요일까지 올릴게요\r\n"
+        "메시지가 삭제되었습니다.\r\n"
+        "메시지가 삭제되었습니다.\r\n"
+        "--------------- 2026년 10월 6일 화요일 ---------------\r\n"
+        "메시지가 삭제되었습니다.\r\n"
+        "[김민수] [오전 9:05] 올렸습니다\r\n"
+    )
+    p = parse_import(text)
+    assert (p.format, p.variant, p.title_hint) == ("kakao", "pc", "25년 기획 스터디")
+    assert [(m.speaker, m.text) for m in p.messages] == [
+        ("박지현 25년 기획", "단톡방입니다~"),
+        ("🤍도윤🍭", "네 확인했어요\n자료는 화요일까지 올릴게요"),  # 지운 메시지 줄이 붙지 않는다
+        ("김민수", "올렸습니다"),
+    ]
+    # 구분선 2 + 초대 1 + 지운 메시지 4 — 못 읽은 줄로 세지 않는다
+    assert (p.system_lines, p.skipped_lines, p.problems) == (7, 0, [])
+
+
 def test_kakao_txt_drops_deleted_message_and_board_notices() -> None:
     text = ANDROID + (
         "2026년 10월 7일 오전 9:00, 회원님 : 메시지가 삭제되었습니다.\n"
