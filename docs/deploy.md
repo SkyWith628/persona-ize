@@ -277,7 +277,8 @@ docker stats --no-stream                                # 메모리·CPU
 - 하루 한도 429(`usage_exceeded`·`budget_exceeded`)에는 다음 날(한국 시간 자정)까지 남은 초가 `Retry-After`로 붙는다.
 - 전체 차단기의 하루 최악 비용 = 토큰 한도 × Console 요금표의 단가. 예시 값(2,000회 / 400만 토큰)은 예산에 맞게 고친다.
 - 메시지 하나가 거듭 실패하면(`GRAPH_EPISODE_MAX_ATTEMPTS`, 기본 3번 — 연결·요청 한도·5xx 같은 일시 장애는 세지 않는다) 그 메시지만 보류하고 나머지를 계속 넣는다. 로그에 `graph ingest gave up episode=<방:메시지>`가 남고, 건수는 관리자 화면(`/admin`) 수집 표의 "거듭 실패해 보류된 메시지"에 보인다. 다시 시도하는 방법은 둘이다: ① 그 줄의 **다시 시도** 버튼(`POST /v1/admin/graph/retry-held`) — 보류만 풀어 다시 넣는다. 그래프는 그대로이고, 보류 건수만큼 모델 호출 비용이 들며 수집 상한을 따른다. 또 실패하면 다시 보류된다. ② `scripts/ops/run.sh scripts/graph_reset.py --user <id> --conversation <방>` — 그 방(또는 사용자)의 그래프를 지우고 처음부터 다시 만든다(상한 없음, 전체 메시지만큼 비용). 스키마·프롬프트를 바꿨을 때만 쓴다.
-- 서버를 다시 띄우면 수집하다 만 메시지를 이어서 넣는다(`GRAPH_RESUME_ON_START=true`). 큰 가져오기 도중에 재시작하면
+- 서버를 다시 띄우면 수집하다 만 메시지를 이어서 넣는다(`GRAPH_RESUME_ON_START=true`).
+- 서버를 내릴 때(배포 포함) 뒤에서 도는 묶음 생성·그래프 수집은 `SHUTDOWN_GRACE_SECONDS`(기본 15초)까지만 기다린다. 수집은 넣던 메시지까지만 끝내고 멈추며, 남은 것은 다시 뜬 뒤 이어받는다. 로그: `graph ingest stopped for shutdown`, 시간을 넘겨 끊으면 `shutdown: cancelled N background task(s)`. 큰 가져오기 도중에 재시작하면
   남은 분량만큼 비용이 이어진다.
 - 관리자 화면의 비용 환산(`COST_*`)은 0이면 표시하지 않는다. 예시 파일의 값은 2026-11-11 기준 `claude-opus-5-5`(입력 4 / 출력 20)와 그래프 실측 평균(0.035/건)이다 — `LLM_MODEL`을 바꾸거나 요금이 바뀌면 함께 고친다.
 - 실제 청구액은 Console이 기준이다. 서버 쪽 집계: `scripts/ops/run.sh scripts/usage_report.py --days 30`

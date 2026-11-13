@@ -132,6 +132,7 @@ _USERS_AT_LIMIT = text(
     SELECT count(DISTINCT user_id) AS n
     FROM usage_counters
     WHERE day >= :first_day AND day <= :last_day
+      AND user_id <> '(deleted)'
       AND (rewrites >= CAST(:rewrite_limit AS bigint)
            OR input_tokens + output_tokens >= CAST(:token_limit AS bigint))
     """

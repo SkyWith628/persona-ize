@@ -120,10 +120,15 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
-        for t in tasks:
+        # 그래프 이어받기는 바로 끊지 않는다 — 멈춤 신호를 받아 넣던 에피소드까지 끝내도록 close가 기다린다
+        graceful = [t for t in tasks if t.get_name() == "graph-resume"]
+        others = [t for t in tasks if t not in graceful]
+        for t in others:
             t.cancel()
-        await asyncio.wait(tasks, timeout=SHUTDOWN_WAIT_SECONDS)
-        await container.close()
+        if container.graph_ingest is not None:
+            container.graph_ingest.request_stop()
+        await asyncio.wait(others, timeout=SHUTDOWN_WAIT_SECONDS)
+        await container.close(graceful)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:

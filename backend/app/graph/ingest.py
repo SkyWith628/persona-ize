@@ -142,6 +142,7 @@ class GraphIngestService:
         # 오늘 이 프로세스가 API 경로로 넣은 양 — DB 카운터가 (계정 삭제로) 줄어도 남는다.
         self._tally_day: date | None = None
         self._tally = 0
+        self._stopping = False  # 서버가 내려가는 중 — 넣던 에피소드까지만 끝내고 멈춘다
         self._tasks: set[asyncio.Task[dict[str, int]]] = set()  # 보류를 푼 뒤의 백그라운드 수집
 
     @property
@@ -153,6 +154,18 @@ class GraphIngestService:
         local = (now or datetime.now(UTC)).astimezone(self._day_tz)
         start = datetime.combine(local.date(), time.min, tzinfo=self._day_tz)
         return local.date(), start.astimezone(UTC)
+
+    def request_stop(self) -> None:
+        """서버 종료: 돌고 있는 수집이 지금 넣는 에피소드까지만 끝내고 멈추게 한다 (새 수집도 바로 끝난다).
+
+        남은 메시지는 미수집으로 남고 작업은 `pending`이 된다 — 다음 시작 때 `resume_all`이 이어받는다.
+        """
+        self._stopping = True
+
+    @property
+    def background_tasks(self) -> set[asyncio.Task]:
+        """`start_resume`으로 띄운 수집 태스크 (종료 때 기다리는 쪽이 본다)."""
+        return self._tasks
 
     def _process_tally(self, day: date, add: int = 0) -> int:
         if self._tally_day != day:
@@ -305,8 +318,12 @@ class GraphIngestService:
         held = 0  # 이번 실행에서 보류한 메시지 수
         streak = 0  # 연달아 보류한 수
         gone: set[UUID] = set()  # 수집 도중 지워진 대화방 — 남은 메시지를 그래프에 넣지 않는다
+        interrupted = False
         try:
             for message, conv, body in chosen:
+                if self._stopping:
+                    interrupted = True  # 서버가 내려간다 — 에피소드 사이에서 멈춘다
+                    break
                 if conv.id in gone:
                     continue
                 if not await self._exists(user_id, conv.id):
@@ -335,6 +352,11 @@ class GraphIngestService:
                         )
                         added = True
                         break
+                    except asyncio.CancelledError:
+                        # 종료 대기 시간을 넘겨 끊겼다 — 잡아 둔 예산을 돌려놓는다 (메시지는 미수집으로 남음)
+                        if reserved_on is not None:
+                            await self._release(user_id, reserved_on, units)
+                        raise
                     except Exception as exc:
                         if reserved_on is not None:
                             await self._release(user_id, reserved_on, units)
@@ -379,6 +401,12 @@ class GraphIngestService:
             log.warning("graph ingest failed user=%s after %d episodes: %s", user_id, done, kind)
             await self._job(user_id, job_id, "failed", done, kind)
             raise
+        if interrupted:
+            log.info(
+                "graph ingest stopped for shutdown user=%s done=%d left=%d", user_id, done, len(chosen) - done
+            )
+            await self._job(user_id, job_id, "pending", done, None)
+            return done, None
         if gone:
             log.info("graph ingest skipped %d deleted conversation(s) user=%s", len(gone), user_id)
         if held:

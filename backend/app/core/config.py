@@ -108,6 +108,11 @@ class Settings(BaseSettings):
     graph_ingest_user_message_cap: int = Field(0, ge=0, description="사용자당 그래프에 넣는 메시지 총수")
     graph_ingest_daily_global_cap: int = Field(0, ge=0, description="하루 전체 그래프 수집 메시지 수")
     # 주기 작업·보존
+    shutdown_grace_seconds: float = Field(
+        15.0,
+        ge=0,
+        description="종료 때 뒤에서 도는 묶음 생성·수집을 기다리는 시간(초). 넘으면 끊고 다음 시작 때 잇는다",
+    )
     housekeeping_interval_hours: int = Field(0, ge=0, description="서버 안에서 정리 작업을 도는 주기. 0=끔")
     rewrite_retention_days: int = Field(0, ge=0, description="첨삭 이력 보존 일수. 0=무기한")
     # 사용자별 저장 한도 (2026-11-11 보안 검토): 한 계정이 디스크·임베딩 CPU·메모리를 끝없이 쓰지 못하게.

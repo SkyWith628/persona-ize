@@ -52,7 +52,7 @@ services:
         condition: service_healthy
       neo4j:
         condition: service_healthy
-    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+    command: sh -c "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
 
   # ---- 테스트·lint 전용 (프로필 test — `docker compose up`으로는 뜨지 않는다) ----
   # 호스트 venv를 못 쓰는 PC(Smart App Control이 .pyd를 막는 Windows 등)에서 pytest·ruff를 컨테이너로 돌린다.

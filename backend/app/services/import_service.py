@@ -26,7 +26,7 @@ import hashlib
 import json
 import logging
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID, uuid4
@@ -72,6 +72,7 @@ GENERIC_ME_NAMES = {"회원님", "me", "나"}
 ME_NAME_MAX = 50  # conversations.me_name 열 길이
 OFFLOAD_CHARS = 50_000  # 본문 합계가 이보다 크면 정규화·가림을 스레드에서 한다
 EMBED_BATCH = 64  # 묶음 임베딩을 이만큼씩 나눠 돌린다 — 배치가 끝날 때마다 진행률을 센다
+SHUTDOWN_CANCEL_WAIT_SECONDS = 2.0  # 끊은 태스크가 정리를 마치길 기다리는 시간
 
 
 class ImportMessage(BaseModel):
@@ -586,6 +587,41 @@ class ImportService:
             await self._graph_ingest.ingest_user(user_id, job_id)
         except Exception as exc:  # noqa: BLE001 - 상태는 ingest가 failed로 기록했다
             log.warning("background graph ingest failed job=%s: %s", job_id, exception_kind(exc))
+
+    async def shutdown(self, grace: float, extra: Iterable[asyncio.Task] = ()) -> int:
+        """서버 종료: 뒤에서 도는 묶음 생성·그래프 수집을 `grace`초까지만 기다리고, 남으면 끊는다. 끊은 수.
+
+        예전에는 시간 제한 없이 기다려 수집이 끝날 때까지(긴 대화는 몇 시간) 서버가 내려가지도, 다시 뜨지도
+        못했다. 그래프 수집에는 먼저 멈춤 신호를 보내 넣던 에피소드까지만 끝내게 한다(에피소드 하나는
+        10초 안팎). 끊긴 일은 잃지 않는다 — 묶음 생성은 `resume_indexing`, 수집은 `resume_all`이
+        다음 시작 때 이어받는다. `extra`는 함께 기다릴 태스크(시작 때 띄운 이어받기 등).
+        """
+        if self._graph_ingest is not None:
+            self._graph_ingest.request_stop()
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + max(grace, 0.0)
+        extra = list(extra)
+        while True:
+            running = self._shutdown_tasks(extra)
+            left = deadline - loop.time()
+            if not running or left <= 0:
+                break
+            # 묶음 생성이 끝나며 수집 태스크를 새로 띄울 수 있어(멈춤 신호로 곧 끝난다) 목록을 다시 본다
+            await asyncio.wait(running, timeout=left, return_when=asyncio.FIRST_COMPLETED)
+            await asyncio.sleep(0)
+        running = self._shutdown_tasks(extra)
+        for task in running:
+            task.cancel()
+        if running:
+            await asyncio.wait(running, timeout=SHUTDOWN_CANCEL_WAIT_SECONDS)
+            log.warning("shutdown: cancelled %d background task(s) after %.0fs", len(running), grace)
+        return len(running)
+
+    def _shutdown_tasks(self, extra: list[asyncio.Task]) -> set[asyncio.Task]:
+        tasks = {*self._index_tasks.values(), *self._tasks, *extra}
+        if self._graph_ingest is not None:
+            tasks |= set(getattr(self._graph_ingest, "background_tasks", ()))
+        return {t for t in tasks if not t.done()}
 
     async def wait_graph_tasks(self) -> None:
         """테스트·종료용: 떠 있는 묶음 생성과 백그라운드 수집을 기다린다."""

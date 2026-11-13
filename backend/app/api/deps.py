@@ -14,7 +14,9 @@ CSRF를 건너뛰는 것은 **세션을 Bearer 헤더로 찾았을 때뿐**이�
 
 from __future__ import annotations
 
+import asyncio
 import os
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal
 
@@ -71,8 +73,9 @@ class AppState:
     def graph_enabled(self) -> bool:
         return self.graph_store is not None
 
-    async def close(self) -> None:
-        await self.import_service.wait_graph_tasks()
+    async def close(self, waiting: Iterable[asyncio.Task] = ()) -> None:
+        """뒤에서 도는 일을 `shutdown_grace_seconds`까지만 기다리고 닫는다. `waiting`은 함께 기다릴 태스크."""
+        await self.import_service.shutdown(self.settings.shutdown_grace_seconds, waiting)
         if self.graph_store is not None:
             await self.graph_store.close()
         if self.engine is not None:
