@@ -24,7 +24,15 @@ function esc(s) { return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "
 async function api(method, path, body, extraHeaders = {}) {
   const headers = { "Content-Type": "application/json", ...extraHeaders };
   if (state.csrf && method !== "GET") headers["X-CSRF-Token"] = state.csrf;
-  const res = await fetch(path, { method, headers, credentials: "same-origin", body: body === undefined ? undefined : JSON.stringify(body) });
+  let res;
+  try {
+    res = await fetch(path, { method, headers, credentials: "same-origin", body: body === undefined ? undefined : JSON.stringify(body) });
+  } catch {
+    // 브라우저의 영어 문장(Failed to fetch 등)을 화면에 그대로 내보내지 않는다
+    const err = new Error("서버에 연결하지 못했습니다. 네트워크를 확인한 뒤 다시 시도해 주세요.");
+    err.network = true;
+    throw err;
+  }
   if (res.status === 204) return null;
   const text = await res.text();
   let data = null;
