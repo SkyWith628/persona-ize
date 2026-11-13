@@ -171,12 +171,14 @@ class ConversationStats(BaseModel):
     my_messages: int = 0
     episodes: int = 0
     graph_ingested: int = 0
+    graph_held: int = 0  # 거듭 실패해 보류된 메시지 — 그래프에 없고, 다시 시도하지도 않는다
     first_message_at: datetime | None = None
     last_message_at: datetime | None = None
 
     @property
     def graph_pending(self) -> int:
-        return max(self.messages - self.graph_ingested, 0)
+        """앞으로 넣을 메시지 수. 보류된 것은 세지 않는다."""
+        return max(self.messages - self.graph_ingested - self.graph_held, 0)
 
 
 class ContactDataStats(BaseModel):

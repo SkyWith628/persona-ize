@@ -149,7 +149,8 @@ _TODAY_USAGE = text(
 _GRAPH_MESSAGES = text(
     """
     SELECT count(*) FILTER (WHERE graph_ingested_at >= :start AND graph_ingested_at < :end) AS ingested,
-           count(*) FILTER (WHERE graph_ingested_at IS NULL AND graph_held_at IS NULL) AS pending
+           count(*) FILTER (WHERE graph_ingested_at IS NULL AND graph_held_at IS NULL) AS pending,
+           count(*) FILTER (WHERE graph_ingested_at IS NULL AND graph_held_at IS NOT NULL) AS held
     FROM messages
     """
 )
@@ -254,6 +255,7 @@ class OverviewRaw:
     graph_ingested: int
     graph_pending: int
     graph_jobs: dict[str, int]
+    graph_held: int = 0
 
 
 @dataclass(frozen=True)
@@ -384,6 +386,7 @@ class AdminRepo:
             today_tokens=int(today_usage.tokens),
             graph_ingested=int(graph_messages.ingested),
             graph_pending=int(graph_messages.pending),
+            graph_held=int(graph_messages.held),
             graph_jobs={str(j.status): int(j.n) for j in graph_jobs},
         )
 

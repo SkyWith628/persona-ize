@@ -284,6 +284,9 @@ class ConversationStatsOut(BaseModel):
     graph_enabled: bool
     graph_ingested: int
     graph_pending: int
+    graph_held: int = Field(
+        0, description="거듭 실패해 보류된 메시지 수 (그래프에 없고 다시 시도하지 않는다)"
+    )
     graph_limited: bool
     first_message_at: datetime | None
     last_message_at: datetime | None

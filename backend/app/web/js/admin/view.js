@@ -375,6 +375,11 @@ export function renderIngest(root, overview) {
     el("dl", { class: "rows" }, [
       row("사건 정리를 기다리는 메시지", el("b", { text: `${num(graph.pending_messages)}건 ` }), waiting),
       row(
+        "거듭 실패해 보류된 메시지",
+        el("b", { text: `${num(graph.held_messages ?? 0)}건 ` }),
+        (graph.held_messages ?? 0) > 0 ? tag("warn", "graph_reset.py로 다시 시도") : tag("ok", "없음"),
+      ),
+      row(
         "대기·진행 중인 작업",
         el("b", { text: `대기 ${num(jobs.pending)}건 · 진행 ${num(jobs.running)}건` }),
       ),

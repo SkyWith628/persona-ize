@@ -390,6 +390,26 @@ test("사건 정리 상태: 작업 기록보다 진행 수치를 먼저 본다(�
   assert.equal(graphStatus({ ...STATS, latest_job: { ...JOB, graph_status: "pending" } }, JOB), "pending");
 });
 
+test("사건 정리: 보류된 메시지가 있으면 다 넣은 것처럼 보이지 않는다", () => {
+  // 312개 중 310개가 들어가고 2개는 거듭 실패해 보류됐다 — 더 기다릴 것은 없다
+  const held = { ...STATS, graph_ingested: 310, graph_held: 2, graph_pending: 0, latest_job: { ...JOB, graph_status: "completed" } };
+  assert.equal(graphStatus(held, JOB), "completed");
+  const view = graphPhaseView(held, JOB);
+  assert.equal(view.polling, false);
+  assert.equal(view.tone, "warn");
+  assert.equal(view.count, "310 / 312");
+  assert.match(view.title, /메시지 2개는 넣지 못했어요/);
+  // 작업 기록이 running으로 남아 있어도(서버 재시작) 수치로 끝난 것을 안다
+  assert.equal(graphStatus({ ...held, latest_job: { ...JOB, graph_status: "running" } }, JOB), "completed");
+  // 보류가 없으면 예전 그대로
+  const clean = graphPhaseView({ ...held, graph_ingested: 312, graph_held: 0 }, JOB);
+  assert.equal(clean.tone, "ok");
+  assert.equal(clean.title, "지난 약속·사건 정리 완료");
+  // graph_held를 주지 않는 옛 응답도 깨지지 않는다
+  const { graph_held: _omit, ...old } = held;
+  assert.equal(graphPhaseView(old, JOB).tone, "ok");
+});
+
 test("사건 정리 진행이 몇 분째 그대로면 더 읽지 않는다", () => {
   const t0 = 1_000_000;
   let p = trackProgress(null, STATS, t0);

@@ -351,7 +351,8 @@ export function graphStatus(stats, job) {
   if (stats) {
     if (stats.graph_enabled === false) return "skipped";
     if (stats.graph_limited) return "limited";
-    if (stats.messages > 0 && stats.graph_ingested >= stats.messages) return "completed";
+    // 보류된 메시지(거듭 실패해 더 시도하지 않는 것)는 끝난 것으로 친다 — 기다려도 들어가지 않는다
+    if (stats.messages > 0 && stats.graph_ingested + (stats.graph_held ?? 0) >= stats.messages) return "completed";
     const fromJob = stats.latest_job?.graph_status;
     if (fromJob) return fromJob;
     if (stats.graph_pending > 0) return "running";
@@ -415,8 +416,19 @@ export function graphPhaseView(stats, job, { stalled = false } = {}) {
         title: "지난 약속·사건 정리 중",
         detail: "메시지 하나에 10~15초쯤 걸려요. 이 창을 닫아도 계속되고, 끝나면 지난번에 약속한 내용까지 챙겨 드려요.",
       };
-    case "completed":
+    case "completed": {
+      const held = stats?.graph_held ?? 0;
+      if (held > 0) {
+        // 다 넣은 것처럼 보이면 안 된다 — 빠진 건수를 그대로 알린다
+        return {
+          ...base,
+          tone: "warn",
+          title: `지난 약속·사건 정리 완료 · 메시지 ${formatNumber(held)}개는 넣지 못했어요`,
+          detail: "여러 번 시도해도 정리되지 않아 건너뛰었어요. 그 메시지에 담긴 약속은 챙기지 못할 수 있어요. 말투 맞추기는 그대로 쓸 수 있어요.",
+        };
+      }
       return { ...base, tone: "ok", title: "지난 약속·사건 정리 완료", detail: "이제 지난번에 약속한 내용과 겹치면 알려 드려요." };
+    }
     case "failed": {
       // 서버의 예외 문장은 보여 주지 않는다 — 짧은 코드일 때만 운영자에게 전할 수 있게 덧붙인다.
       const why = errorCode(stats?.latest_job?.graph_error || job?.graph_error);

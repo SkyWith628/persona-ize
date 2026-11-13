@@ -114,6 +114,8 @@ async def list_messages(
 async def conversation_stats(conversation_id: UUID, user_id: UserId, state: State) -> ConversationStatsOut:
     """가져오기 2단계 진행 표시용. 말투(묶음)는 가져오는 즉시, 사건 정리는 `graph_ingested / messages`.
 
+    `graph_held`: 거듭 실패해 보류된 메시지. `graph_pending`(앞으로 넣을 것)에는 들어가지 않는다.
+
     `graph_limited`: 그래프 수집 상한에 닿아 남은 메시지가 지금은 들어가지 않는다 (문체 검색은 그대로 된다).
     """
     stats = await state.conversations.conversation_stats(user_id, conversation_id)
@@ -132,6 +134,7 @@ async def conversation_stats(conversation_id: UUID, user_id: UserId, state: Stat
         graph_enabled=state.graph_enabled,
         graph_ingested=stats.graph_ingested,
         graph_pending=pending,
+        graph_held=stats.graph_held if state.graph_enabled else 0,
         graph_limited=limited,
         first_message_at=stats.first_message_at,
         last_message_at=stats.last_message_at,

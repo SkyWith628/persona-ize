@@ -68,6 +68,7 @@ CONTRACT_FIELDS: dict[str, set[str]] = {
         "graph_enabled",
         "graph_ingested",
         "graph_pending",
+        "graph_held",
         "graph_limited",
         "first_message_at",
         "last_message_at",

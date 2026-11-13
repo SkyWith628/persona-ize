@@ -90,6 +90,9 @@ async def test_an_episode_that_always_fails_is_held_and_the_rest_goes_on() -> No
     assert m01.graph_held_at is not None
     done = await conversations.get_job("u", job.id)
     assert (done.graph_status, done.graph_episodes) == ("completed", 2)
+    # 통계는 보류를 따로 센다 — 앞으로 넣을 것(pending)에는 들어가지 않는다
+    stats = await conversations.conversation_stats("u", c1.id)
+    assert (stats.messages, stats.graph_ingested, stats.graph_held, stats.graph_pending) == (2, 1, 1, 0)
 
     # 보류된 메시지는 미수집으로 세지 않는다 — 이어받기도, 다음 수집도 모델을 다시 부르지 않는다
     assert await conversations.users_with_pending_graph() == []
@@ -155,6 +158,60 @@ async def test_reset_releases_held_messages() -> None:
     assert await ingest.ingest_user("u", enforce_caps=False) == 3
 
 
+def test_stats_api_reports_held_messages() -> None:
+    from tests.test_graph_caps import _graph_client
+
+    client, store = _graph_client()
+    client.app.state.container.graph_ingest.max_attempts = 2
+    # 붙여넣기 가져오기는 메시지 키를 서버가 만든다 — 처음 본 에피소드 하나를 늘 실패시킨다
+    calls: Counter = Counter()
+    orig = store.add_episode
+
+    async def add_episode(**kw):  # noqa: ANN003, ANN202
+        calls[kw["name"]] += 1
+        if next(iter(calls)) == kw["name"]:
+            raise BadOutputError("기록에 남으면 안 된다")
+        await orig(**kw)
+
+    store.add_episode = add_episode  # type: ignore[method-assign]
+    h = {"X-User-Id": "held-api"}
+    cid = client.post(
+        "/v1/contacts",
+        json={"alias": "박지현", "relationship_type": "superior", "use_default_persona": True},
+        headers=h,
+    ).json()["id"]
+    conv_id = client.post(
+        "/v1/conversations", json={"contact_id": cid, "source_key": "c1"}, headers=h
+    ).json()["id"]
+    text = "2026-10-05 09:25 | contact | 언제까지 가능해요?\n2026-10-05 09:31 | me | 수요일까지 가능합니다.\n"
+    job = client.post(f"/v1/conversations/{conv_id}/imports/raw", json={"text": text}, headers=h)
+    assert job.status_code == 202, job.text
+
+    stats = client.get(f"/v1/conversations/{conv_id}/stats", headers=h).json()
+    assert sorted(calls.values()) == [1, 2]  # 하나는 두 번 시도하고 보류, 하나는 들어갔다
+    assert (stats["graph_ingested"], stats["graph_held"], stats["graph_pending"]) == (1, 1, 0)
+    assert stats["graph_limited"] is False and stats["latest_job"]["graph_status"] == "completed"
+
+
+async def _admin_held(sessions) -> int:  # noqa: ANN001
+    from datetime import UTC, datetime, timedelta
+
+    from app.repositories.admin import AdminRepo
+
+    now = datetime.now(UTC)
+    raw = await AdminRepo(sessions).overview(
+        start=now - timedelta(days=1),
+        end=now + timedelta(days=1),
+        first_day=now.date(),
+        last_day=now.date(),
+        today=now.date(),
+        offset_hours=0,
+        rewrite_limit=0,
+        token_limit=0,
+    )
+    return raw.graph_held
+
+
 async def test_held_messages_on_postgres(pg_url: str) -> None:
     from app.db.session import create_engine, create_session_factory
     from app.repositories.postgres import PostgresContactRepo, PostgresConversationRepo
@@ -187,9 +244,15 @@ async def test_held_messages_on_postgres(pg_url: str) -> None:
         ]
         assert user not in await conversations.users_with_pending_graph()
         assert (await conversations.get_job(user, job.id)).graph_status == "completed"
+        stats = await conversations.conversation_stats(user, conv.id)
+        assert (stats.messages, stats.graph_ingested, stats.graph_held, stats.graph_pending) == (3, 2, 1, 0)
+        held_before_reset = await _admin_held(sessions)
+        assert held_before_reset >= 1
 
         assert await conversations.reset_graph_ingested(user) == 3
         assert user in await conversations.users_with_pending_graph()
+        assert await _admin_held(sessions) == held_before_reset - 1  # 관리자 집계에서도 빠진다
+        assert (await conversations.conversation_stats(user, conv.id)).graph_held == 0
         assert all(
             m.graph_attempts == 0 and m.graph_held_at is None
             for m in await conversations.list_messages(user, conv.id)

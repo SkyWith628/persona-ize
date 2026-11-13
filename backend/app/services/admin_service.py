@@ -250,7 +250,8 @@ class GraphJobs(BaseModel):
 class GraphSummary(BaseModel):
     enabled: bool
     ingested_messages: int = Field(description="기간 안에 그래프에 넣은 메시지 수")
-    pending_messages: int = Field(description="지금 그래프에 들어가지 않은 메시지 수")
+    pending_messages: int = Field(description="지금 그래프에 들어가지 않은 메시지 수 (보류된 것은 빼고)")
+    held_messages: int = Field(0, description="거듭 실패해 보류된 메시지 수 — graph_reset.py로 푼다")
     jobs: GraphJobs
     estimated_cost_usd: float | None
 
@@ -421,6 +422,7 @@ def build_overview(
             enabled=graph_enabled,
             ingested_messages=raw.graph_ingested,
             pending_messages=raw.graph_pending,
+            held_messages=raw.graph_held,
             jobs=GraphJobs(**{k: raw.graph_jobs.get(k, 0) for k in GRAPH_JOB_STATES}),
             estimated_cost_usd=estimate_graph_cost(raw.graph_ingested, settings.cost_graph_per_episode),
         ),

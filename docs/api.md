@@ -61,7 +61,7 @@ settings: `formality·friendliness·directness`(1~5), `length`(shorter/same/long
 | `GET /v1/imports/{job_id}` | 작업 상태. `status`: `processing`(메시지는 저장됐고 말투 묶음·임베딩을 뒤에서 만드는 중) → `completed` / `failed`(`error_code: reindex_failed`, 같은 내용을 다시 올리면 같은 작업으로 다시 시도). 두 가져오기 요청은 묶음 생성을 `IMPORT_INDEX_WAIT_SECONDS`(기본 2초)만 기다린다 — 그 안에 끝나면 응답이 이미 `completed`, 아니면 `processing`이라 이 주소(또는 대화방 `stats`의 `latest_job`)를 다시 읽는다. `processing` 동안 C/D 첨삭은 예전 묶음(첫 가져오기면 없음)으로 돌고, 그래프 수집(`graph_status: pending`)은 묶음이 끝난 뒤 시작한다. 서버가 도중에 재시작되면 다음 시작 때 이어서 끝낸다 |
 | `GET /v1/conversations?contact_id=`, `GET /v1/conversations/{id}` | 목록·조회 |
 | `GET /v1/conversations/{id}/messages?limit=` | 메시지 목록. `limit`(1~5000)을 주면 가장 최근 N건, 생략하면 전부 |
-| `GET /v1/conversations/{id}/stats` | `{messages, my_messages, episodes, graph_enabled, graph_ingested, graph_pending, graph_limited, first_message_at, last_message_at, latest_job}` — 가져오기 진행 표시용 |
+| `GET /v1/conversations/{id}/stats` | `{messages, my_messages, episodes, graph_enabled, graph_ingested, graph_pending, graph_held, graph_limited, first_message_at, last_message_at, latest_job}` — 가져오기 진행 표시용. `graph_held`는 거듭 실패해 보류된 메시지 수(`graph_pending`에는 들어가지 않는다) |
 | `DELETE /v1/conversations/{id}` | 원문·묶음·그래프 에피소드 삭제. 이후 검색에 나오지 않는다 |
 
 - **지원 형식**: 카카오톡 내보내기(.txt — 안드로이드·iOS·PC, PC의 .csv), 텔레그램 Desktop 내보내기(`result.json` — 계정 전체 내보내기면 `chats` 목록이 오고 `chat_id`로 고른다), 붙여넣기(`날짜 시각 | 화자 | 내용`), JSON 배열. **카카오톡 파서는 PC의 .csv만 실물 내보내기로 검증했다(2026-11-13). .txt 세 변형은 합성 픽스처 기준이다** — 못 읽은 줄은 `skipped_lines`·`problems`로 드러난다.
@@ -117,7 +117,7 @@ settings: `formality·friendliness·directness`(1~5), `length`(shorter/same/long
 
 - 기간은 사용량과 같은 하루 경계(KST)의 달력 날짜 N일(오늘 포함). 표본이 없으면 `success_rate`·`acceptance_rate`·`latency_ms`는 null.
 - `tokens`는 `usage_counters` 기준. `estimated_cost_usd`는 `COST_*` 단가가 0이면 null(숫자를 지어내지 않는다).
-- `fallback_reasons[].count`는 요청 수. `by_reason_code`는 거절만, 사유 미선택은 `unspecified`. `graph.jobs`·`pending_messages`는 기간과 무관한 현재 상태.
+- `fallback_reasons[].count`는 요청 수. `by_reason_code`는 거절만, 사유 미선택은 `unspecified`. `graph.jobs`·`pending_messages`·`held_messages`(거듭 실패해 보류된 메시지)는 기간과 무관한 현재 상태.
 
 ## 오류 모양
 

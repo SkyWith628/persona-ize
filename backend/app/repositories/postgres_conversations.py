@@ -488,12 +488,15 @@ class PostgresConversationRepo:
     async def conversation_stats(self, user_id: str, conversation_id: UUID) -> ConversationStats:
         async with self._sessions() as s:
             conv = await self._owned(s, user_id, conversation_id)
-            total, mine, ingested, first, last = (
+            total, mine, ingested, held, first, last = (
                 await s.execute(
                     select(
                         func.count(MessageRow.id),
                         func.count(MessageRow.id).filter(MessageRow.speaker_role == "me"),
                         func.count(MessageRow.graph_ingested_at),
+                        func.count(MessageRow.id).filter(
+                            MessageRow.graph_ingested_at.is_(None), MessageRow.graph_held_at.is_not(None)
+                        ),
                         func.min(MessageRow.sent_at),
                         func.max(MessageRow.sent_at),
                     ).where(MessageRow.conversation_id == conv.id, MessageRow.user_id == user_id)
@@ -508,6 +511,7 @@ class PostgresConversationRepo:
             my_messages=int(mine or 0),
             episodes=int(episodes or 0),
             graph_ingested=int(ingested or 0),
+            graph_held=int(held or 0),
             first_message_at=first,
             last_message_at=last,
         )

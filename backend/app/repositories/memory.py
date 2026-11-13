@@ -520,6 +520,7 @@ class InMemoryConversationRepo:
             my_messages=sum(1 for m in msgs if m.speaker_role == "me"),
             episodes=len(self._episodes.get(conv.id, [])),
             graph_ingested=sum(1 for m in msgs if m.graph_ingested_at is not None),
+            graph_held=sum(1 for m in msgs if m.graph_ingested_at is None and m.graph_held_at is not None),
             first_message_at=min((m.sent_at for m in msgs), default=None),
             last_message_at=max((m.sent_at for m in msgs), default=None),
         )
