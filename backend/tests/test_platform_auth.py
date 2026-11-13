@@ -54,7 +54,7 @@ def test_auth_config_reflects_settings_without_leaking_the_invite_code() -> None
         "allow_register": True,
         "invite_required": False,
         "require_consent": False,
-        "consent_version": "2026-11-11",
+        "consent_version": "2026-11-14",
         "app_env": "development",
     }
     strict = _client(
@@ -103,12 +103,12 @@ def test_register_consent_required_and_recorded() -> None:
     r = client.post("/v1/auth/register", json={**CRED, "consent": True})
     assert r.status_code == 201, r.text
     body = r.json()
-    assert body["consent_version"] == "2026-11-11" and body["consent_current"] is True
+    assert body["consent_version"] == "2026-11-14" and body["consent_current"] is True
     assert body["consented_at"] and body["is_admin"] is False
     me = client.get("/v1/auth/me").json()
     assert (me["consented_at"], me["consent_version"], me["consent_current"]) == (
         body["consented_at"],
-        "2026-11-11",
+        "2026-11-14",
         True,
     )
     # 예전 필드도 그대로
@@ -126,7 +126,7 @@ def test_consent_endpoint_records_current_version_and_notices_a_new_one() -> Non
     done = client.post("/v1/auth/consent", json={}, headers=h)
     assert done.status_code == 200, done.text
     body = done.json()
-    assert body["consent_version"] == "2026-11-11" and body["consent_current"] is True
+    assert body["consent_version"] == "2026-11-14" and body["consent_current"] is True
     assert body["consented_at"] and body["username"] == "minsu_kim"
     assert body["csrf_token"] == reg["csrf_token"]
     assert client.post("/v1/auth/consent", headers=h).status_code == 200  # 본문은 생략해도 된다
@@ -134,7 +134,7 @@ def test_consent_endpoint_records_current_version_and_notices_a_new_one() -> Non
     # 안내 버전이 바뀌면 consent_current가 꺼지고, 다시 동의하면 새 버전이 기록된다
     client.app.state.container.settings.consent_version = "2027-01-01"
     stale = client.get("/v1/auth/me").json()
-    assert (stale["consent_version"], stale["consent_current"]) == ("2026-11-11", False)
+    assert (stale["consent_version"], stale["consent_current"]) == ("2026-11-14", False)
     assert client.post("/v1/auth/login", json=CRED).json()["consent_current"] is False
     h = {"X-CSRF-Token": client.get("/v1/auth/me").json()["csrf_token"]}
     renewed = client.post("/v1/auth/consent", json={}, headers=h).json()
@@ -385,7 +385,7 @@ async def test_signup_enforces_policy_while_register_stays_internal() -> None:
     with pytest.raises(ConsentRequiredError):
         await strict.signup("minsu_kim", CRED["password"], invite_code="come-in-2026")
     ok = await strict.signup("minsu_kim", CRED["password"], invite_code="come-in-2026", consent=True)
-    assert ok.user.consent_version == "2026-11-11" and ok.user.consented_at is not None
+    assert ok.user.consent_version == "2026-11-14" and ok.user.consented_at is not None
     # 운영 스크립트(prepare_demo.py)가 부르는 안쪽 단계는 초대 코드·동의를 묻지 않는다 (시그니처도 그대로)
     demo = await strict.register("demo", "persona-demo-2026")
     assert demo.user.username == "demo" and demo.user.consented_at is None
@@ -513,9 +513,9 @@ def test_consent_sessions_and_bearer_on_postgres(pg_url: str) -> None:
         reg = client.post("/v1/auth/register", json={**cred, "consent": True})
         assert reg.status_code == 201, reg.text
         body = reg.json()
-        assert body["consent_version"] == "2026-11-11" and body["consent_current"] and body["is_admin"]
+        assert body["consent_version"] == "2026-11-14" and body["consent_current"] and body["is_admin"]
         me = client.get("/v1/auth/me").json()
-        assert me["consented_at"] == body["consented_at"] and me["consent_version"] == "2026-11-11"
+        assert me["consented_at"] == body["consented_at"] and me["consent_version"] == "2026-11-14"
         h = {"X-CSRF-Token": body["csrf_token"]}
         cookie = client.cookies.get("pi_session")
 

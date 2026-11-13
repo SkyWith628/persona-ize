@@ -91,7 +91,7 @@ class Settings(BaseSettings):
     # 가입 제어·동의
     register_invite_code: str = Field("", description="비어 있지 않으면 가입 때 같은 값을 요구한다")
     require_consent: bool = Field(False, description="true면 가입 요청에 consent=true가 있어야 한다")
-    consent_version: str = Field("2026-11-11", description="약관·개인정보 안내 버전. 동의 기록에 남긴다")
+    consent_version: str = Field("2026-11-14", description="약관·개인정보 안내 버전. 동의 기록에 남긴다")
     admin_usernames: str = Field("", description="쉼표 구분. 이 이름의 사용자만 /v1/admin/* 접근")
     # 요청 제한 (IP 기준, 프로세스 메모리). 0이면 끈다.
     rate_limit_per_minute: int = Field(0, ge=0, description="/v1/* 전체")

@@ -235,9 +235,9 @@ function authCard() {
               h(
                 "label",
                 { for: consentId },
-                h("a", { href: "/privacy", target: "_blank", rel: "noopener" }, "개인정보 안내"),
+                h("a", { href: "/privacy", target: "_blank", rel: "noopener" }, "개인정보 처리방침"),
                 "와 ",
-                h("a", { href: "/terms", target: "_blank", rel: "noopener" }, "이용 안내"),
+                h("a", { href: "/terms", target: "_blank", rel: "noopener" }, "이용약관"),
                 "를 읽었고 동의해요.",
               ),
             )
@@ -251,9 +251,9 @@ function authCard() {
             "p",
             { class: "hint" },
             "가입 전에 ",
-            h("a", { href: "/privacy", target: "_blank", rel: "noopener" }, "개인정보 안내"),
+            h("a", { href: "/privacy", target: "_blank", rel: "noopener" }, "개인정보 처리방침"),
             "와 ",
-            h("a", { href: "/terms", target: "_blank", rel: "noopener" }, "이용 안내"),
+            h("a", { href: "/terms", target: "_blank", rel: "noopener" }, "이용약관"),
             "를 읽어 보세요.",
           )
         : null,
@@ -279,8 +279,8 @@ export function mountLanding(root) {
         h(
           "nav",
           { class: "landing-links", "aria-label": "안내 문서" },
-          h("a", { href: "/privacy" }, "개인정보 안내"),
-          h("a", { href: "/terms" }, "이용 안내"),
+          h("a", { href: "/privacy" }, "개인정보 처리방침"),
+          h("a", { href: "/terms" }, "이용약관"),
         ),
       ),
       h(

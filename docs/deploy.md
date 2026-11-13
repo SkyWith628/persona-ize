@@ -324,7 +324,7 @@ scripts/ops/run.sh scripts/graph_reset.py --user <이름> --dry-run
       https가 며칠 안정된 뒤 `HSTS_MAX_AGE`를 300 → 31536000으로 올렸다
 - [ ] `https://<도메인>/docs`가 열리지 않는다(운영 모드)
 - [ ] 백업이 생기고(`scripts/ops/backup.sh --list`) 서버 밖 사본이 있다. 복원 연습을 한 번 했다
-- [ ] 개인정보 안내(`/privacy`)·약관(`/terms`) 문구가 실제 보존 기간(`REWRITE_RETENTION_DAYS`)·삭제 방법과 맞다
+- [ ] 개인정보 처리방침(`/privacy`)·이용약관(`/terms`) 문구가 실제 보존 기간(`REWRITE_RETENTION_DAYS`)·삭제 방법과 맞다
 - [ ] 실제 사용자의 대화가 들어오는 순간부터 그 내용은 Claude API와 Neo4j로 간다 — 안내문에 적혀 있고 동의를 받는다
       (`REQUIRE_CONSENT=true`)
 - [ ] OS 보안 업데이트(`unattended-upgrades`), SSH는 키 로그인만

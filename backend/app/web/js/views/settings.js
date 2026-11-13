@@ -284,8 +284,8 @@ function consentSection() {
     h(
       "ul",
       { class: "plain-list" },
-      h("li", null, h("a", { href: "/privacy" }, "개인정보 안내"), " — 무엇을 저장하고 무엇이 밖으로 나가는지"),
-      h("li", null, h("a", { href: "/terms" }, "이용 안내"), " — 이 서비스가 하는 일과 하지 않는 일"),
+      h("li", null, h("a", { href: "/privacy" }, "개인정보 처리방침"), " — 무엇을 저장하고 무엇이 밖으로 나가는지"),
+      h("li", null, h("a", { href: "/terms" }, "이용약관"), " — 이 서비스가 하는 일과 하지 않는 일"),
     ),
   );
 }

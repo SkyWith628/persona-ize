@@ -146,7 +146,7 @@ export function mountShell(root) {
           "div",
           { class: "side-foot" },
           h("p", null, "복사까지만 해요.", h("br"), "전송은 직접 합니다."),
-          h("p", null, h("a", { href: "/privacy" }, "개인정보 안내"), " · ", h("a", { href: "/terms" }, "이용 안내")),
+          h("p", null, h("a", { href: "/privacy" }, "개인정보 처리방침"), " · ", h("a", { href: "/terms" }, "이용약관")),
         ),
       ),
       h("div", { class: "shell-body" }, h("header", { class: "topbar" }, h("div", { class: "topbar-right" }, usageEl, account)), outlet),
