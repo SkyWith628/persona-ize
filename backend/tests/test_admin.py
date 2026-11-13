@@ -28,6 +28,7 @@ from app.main import create_app
 from app.services.admin_service import (
     AdminIdentity,
     AdminService,
+    GraphDisabledError,
     error_kind,
     estimate_graph_cost,
     estimate_token_cost,
@@ -1312,3 +1313,179 @@ def test_build_overview_keeps_unexpected_codes_countable() -> None:
     assert [(r.check, r.count) for r in out.fallback_reasons] == [("other", 3), ("preserve_missing", 1)]
     assert out.graph.jobs.model_dump() == {"pending": 0, "running": 0, "failed": 2, "limited": 0}
     assert out.tokens.estimated_cost_usd is None and out.graph.estimated_cost_usd is None
+
+
+# ---------- 보류된 그래프 메시지 다시 시도 (POST /v1/admin/graph/retry-held) ----------
+
+RETRY_PATH = "/v1/admin/graph/retry-held"
+
+
+def test_retry_held_follows_the_same_access_checks() -> None:
+    client = TestClient(create_app(_settings()))
+    assert client.post(RETRY_PATH).status_code == 401
+    assert client.post(RETRY_PATH, headers={"X-User-Id": "boss"}).status_code == 401
+
+    user = client.post("/v1/auth/register", json={"username": "minsu_kim", "password": PASSWORD}).json()
+    denied = client.post(RETRY_PATH, headers={"X-CSRF-Token": user["csrf_token"]})
+    assert denied.status_code == 403 and _code(denied) == "forbidden"
+
+    # 관리자라도 CSRF 토큰이 없으면 403, 있으면 저장소 검사(인메모리 503)까지 간다
+    client = TestClient(create_app(_settings()))
+    boss = client.post("/v1/auth/register", json={"username": "boss", "password": PASSWORD}).json()
+    no_csrf = client.post(RETRY_PATH)
+    assert no_csrf.status_code == 403 and _code(no_csrf) == "forbidden"
+    assert "CSRF" in no_csrf.json()["message"]
+    assert client.post(RETRY_PATH, headers={"X-CSRF-Token": "wrong"}).status_code == 403
+    unavailable = client.post(RETRY_PATH, headers={"X-CSRF-Token": boss["csrf_token"]})
+    assert unavailable.status_code == 503 and _code(unavailable) == "admin_unavailable"
+
+
+class _CountingIngest:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    async def release_held(self) -> dict[str, int]:
+        self.calls.append("release")
+        return {"u1": 2, "u2": 1}
+
+    def start_resume(self, user_ids) -> bool:  # noqa: ANN001
+        self.calls.append("start:" + ",".join(sorted(user_ids)))
+        return True
+
+
+class _LogRepo:
+    def __init__(self) -> None:
+        self.rows: list[tuple[str, str | None]] = []
+
+    async def log_access(self, user_id: str, username: str, action: str, detail: str | None) -> None:
+        self.rows.append((action, detail or None))
+
+
+def test_retry_held_service_logs_first_and_reports_counts() -> None:
+    admin = AdminIdentity(user_id=str(uuid4()), username="boss")
+
+    # 접근 기록을 남기지 못하면 아무것도 풀지 않는다
+    ingest = _CountingIngest()
+    down = AdminService(_settings(), _LogDownRepo(), graph_ingest=ingest)  # type: ignore[arg-type]
+    with pytest.raises(RuntimeError, match="log down"):
+        asyncio.run(down.retry_held(admin))
+    assert ingest.calls == []
+
+    repo = _LogRepo()
+    service = AdminService(_settings(), repo, graph_ingest=ingest)  # type: ignore[arg-type]
+    out = asyncio.run(service.retry_held(admin))
+    assert out.model_dump() == {"released": 3, "users": 2, "started": True}
+    assert ingest.calls == ["release", "start:u1,u2"]
+    assert repo.rows == [("graph_retry_held", None), ("graph_retry_held_done", "released=3 users=2")]
+
+    # 그래프가 꺼진 서버: 기록은 남고, 분명한 오류로 끝난다
+    off_repo = _LogRepo()
+    with pytest.raises(GraphDisabledError):
+        asyncio.run(AdminService(_settings(), off_repo).retry_held(admin))  # type: ignore[arg-type]
+    assert off_repo.rows == [("graph_retry_held", None)]
+
+
+def test_retry_held_releases_and_reingests_in_the_background(env: AdminEnv) -> None:
+    from app.graph.ingest import GraphIngestService
+    from tests.test_graph import FakeGraphStore
+
+    container = env.client.app.state.container
+    store = FakeGraphStore()
+    ingest = GraphIngestService(store, container.conversations, container.contacts, max_attempts=2)
+    broken: dict[str, Any] = {"on": True, "first": None}
+    calls: dict[str, int] = {}
+    orig = store.add_episode
+
+    async def add_episode(**kw):  # noqa: ANN003, ANN202
+        # 붙여넣기 가져오기는 메시지 키를 서버가 만든다 — 처음 본 에피소드 하나를 (고칠 때까지) 실패시킨다
+        name = kw["name"]
+        calls[name] = calls.get(name, 0) + 1
+        broken["first"] = broken["first"] or name
+        if broken["on"] and name == broken["first"]:
+            raise ValueError(f"{SECRETS['graph_error']} 기록에 남으면 안 된다")
+        await orig(**kw)
+
+    store.add_episode = add_episode  # type: ignore[method-assign]
+    imports = container.import_service
+    saved = (container.graph_store, container.graph_ingest, imports._graph_ingest, imports.graph_mode)
+    try:
+        container.graph_store, container.graph_ingest = store, ingest
+        imports._graph_ingest, imports.graph_mode = ingest, "sync"
+
+        env.use(None)
+        stub = {"X-User-Id": f"held-{uuid4().hex[:12]}"}
+        contact = env.client.post(
+            "/v1/contacts", json={"alias": "박지현", "relationship_type": "superior"}, headers=stub
+        ).json()["id"]
+        conv_id = env.client.post(
+            "/v1/conversations", json={"contact_id": contact, "source_key": "c1"}, headers=stub
+        ).json()["id"]
+        lines = [
+            "2026-10-05 09:25 | contact | 언제까지 가능해요?",
+            "2026-10-05 09:31 | me | 수요일까지 가능합니다.",
+        ]
+        job = env.client.post(
+            f"/v1/conversations/{conv_id}/imports/raw", json={"text": "\n".join(lines) + "\n"}, headers=stub
+        )
+        assert job.status_code == 202, job.text
+        held_name = broken["first"]
+
+        def stats() -> tuple[int, int, int]:
+            env.use(None)
+            s = env.client.get(f"/v1/conversations/{conv_id}/stats", headers=stub).json()
+            return s["graph_ingested"], s["graph_held"], s["graph_pending"]
+
+        assert stats() == (1, 1, 0) and calls[held_name] == 2
+        held_before = env.overview(1)["graph"]["held_messages"]
+        assert held_before >= 1
+
+        # 관리자가 아니면, 그리고 CSRF 토큰이 없으면 아무것도 풀리지 않고 기록도 남지 않는다
+        logged = env.access_log_count()
+        user = env.register(_name())
+        env.use(user["token"])
+        denied = env.client.post(RETRY_PATH, headers={"X-CSRF-Token": user["csrf"]})
+        assert denied.status_code == 403 and _code(denied) == "forbidden"
+        env.use(env.boss_token)
+        boss_csrf = {"X-CSRF-Token": env.client.get("/v1/auth/me").json()["csrf_token"]}
+        assert env.client.post(RETRY_PATH).status_code == 403
+        assert env.access_log_count() == logged
+        assert stats() == (1, 1, 0)
+
+        # 그래프가 꺼진 서버에서는 409 — 보류는 그대로 둔다
+        container.graph_ingest = None
+        env.use(env.boss_token)
+        off = env.client.post(RETRY_PATH, headers=boss_csrf)
+        assert off.status_code == 409 and _code(off) == "graph_disabled"
+        assert stats() == (1, 1, 0)
+        container.graph_ingest = ingest
+
+        # 풀고 → 백그라운드로 다시 넣는다. 요청은 수집을 기다리지 않는다
+        broken["on"] = False
+        env.use(env.boss_token)
+        done = env.client.post(RETRY_PATH, headers=boss_csrf)
+        assert done.status_code == 200, done.text
+        body = done.json()
+        assert sorted(body) == ["released", "started", "users"]
+        # 테스트 DB는 다른 테스트와 함께 쓴다 — 남의 보류가 섞여 풀릴 수 있어 아래로만 본다
+        assert body["released"] >= 1 and body["users"] >= 1 and body["started"] is True
+        assert done.headers["cache-control"] == "no-store"
+        env.client.portal.call(ingest.wait_tasks)
+        assert stats() == (2, 0, 0)
+        assert calls[held_name] == 3  # 풀린 메시지를 한 번 더 불렀고, 이미 들어간 것은 다시 부르지 않았다
+        assert [a["name"] for a in store.added if a["group_id"] == stub["X-User-Id"]].count(held_name) == 1
+        assert sum(1 for a in store.added if a["group_id"] == stub["X-User-Id"]) == 2
+        assert env.overview(1)["graph"]["held_messages"] <= held_before - 1
+
+        # 접근 기록: 요청과 결과가 한 줄씩. 사용자 id나 문장은 없다
+        log_rows = env.admin_get("/v1/admin/access-log?limit=20").json()
+        result = next(r for r in log_rows if r["action"] == "graph_retry_held_done")
+        assert result["detail"] == f"released={body['released']} users={body['users']}"
+        assert any(r["action"] == "graph_retry_held" and r["detail"] is None for r in log_rows)
+        assert SECRETS["graph_error"] not in json.dumps([body, log_rows], ensure_ascii=False)
+
+        # 풀 것이 없으면 0건이고 수집을 띄우지 않는다
+        env.use(env.boss_token)
+        again = env.client.post(RETRY_PATH, headers=boss_csrf).json()
+        assert again == {"released": 0, "users": 0, "started": False}
+    finally:
+        container.graph_store, container.graph_ingest, imports._graph_ingest, imports.graph_mode = saved

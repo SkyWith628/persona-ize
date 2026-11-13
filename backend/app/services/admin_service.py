@@ -48,6 +48,13 @@ class AdminUnavailableError(DomainError):
     code = "admin_unavailable"
 
 
+class GraphDisabledError(DomainError):
+    """그래프(D)가 꺼진 서버다 — 보류를 풀어도 다시 넣을 곳이 없으므로 아무것도 바꾸지 않는다."""
+
+    status_code = 409
+    code = "graph_disabled"
+
+
 # ---------- 순수 함수 (DB 없이 테스트한다) ----------
 
 
@@ -251,7 +258,9 @@ class GraphSummary(BaseModel):
     enabled: bool
     ingested_messages: int = Field(description="기간 안에 그래프에 넣은 메시지 수")
     pending_messages: int = Field(description="지금 그래프에 들어가지 않은 메시지 수 (보류된 것은 빼고)")
-    held_messages: int = Field(0, description="거듭 실패해 보류된 메시지 수 — graph_reset.py로 푼다")
+    held_messages: int = Field(
+        0, description="거듭 실패해 보류된 메시지 수 — `POST /v1/admin/graph/retry-held`"
+    )
     jobs: GraphJobs
     estimated_cost_usd: float | None
 
@@ -320,6 +329,12 @@ class RejectedFeedbackOut(BaseModel):
     condition: str
     reason_code: str | None
     created_at: datetime
+
+
+class RetryHeldOut(BaseModel):
+    released: int = Field(description="보류를 풀어 다시 수집 대상으로 만든 메시지 수")
+    users: int = Field(description="그 메시지들의 사용자 수")
+    started: bool = Field(description="백그라운드 수집을 시작했는가 (푼 것이 없으면 false)")
 
 
 class AccessLogOut(BaseModel):
@@ -451,10 +466,13 @@ async def _probe(coro: Any) -> str:
 
 
 class AdminService:
-    def __init__(self, settings: Settings, repo: AdminRepo, graph_store: Any = None) -> None:
+    def __init__(
+        self, settings: Settings, repo: AdminRepo, graph_store: Any = None, graph_ingest: Any = None
+    ) -> None:
         self._settings = settings
         self._repo = repo
         self._graph_store = graph_store
+        self._graph_ingest = graph_ingest  # GraphIngestService | None — 보류 다시 시도에만 쓴다
 
     async def overview(self, admin: AdminIdentity, days: int, now: datetime | None = None) -> OverviewOut:
         offset = self._settings.usage_day_offset_hours
@@ -536,6 +554,22 @@ class AdminService:
             )
             for r in await self._repo.list_access_log(limit)
         ]
+
+    async def retry_held(self, admin: AdminIdentity) -> RetryHeldOut:
+        """보류된 그래프 메시지를 풀고, 그 사용자들의 수집을 백그라운드로 이어받게 한다.
+
+        그래프는 지우지 않는다(`scripts/graph_reset.py`와 다른 점). 수집은 API 경로라 상한을 따른다 —
+        예산이 없는 사용자의 메시지는 미수집으로 남아 예산이 생기면 주기 이어받기가 넣는다.
+        요청은 기다리지 않는다(메시지당 모델 호출 10~15초). 결과는 접근 기록에 한 줄 더 남긴다.
+        """
+        await self._log(admin, "graph_retry_held", "")
+        if self._graph_ingest is None:
+            raise GraphDisabledError("사건 정리(그래프)가 꺼진 서버라 다시 시도할 수 없습니다.")
+        released = await self._graph_ingest.release_held()
+        started = self._graph_ingest.start_resume(released)
+        out = RetryHeldOut(released=sum(released.values()), users=len(released), started=started)
+        await self._log(admin, "graph_retry_held_done", f"released={out.released} users={out.users}")
+        return out
 
     async def _log(self, admin: AdminIdentity, action: str, detail: str) -> None:
         await self._repo.log_access(admin.user_id, admin.username, action, detail)

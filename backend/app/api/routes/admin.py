@@ -5,7 +5,8 @@
 - 로그인하지 않았으면 401, 관리자가 아니면 403 `forbidden`. 개발용 헤더 스텁(`X-User-Id`)은 세션이
   아니므로 401이다 — 누구나 아무 id로 관리자 화면을 열 수 없게.
 - 저장소가 PostgreSQL이 아니면(인메모리) 503 `admin_unavailable` — 집계 SQL을 돌릴 곳이 없다.
-- 통과한 호출은 전부 `admin_access_log`에 남는다(서비스가 자료를 읽기 전에 기록한다).
+- 통과한 호출은 전부 `admin_access_log`에 남는다(서비스가 자료를 읽거나 바꾸기 전에 기록한다).
+- 쓰기는 `POST /graph/retry-held` 하나다. 쿠키 인증이면 `X-CSRF-Token`이 맞아야 한다(403, 관리자 검사 뒤).
 
 검사 순서는 401 → 403 → 503이다. 로그인하지 않은 요청에는 서버 구성(저장소 종류)도 알려 주지 않는다.
 """
@@ -18,7 +19,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Request, Response
 
-from app.api.deps import AppState, State, current_session
+from app.api.deps import SAFE_METHODS, AppState, State, current_session, require_csrf
 from app.services.admin_service import (
     AccessLogOut,
     AdminForbiddenError,
@@ -28,6 +29,7 @@ from app.services.admin_service import (
     JobOut,
     OverviewOut,
     RejectedFeedbackOut,
+    RetryHeldOut,
     UsersPage,
     is_admin_username,
     short_user_id,
@@ -82,11 +84,15 @@ async def require_admin(request: Request, state: State) -> AdminAccess:
             " (ADMIN_USERNAMES와 대소문자만 다른 이름)" if near else "",
         )
         raise AdminForbiddenError("관리자만 볼 수 있습니다.")
+    if request.method not in SAFE_METHODS:  # 쓰기(보류 다시 시도)는 쿠키 인증이면 CSRF 토큰이 맞아야 한다
+        require_csrf(request, state, session)
     if state.engine is None:
         raise AdminUnavailableError("관리자 화면은 PostgreSQL 저장소에서만 볼 수 있습니다.")
     return AdminAccess(
         admin=AdminIdentity(user_id=str(user.id), username=user.username),
-        service=AdminService(state.settings, _admin_repo(request, state), state.graph_store),
+        service=AdminService(
+            state.settings, _admin_repo(request, state), state.graph_store, state.graph_ingest
+        ),
     )
 
 
@@ -120,3 +126,13 @@ async def list_rejected_feedback(access: Admin, limit: Limit = 50) -> list[Rejec
 @router.get("/access-log", response_model=list[AccessLogOut], summary="관리자 접근 기록")
 async def list_access_log(access: Admin, limit: Limit = 50) -> list[AccessLogOut]:
     return await access.service.access_log(access.admin, limit)
+
+
+@router.post("/graph/retry-held", response_model=RetryHeldOut, summary="보류된 그래프 메시지 다시 시도")
+async def retry_held_graph(access: Admin) -> RetryHeldOut:
+    """거듭 실패해 보류된 메시지를 풀고 수집을 백그라운드로 다시 시작한다 (본문 없음, 바로 응답).
+
+    그래프는 지우지 않는다. 메시지마다 모델 호출 비용이 들고, 수집 상한(`GRAPH_INGEST_*_CAP`)을 따른다.
+    그래프가 꺼진 서버는 409 `graph_disabled`.
+    """
+    return await access.service.retry_held(access.admin)
