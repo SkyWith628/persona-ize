@@ -38,6 +38,7 @@ from http.cookies import SimpleCookie
 from typing import Any
 
 SESSION_COOKIE = "pi_session"
+HEALTH_RETRY_SECONDS = 6.0  # 서버의 깊은 확인 캐시(5초)보다 길게
 
 MESSAGES = [
     {
@@ -281,12 +282,23 @@ class Smoke:
 
     # ---- 단계 ----
     def health(self) -> str:
-        data = self.expect(self.client.request("GET", "/healthz?deep=true"), 200)
+        # 막 뜬 스택은 Neo4j의 첫 질의가 느려 서버의 확인 제한(3초)을 넘기곤 한다 — 503이면 잠깐 다시 본다.
+        # 서버가 깊은 확인 결과를 5초 동안 다시 쓰므로 그보다 길게 쉰다. 계속 503이면 그대로 실패다.
+        deadline = time.monotonic() + self.args.health_wait
+        tries = 1
+        while True:
+            response = self.client.request("GET", "/healthz?deep=true")
+            if response.status != 503 or time.monotonic() + HEALTH_RETRY_SECONDS > deadline:
+                break
+            time.sleep(HEALTH_RETRY_SECONDS)
+            tries += 1
+        data = self.expect(response, 200)
         if not isinstance(data, dict) or data.get("status") != "ok":
             raise StepError(f"status가 ok가 아닙니다: {data}")
         shown = {k: data[k] for k in ("storage", "graph", "llm_provider") if k in data}
         shown.update(data.get("checks") or {})
-        return " ".join(f"{k}={v}" for k, v in shown.items())
+        text = " ".join(f"{k}={v}" for k, v in shown.items())
+        return text if tries == 1 else f"{text} ({tries}번째 시도에 통과)"
 
     def page(self) -> str:
         res = self.client.request("GET", "/", headers={"Accept": "text/html"})
@@ -514,6 +526,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="TCP 연결만 이 주소로 보낸다. 인증서 이름과 Host 헤더는 --base-url 그대로 (예: caddy:443)",
     )
     p.add_argument("--timeout", type=float, default=90.0, help="요청 하나의 제한 시간(초). 기본 90")
+    p.add_argument(
+        "--health-wait",
+        type=float,
+        default=30.0,
+        help="헬스체크가 503이면 다시 보며 기다리는 시간(초). 0이면 한 번만 본다. 기본 30",
+    )
     p.add_argument("--health-only", action="store_true", help="헬스체크와 화면만 본다 (계정을 만들지 않는다)")
     p.add_argument("--skip-model", action="store_true", help="가져오기·첨삭을 건너뛴다 (모델 호출 없음)")
     p.add_argument("--no-import", action="store_true", help="가져오기와 C 첨삭을 건너뛴다 (그래프 수집 없음)")
