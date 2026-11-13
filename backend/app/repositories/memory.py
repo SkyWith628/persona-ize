@@ -456,9 +456,26 @@ class InMemoryConversationRepo:
         users = {
             self._conversations[cid].user_id
             for cid, msgs in self._messages.items()
-            if cid in self._conversations and any(m.graph_ingested_at is None for m in msgs)
+            if cid in self._conversations and any(m.graph_pending for m in msgs)
         }
         return sorted(users)
+
+    async def record_graph_failure(self, user_id: str, message_id: UUID, hold: bool, at: datetime) -> None:
+        for conv_id, msgs in self._messages.items():
+            conv = self._conversations.get(conv_id)
+            if conv is None or conv.user_id != user_id:
+                continue
+            self._messages[conv_id] = [
+                m.model_copy(
+                    update={
+                        "graph_attempts": m.graph_attempts + 1,
+                        "graph_held_at": at if hold else m.graph_held_at,
+                    }
+                )
+                if m.id == message_id
+                else m
+                for m in msgs
+            ]
 
     async def close_stale_graph_jobs(self, user_id: str) -> int:
         n = 0
@@ -466,7 +483,7 @@ class InMemoryConversationRepo:
             if job.user_id != user_id or job.graph_status not in ("pending", "running", "limited"):
                 continue
             msgs = self._messages.get(job.conversation_id, [])
-            if all(m.graph_ingested_at is not None for m in msgs):
+            if not any(m.graph_pending for m in msgs):
                 self._jobs[jid] = job.model_copy(update={"graph_status": "completed", "graph_error": None})
                 n += 1
         return n
@@ -477,8 +494,9 @@ class InMemoryConversationRepo:
             conv = self._conversations.get(conv_id)
             if conv is None or conv.user_id != user_id or (conversation_id and conv_id != conversation_id):
                 continue
-            n += sum(1 for m in msgs if m.graph_ingested_at is not None)
-            self._messages[conv_id] = [m.model_copy(update={"graph_ingested_at": None}) for m in msgs]
+            n += sum(1 for m in msgs if m.graph_ingested_at is not None or m.graph_attempts > 0)
+            cleared = {"graph_ingested_at": None, "graph_attempts": 0, "graph_held_at": None}
+            self._messages[conv_id] = [m.model_copy(update=cleared) for m in msgs]
         return n
 
     async def purge_jobs(self, before: datetime) -> int:
@@ -577,7 +595,7 @@ class InMemoryConversationRepo:
             if job.user_id != user_id or job.graph_status not in ("pending", "running"):
                 continue
             msgs = self._messages.get(job.conversation_id, [])
-            if any(m.graph_ingested_at is None for m in msgs):
+            if any(m.graph_pending for m in msgs):
                 self._jobs[jid] = job.model_copy(update={"graph_status": "limited", "graph_error": reason})
                 n += 1
         return n

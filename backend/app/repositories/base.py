@@ -210,6 +210,10 @@ class ConversationRepo(Protocol):
         """그래프에 넣은 메시지를 표시한다 (재실행 멱등)."""
         ...
 
+    async def record_graph_failure(self, user_id: str, message_id: UUID, hold: bool, at: datetime) -> None:
+        """이 메시지를 그래프에 넣다 실패했다 — 횟수를 1 올리고, `hold`면 더 시도하지 않게 보류한다."""
+        ...
+
     async def update_job_graph(
         self, user_id: str, job_id: UUID, status: GraphStatus, episodes: int, error: str | None
     ) -> ImportJob: ...
@@ -226,7 +230,7 @@ class ConversationRepo(Protocol):
         ...
 
     async def users_with_pending_graph(self) -> list[str]:
-        """그래프 미수집 메시지가 있는 사용자 id들 (서버 시작 시 이어받기)."""
+        """그래프 미수집 메시지가 있는 사용자 id들 (서버 시작 시 이어받기). 보류된 메시지는 세지 않는다."""
         ...
 
     async def close_stale_graph_jobs(self, user_id: str) -> int:
@@ -234,7 +238,7 @@ class ConversationRepo(Protocol):
         ...
 
     async def reset_graph_ingested(self, user_id: str, conversation_id: UUID | None = None) -> int:
-        """graph_ingested_at을 비워 다시 수집 대상으로 만든다 (그래프 재구축). 바꾼 메시지 수."""
+        """graph_ingested_at과 실패 횟수·보류를 비워 다시 수집 대상으로 만든다 (그래프 재구축). 바꾼 수."""
         ...
 
     async def purge_jobs(self, before: datetime) -> int:

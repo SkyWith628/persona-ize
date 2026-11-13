@@ -32,6 +32,16 @@
   정리한다 — 화면이 끝없이 "정리 중"으로 보이지 않게. 문체 검색(C)은 상한과 무관하다.
 - `resume_all`은 예산이 0인 사용자를 건너뛴다(모델 호출 없음). 날이 바뀌어 예산이 생기면 이어서 넣는다.
 - 한계: 잠금과 프로세스 집계는 서버 프로세스 하나 안에서만 유효하다.
+
+거듭 실패하는 메시지 (2026-11-13) — `max_attempts`(`GRAPH_EPISODE_MAX_ATTEMPTS`, 기본 3, 0이면 끔)
+- 예전에는 에피소드 하나가 실패하면 그 사용자의 수집이 거기서 멈추고, 재시작·주기 이어받기·다음 가져오기
+  때마다 같은 메시지를 다시 시도했다 — 모델이 늘 실패하는 메시지 하나가 뒤의 메시지를 영영 막고 비용을 썼다.
+- 이제 실패를 메시지마다 센다(`messages.graph_attempts`). 같은 실행 안에서 바로 다시 시도하고, 횟수를 다
+  쓰면 그 메시지를 **보류**(`graph_held_at`)하고 다음 메시지로 넘어간다. 보류된 메시지는 미수집으로 세지
+  않으므로 다시 돌지 않는다. 운영자가 `scripts/graph_reset.py`로 풀 수 있다.
+- **일시 장애는 세지 않는다**(`is_transient`: 연결·시간 초과·요청 한도·인증·5xx·Neo4j 접속). 그때는 예전처럼
+  실행을 멈추고 작업을 `failed`로 남긴다 — 장애 동안 메시지가 줄줄이 보류되면 안 된다.
+- 보류가 연달아 `GIVE_UP_STREAK`건 나오면 메시지 탓이 아니라 설정·모델 쪽 문제로 보고 실행을 멈춘다.
 """
 
 from __future__ import annotations
@@ -53,7 +63,40 @@ USER_CAP = "user_cap"
 DAILY_CAP = "daily_cap"
 _BUDGET = "budget"  # 예산 확인과 예약을 한 번에 하나씩 하는 잠금의 키
 
+GIVE_UP_STREAK = 2  # 연달아 이만큼 보류되면 메시지 탓이 아니다 — 실행을 멈춘다
+
 Pending = tuple[Message, Conversation, str]  # (메시지, 대화방, 에피소드 본문)
+
+# 메시지 내용과 무관한 실패 — 실패 횟수에 넣지 않는다. 클래스 이름으로 본다 (anthropic·graphiti·neo4j가
+# 설치돼 있지 않아도 import되게).
+_TRANSIENT_NAMES = frozenset(
+    {
+        "RateLimitError",
+        "APIConnectionError",
+        "APITimeoutError",
+        "InternalServerError",
+        "OverloadedError",
+        "ServiceUnavailableError",
+        "AuthenticationError",
+        "PermissionDeniedError",
+        "ServiceUnavailable",
+        "SessionExpired",
+        "TransientError",
+        "DriverError",
+    }
+)
+_TRANSIENT_STATUS = frozenset({401, 403, 408, 409, 429})
+
+
+def is_transient(exc: BaseException) -> bool:
+    """이 실패는 메시지 탓이 아닌가 (연결·시간 초과·요청 한도·인증·서버 오류)."""
+    if isinstance(exc, TimeoutError | ConnectionError | OSError):
+        return True
+    status = getattr(exc, "status_code", None)
+    if isinstance(status, int) and not isinstance(status, bool):
+        if status >= 500 or status in _TRANSIENT_STATUS:
+            return True
+    return any(cls.__name__ in _TRANSIENT_NAMES for cls in type(exc).__mro__)
 
 
 def pick_recent(pending: list[Pending], budget: int) -> list[Pending]:
@@ -82,8 +125,10 @@ class GraphIngestService:
         user_message_cap: int = 0,
         daily_global_cap: int = 0,
         day_offset_hours: int = 9,
+        max_attempts: int = 0,
     ) -> None:
         self._store = store
+        self.max_attempts = max_attempts  # 메시지 하나의 실패 한도. 0 = 세지 않는다 (실패하면 멈춘다)
         self._conversations = conversations
         self._contacts = contacts
         self._prepared = False
@@ -227,7 +272,7 @@ class GraphIngestService:
                 e.message_id: e
                 for e in build_graph_episodes(messages, conv.source_key, conv.me_name, contact.name_in_graph)
             }
-            pending.extend((m, conv, episodes[m.id].body) for m in messages if m.graph_ingested_at is None)
+            pending.extend((m, conv, episodes[m.id].body) for m in messages if m.graph_pending)
         pending.sort(key=lambda item: item[0].sent_at)
 
         await self._job(user_id, job_id, "running", 0, None)
@@ -253,6 +298,8 @@ class GraphIngestService:
             self._prepared = True
 
         done = 0
+        held = 0  # 이번 실행에서 보류한 메시지 수
+        streak = 0  # 연달아 보류한 수
         gone: set[UUID] = set()  # 수집 도중 지워진 대화방 — 남은 메시지를 그래프에 넣지 않는다
         try:
             for message, conv, body in chosen:
@@ -262,25 +309,57 @@ class GraphIngestService:
                     gone.add(conv.id)
                     continue
                 units = graph_units(message.text)
-                reserved_on: date | None = None
-                if metered:
-                    refused, reserved_on = await self._reserve(user_id, units)
-                    if refused is not None:  # 다른 사용자의 수집이 그 사이 하루 예산을 썼다
-                        stopped = refused
-                        break
                 name = f"{conv.source_key}:{message.source_key}"
-                try:
-                    await self._store.add_episode(
-                        name=name,
-                        body=body,
-                        reference_time=message.sent_at,
-                        group_id=user_id,
-                        source_description=f"과거 대화 ({conv.title})",
-                    )
-                except Exception:
-                    if reserved_on is not None:
-                        await self._release(user_id, reserved_on, units)
-                    raise
+                attempts = message.graph_attempts
+                added = False
+                out_of_budget = False
+                while True:
+                    reserved_on: date | None = None
+                    if metered:
+                        refused, reserved_on = await self._reserve(user_id, units)
+                        if refused is not None:  # 다른 사용자의 수집이 그 사이 하루 예산을 썼다
+                            stopped = refused
+                            out_of_budget = True
+                            break
+                    try:
+                        await self._store.add_episode(
+                            name=name,
+                            body=body,
+                            reference_time=message.sent_at,
+                            group_id=user_id,
+                            source_description=f"과거 대화 ({conv.title})",
+                        )
+                        added = True
+                        break
+                    except Exception as exc:
+                        if reserved_on is not None:
+                            await self._release(user_id, reserved_on, units)
+                        if not self.max_attempts or is_transient(exc):
+                            raise  # 장애이거나 횟수를 세지 않는 구성 — 여기서 멈추고 다음 실행에 맡긴다
+                        attempts += 1
+                        hold = attempts >= self.max_attempts
+                        await self._conversations.record_graph_failure(
+                            user_id, message.id, hold, datetime.now(UTC)
+                        )
+                        if not hold:
+                            continue  # 모델 출력이 어긋난 것일 수 있다 — 바로 다시 시도한다
+                        held += 1
+                        streak += 1
+                        log.warning(
+                            "graph ingest gave up episode=%s user=%s after %d attempts: %s",
+                            name,
+                            user_id,
+                            attempts,
+                            exception_kind(exc),
+                        )
+                        if streak >= GIVE_UP_STREAK:
+                            raise  # 메시지마다 실패한다 — 메시지 탓이 아니다
+                        break
+                if out_of_budget:
+                    break
+                if not added:
+                    continue  # 보류했다 — 다음 메시지로
+                streak = 0
                 if not await self._exists(user_id, conv.id):
                     # 모델을 부르는 사이(10~15초)에 대화방이 지워졌다. 삭제는 이미 끝났으므로 방금 넣은
                     # 에피소드를 여기서 되돌린다 — 지운 대화가 그래프에 남으면 안 된다.
@@ -298,6 +377,8 @@ class GraphIngestService:
             raise
         if gone:
             log.info("graph ingest skipped %d deleted conversation(s) user=%s", len(gone), user_id)
+        if held:
+            log.warning("graph ingest held %d message(s) user=%s (graph_reset.py로 다시 시도)", held, user_id)
         if stopped is not None:
             log.info(
                 "graph ingest limited user=%s reason=%s done=%d left=%d",

@@ -140,6 +140,7 @@ def _build_graph(settings: Settings, embedder: Any, contacts: ContactRepo, conve
             user_message_cap=settings.graph_ingest_user_message_cap,
             daily_global_cap=settings.graph_ingest_daily_global_cap,
             day_offset_hours=settings.usage_day_offset_hours,
+            max_attempts=settings.graph_episode_max_attempts,
         ),
         GraphContextRetriever(store, contacts, top_k=settings.graph_search_top_k, embedder=embedder),
     )

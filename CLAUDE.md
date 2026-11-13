@@ -66,6 +66,7 @@ mode: work
 - 관리자 응답에 문장이 들어가는 필드를 더하지 않는다(`test_admin.py`의 표식 검사가 잡는다). `test_admin.py`는 표에 직접 INSERT한다 — 기본값 없는 NOT NULL 열을 더하면 `_add_*` 헬퍼도 고친다
 - `rewrite_requests.condition`은 `String(1)`이라 `auto`를 저장하면 안 된다(멱등 해시만 요청 값). `RewriteInput`에 선택 필드를 더할 때는 `_input_hash`에서 기본값이면 빼야 예전 해시가 유지된다
 - asyncpg는 timestamptz를 UTC로 돌려준다. 날짜·요일을 글자로 만들 때는 `local_time()`으로 한국 시간으로 바꾼 뒤에(그래프 에피소드 본문, 프롬프트의 예시 날짜)
+- 그래프 수집은 메시지마다 실패를 센다(`messages.graph_attempts`, 0010). `GRAPH_EPISODE_MAX_ATTEMPTS`(기본 3)번 실패하면 그 메시지를 보류(`graph_held_at`)하고 다음으로 넘어간다 — "미수집"은 `graph_ingested_at IS NULL AND graph_held_at IS NULL`(`Message.graph_pending`, 저장소의 `_GRAPH_PENDING`)이므로 미수집을 따지는 질의를 새로 쓸 때 둘 다 본다. 일시 장애(`graph/ingest.py is_transient`)는 세지 않고 실행을 멈춘다. `GraphIngestService`를 직접 만들면 `max_attempts=0`(세지 않음)이 기본이고 `deps`만 설정값을 넣는다. 보류는 `graph_reset.py`가 푼다
 - 그래프 수집 상한은 지워지지 않는 카운터(`usage_counters.graph_episodes`, 0009) 기준이고 예산이 모자라면 최근 메시지부터 넣는다. 상한은 API 경로(`ingest_user`)에만 걸리고 합성 적재·평가(`ingest_pending`)와 `graph_reset.py`에는 안 걸린다
 - 문체 묶음은 내 연속 발화 6건·600자마다 나눈다. 프롬프트 예시는 하나 600자·문체 합계 2,400자·사실 맥락 합계 1,200자 상한 — 상한에 안 걸리는 데이터에서는 프롬프트가 예전과 글자까지 같아야 한다(평가 재현성)
 - 오류 기록(`import_jobs.error_message`·`graph_error`, 삭제 응답, 로그)에는 예외의 종류만 남긴다. 예외를 문자열로 찍지 말고 `exception_kind`/`core/safe_exc.py`를 쓴다(문장에 SQL 매개변수 = 대화 원문이 섞인다). DB 엔진은 `hide_parameters=True`

@@ -94,6 +94,15 @@ class Message(BaseModel):
     sent_at: datetime
     text: str
     graph_ingested_at: datetime | None = Field(None, description="그래프(D)에 넣은 시각. None이면 미수집")
+    graph_attempts: int = Field(0, description="그래프에 넣다 실패한 횟수 (일시 장애는 세지 않는다)")
+    graph_held_at: datetime | None = Field(
+        None, description="거듭 실패해 더 시도하지 않기로 한 시각. 운영자가 graph_reset으로 푼다"
+    )
+
+    @property
+    def graph_pending(self) -> bool:
+        """그래프 수집을 기다리는가 — 아직 안 들어갔고 보류되지도 않았다."""
+        return self.graph_ingested_at is None and self.graph_held_at is None
 
 
 class EpisodeDraft(BaseModel):

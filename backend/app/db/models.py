@@ -12,7 +12,18 @@ from datetime import date, datetime
 from typing import Any
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    Date,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    SmallInteger,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -183,6 +194,9 @@ class MessageRow(Base):
     sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     text: Mapped[str] = mapped_column(Text, nullable=False)
     graph_ingested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # 그래프에 넣다 실패한 횟수와, 거듭 실패해 보류한 시각 (0010). 보류된 메시지는 미수집으로 세지 않는다.
+    graph_attempts: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0, server_default="0")
+    graph_held_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     __table_args__ = (

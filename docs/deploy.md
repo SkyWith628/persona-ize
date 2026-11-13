@@ -276,6 +276,7 @@ docker stats --no-stream                                # 메모리·CPU
   띄울 때만 `ALLOW_UNCAPPED_COSTS=true`(거부 대신 경고).
 - 하루 한도 429(`usage_exceeded`·`budget_exceeded`)에는 다음 날(한국 시간 자정)까지 남은 초가 `Retry-After`로 붙는다.
 - 전체 차단기의 하루 최악 비용 = 토큰 한도 × Console 요금표의 단가. 예시 값(2,000회 / 400만 토큰)은 예산에 맞게 고친다.
+- 메시지 하나가 거듭 실패하면(`GRAPH_EPISODE_MAX_ATTEMPTS`, 기본 3번 — 연결·요청 한도·5xx 같은 일시 장애는 세지 않는다) 그 메시지만 보류하고 나머지를 계속 넣는다. 로그에 `graph ingest gave up episode=<방:메시지>`가 남고, `scripts/ops/run.sh scripts/graph_reset.py --user <id> --conversation <방>`으로 풀어 다시 시도한다.
 - 서버를 다시 띄우면 수집하다 만 메시지를 이어서 넣는다(`GRAPH_RESUME_ON_START=true`). 큰 가져오기 도중에 재시작하면
   남은 분량만큼 비용이 이어진다.
 - 관리자 화면의 비용 환산(`COST_*`)은 0이면 표시하지 않는다. 예시 파일의 값은 2026-11-11 기준 `claude-opus-5-5`(입력 4 / 출력 20)와 그래프 실측 평균(0.035/건)이다 — `LLM_MODEL`을 바꾸거나 요금이 바뀌면 함께 고친다.

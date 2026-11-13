@@ -71,6 +71,12 @@ class Settings(BaseSettings):
     neo4j_password: str = ""
     graph_llm_model: str = "claude-haiku-4-5"  # 5.5 계열은 graphiti 강제 tool_choice에 400 (decisions 11-04)
     graph_search_top_k: int = Field(4, ge=1, le=20)
+    graph_episode_max_attempts: int = Field(
+        3,
+        ge=0,
+        le=20,
+        description="메시지 하나를 그래프에 넣다 실패해도 되는 횟수. 넘으면 보류하고 넘어간다. 0=제한 없음",
+    )
     graph_resume_on_start: bool = Field(
         True, description="서버 시작 때 미수집 메시지를 이어서 그래프에 넣는다"
     )

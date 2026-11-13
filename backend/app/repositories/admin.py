@@ -149,7 +149,7 @@ _TODAY_USAGE = text(
 _GRAPH_MESSAGES = text(
     """
     SELECT count(*) FILTER (WHERE graph_ingested_at >= :start AND graph_ingested_at < :end) AS ingested,
-           count(*) FILTER (WHERE graph_ingested_at IS NULL) AS pending
+           count(*) FILTER (WHERE graph_ingested_at IS NULL AND graph_held_at IS NULL) AS pending
     FROM messages
     """
 )

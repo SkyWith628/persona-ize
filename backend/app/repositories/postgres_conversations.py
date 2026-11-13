@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
+from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import and_, delete, func, or_, select, update
@@ -62,6 +63,10 @@ def _conversation(row: ConversationRow) -> Conversation:
     )
 
 
+# 그래프 수집을 기다리는 메시지: 아직 안 들어갔고, 거듭 실패해 보류되지도 않았다.
+_GRAPH_PENDING = (MessageRow.graph_ingested_at.is_(None), MessageRow.graph_held_at.is_(None))
+
+
 def _message(row: MessageRow) -> Message:
     return Message(
         id=row.id,
@@ -72,6 +77,8 @@ def _message(row: MessageRow) -> Message:
         sent_at=row.sent_at,
         text=row.text,
         graph_ingested_at=row.graph_ingested_at,
+        graph_attempts=row.graph_attempts,
+        graph_held_at=row.graph_held_at,
     )
 
 
@@ -420,17 +427,24 @@ class PostgresConversationRepo:
 
     async def users_with_pending_graph(self) -> list[str]:
         async with self._sessions() as s:
-            rows = (
-                await s.scalars(
-                    select(MessageRow.user_id).where(MessageRow.graph_ingested_at.is_(None)).distinct()
-                )
-            ).all()
+            rows = (await s.scalars(select(MessageRow.user_id).where(*_GRAPH_PENDING).distinct())).all()
         return sorted(rows)
+
+    async def record_graph_failure(self, user_id: str, message_id: UUID, hold: bool, at: datetime) -> None:
+        values: dict[str, Any] = {"graph_attempts": MessageRow.graph_attempts + 1}
+        if hold:
+            values["graph_held_at"] = at
+        async with self._sessions.begin() as s:
+            await s.execute(
+                update(MessageRow)
+                .where(MessageRow.id == message_id, MessageRow.user_id == user_id)
+                .values(**values)
+            )
 
     async def close_stale_graph_jobs(self, user_id: str) -> int:
         pending_convs = (
             select(MessageRow.conversation_id)
-            .where(MessageRow.user_id == user_id, MessageRow.graph_ingested_at.is_(None))
+            .where(MessageRow.user_id == user_id, *_GRAPH_PENDING)
             .distinct()
         )
         async with self._sessions.begin() as s:
@@ -448,8 +462,11 @@ class PostgresConversationRepo:
     async def reset_graph_ingested(self, user_id: str, conversation_id: UUID | None = None) -> int:
         stmt = (
             update(MessageRow)
-            .where(MessageRow.user_id == user_id, MessageRow.graph_ingested_at.is_not(None))
-            .values(graph_ingested_at=None)
+            .where(
+                MessageRow.user_id == user_id,
+                or_(MessageRow.graph_ingested_at.is_not(None), MessageRow.graph_attempts > 0),
+            )
+            .values(graph_ingested_at=None, graph_attempts=0, graph_held_at=None)
         )
         if conversation_id is not None:
             stmt = stmt.where(MessageRow.conversation_id == conversation_id)
@@ -638,7 +655,7 @@ class PostgresConversationRepo:
     async def limit_stale_graph_jobs(self, user_id: str, reason: str) -> int:
         pending_convs = (
             select(MessageRow.conversation_id)
-            .where(MessageRow.user_id == user_id, MessageRow.graph_ingested_at.is_(None))
+            .where(MessageRow.user_id == user_id, *_GRAPH_PENDING)
             .distinct()
         )
         async with self._sessions.begin() as s:
