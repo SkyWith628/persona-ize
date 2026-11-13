@@ -2,11 +2,12 @@
 
 import { api } from "../api.js";
 import { describeError } from "../lib/errors.js";
-import { dayKey, errorCode, formatDateTime, formatDay, formatNumber, formatTime } from "../lib/format.js";
+import { clip, dayKey, errorCode, formatDateTime, formatDay, formatNumber, formatTime } from "../lib/format.js";
 import { graphPhaseView } from "../lib/importing.js";
+import { ME_NAME_MAX, asksMeName, swapErrorText, swapNotes, swapPreview, swapRequest, swapResultView } from "../lib/roles.js";
 import { buildHash } from "../lib/router.js";
-import { confirmDialog } from "../ui/dialog.js";
-import { h, setChildren } from "../ui/dom.js";
+import { confirmDialog, openDialog } from "../ui/dialog.js";
+import { h, setChildren, uid } from "../ui/dom.js";
 import { emptyState, loadInto, meter, note } from "../ui/parts.js";
 import { toast } from "../ui/toast.js";
 
@@ -38,6 +39,79 @@ export async function deleteConversation(conv) {
     return true;
   } catch (err) {
     if (err.status !== 401) toast(describeError(err, "지우지 못했어요."), { kind: "error" });
+    return false;
+  }
+}
+
+/**
+ * 화자를 거꾸로 지정해 가져온 대화방 고치기: 나와 상대를 맞바꾼다(대화방은 그대로 둔다).
+ * 서버에는 역할만 남아 있어 화자별로 따로 고칠 수는 없다 — 방 전체를 맞바꾼다.
+ * @param {object|null} stats 대화방 통계(없으면 사건 정리 안내와 이름 칸을 빼고 묻는다)
+ * @returns {Promise<boolean>} 서버에 반영됐으면 true
+ */
+async function swapRoles(conv, contactAlias, messages, stats) {
+  const preview = swapPreview(messages, contactAlias);
+  const nameId = uid("me-name");
+  const nameEl = asksMeName(stats)
+    ? h("input", { id: nameId, class: "input", type: "text", maxlength: ME_NAME_MAX, autocomplete: "off", placeholder: "예: 김민수" })
+    : null;
+  const answer = await openDialog({
+    title: `'${conv.title}'에서 나와 상대를 맞바꿀까요?`,
+    render: ({ close }) =>
+      h(
+        "form",
+        {
+          method: "dialog",
+          class: "dialog-form",
+          onSubmit: (e) => {
+            e.preventDefault();
+            close({ meName: nameEl ? nameEl.value : "" });
+          },
+        },
+        h(
+          "p",
+          { class: "dialog-message" },
+          `가져올 때 화자를 거꾸로 골랐다면 여기서 고칠 수 있어요. 지금 내 메시지 ${formatNumber(preview.mineNow)}개가 ${contactAlias}의 말이 되고, ${contactAlias}의 메시지 ${formatNumber(preview.mineAfter)}개가 내 말이 돼요.`,
+        ),
+        preview.sample.length
+          ? h(
+              "ul",
+              { class: "dialog-bullets", "aria-label": "바꾼 뒤 미리보기" },
+              preview.sample.map((s) => h("li", null, h("strong", null, `${s.now} → ${s.after}`), ` : ${clip(s.text, 40)}`)),
+            )
+          : null,
+        h(
+          "ul",
+          { class: "dialog-bullets" },
+          swapNotes(stats).map((line) => h("li", null, line)),
+        ),
+        nameEl
+          ? h(
+              "div",
+              { class: "field" },
+              h("label", { for: nameId }, "내 이름 (선택)"),
+              nameEl,
+              h("p", { class: "hint" }, "지난 약속·사건 기록에 내 이름으로 적어요. 비워 두면 '사용자'로 적어요."),
+            )
+          : null,
+        h(
+          "div",
+          { class: "dialog-actions" },
+          h("button", { type: "button", class: "btn", "data-autofocus": true, onClick: () => close(null) }, "취소"),
+          h("button", { type: "submit", class: "btn btn-primary" }, "맞바꾸기"),
+        ),
+      ),
+  });
+  if (!answer) return false;
+  const body = swapRequest(messages, answer.meName);
+  if (!body) return false;
+  try {
+    const result = await api.conversations.setSpeakerRoles(conv.id, body);
+    const view = swapResultView(result);
+    toast(view.text, { kind: view.kind, timeout: view.kind === "ok" ? 9000 : undefined });
+    return true;
+  } catch (err) {
+    if (err.status !== 401) toast(swapErrorText(err) || describeError(err, "바꾸지 못했어요."), { kind: "error" });
     return false;
   }
 }
@@ -96,34 +170,62 @@ function messagesNode(messages, contactAlias) {
 function conversationBody(conv, contactAlias) {
   const statsEl = h("div", { class: "conv-stats" });
   const body = h("div", { class: "conv-body" });
-  loadInto(body, {
+  let latestStats = null; // 맞바꾸기 확인 창이 사건 정리 안내를 넣을지 정하는 데 쓴다
+  const reload = loadInto(body, {
     lines: 4,
     load: () => api.conversations.messages(conv.id),
     isEmpty: (list) => !list.length,
     empty: () => emptyState("이 대화방에는 메시지가 없어요", "대화 가져오기에서 메시지를 올릴 수 있어요."),
     render: (list) => {
       const mine = list.filter((m) => m.speaker_role === "me").length;
+      const swapBtn = h(
+        "button",
+        {
+          type: "button",
+          class: "btn",
+          "aria-label": `${conv.title} 나와 상대 맞바꾸기`,
+          onClick: async () => {
+            if (swapBtn.getAttribute("aria-busy") === "true") return;
+            swapBtn.setAttribute("aria-busy", "true");
+            const stats = latestStats || (await api.conversations.stats(conv.id).catch(() => null));
+            const changed = await swapRoles(conv, contactAlias, list, stats);
+            swapBtn.removeAttribute("aria-busy");
+            if (!changed || !body.isConnected) return;
+            reload();
+            loadStats();
+          },
+        },
+        "나·상대 맞바꾸기",
+      );
       return [
         h("p", { class: "muted" }, `메시지 ${formatNumber(list.length)}개 · 내 메시지 ${formatNumber(mine)}개`),
+        h("div", { class: "conv-roles" }, h("span", { class: "muted" }, "나와 상대가 뒤바뀌어 보이나요? 대화방을 지우지 않고 고칠 수 있어요."), swapBtn),
         statsEl,
         messagesNode(list, contactAlias),
       ];
     },
   });
   // 사건 정리 진행은 서버가 통계를 줄 때만 한 줄 보여 준다(없으면 조용히 넘어간다)
-  api.conversations
-    .stats(conv.id)
-    .then((stats) => {
-      if (!statsEl.isConnected && !body.isConnected) return;
-      const view = graphPhaseView(stats, null);
-      if (!view.status || view.status === "skipped") return;
-      setChildren(
-        statsEl,
-        h("p", { class: "muted" }, `${view.title}${view.count ? ` · ${view.count}` : ""}`),
-        view.pct != null && view.polling ? meter(stats.graph_ingested, stats.messages, "지난 약속·사건 정리") : null,
-      );
-    })
-    .catch(() => {});
+  function loadStats() {
+    api.conversations
+      .stats(conv.id)
+      .then((stats) => {
+        latestStats = stats;
+        if (!statsEl.isConnected && !body.isConnected) return;
+        const view = graphPhaseView(stats, null);
+        if (!view.status || view.status === "skipped") {
+          setChildren(statsEl, null);
+          return;
+        }
+        setChildren(
+          statsEl,
+          h("p", { class: "muted" }, `${view.title}${view.count ? ` · ${view.count}` : ""}`),
+          view.pct != null && view.polling ? meter(stats.graph_ingested, stats.messages, "지난 약속·사건 정리") : null,
+        );
+      })
+      .catch(() => {});
+  }
+  loadStats();
   return body;
 }
 

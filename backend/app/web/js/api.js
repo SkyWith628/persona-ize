@@ -109,6 +109,9 @@ export const api = {
     messages: (conversationId) => get(`/v1/conversations/${id(conversationId)}/messages`),
     stats: (conversationId, opts) => get(`/v1/conversations/${id(conversationId)}/stats`, opts),
     importRaw: (conversationId, payload) => post(`/v1/conversations/${id(conversationId)}/imports/raw`, payload),
+    // 화자를 거꾸로 지정한 가져오기 고치기: payload는 lib/roles.js의 swapRequest가 만든다
+    setSpeakerRoles: (conversationId, payload) =>
+      request("PUT", `/v1/conversations/${id(conversationId)}/speaker-roles`, { body: payload }),
   },
   imports: {
     parse: (payload, opts) => post("/v1/imports/parse", payload, opts),
