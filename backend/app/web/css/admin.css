@@ -634,6 +634,11 @@ main:focus {
   color: var(--ink-2);
 }
 
+/* 줄 끝의 실행 버튼 (보류 다시 시도). 높이는 다른 버튼과 같다 */
+.rows .row-action {
+  margin-left: var(--space-2);
+}
+
 .rows dd {
   text-align: right;
   font-variant-numeric: tabular-nums;

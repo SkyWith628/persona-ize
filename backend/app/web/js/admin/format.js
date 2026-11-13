@@ -149,7 +149,48 @@ export const ACTION_LABEL = {
   jobs: "가져오기 작업",
   feedback: "거절 피드백",
   access_log: "접근 기록",
+  graph_retry_held: "보류 다시 시도",
+  graph_retry_held_done: "보류 다시 시도 결과",
 };
+
+// ---------- 보류된 그래프 메시지 다시 시도 ----------
+
+/**
+ * 수집 표의 보류 줄: 건수, 꼬리표, 다시 시도 버튼을 낼지.
+ * 보류가 없으면 버튼이 없다. 그래프가 꺼진 서버는 다시 넣을 곳이 없어(서버가 409) 버튼을 내지 않는다.
+ */
+export function heldView(graph) {
+  const raw = Number(graph?.held_messages ?? 0);
+  const count = Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 0;
+  if (count === 0) return { count, canRetry: false, tag: { kind: "ok", text: "없음" } };
+  if (!graph.enabled) return { count, canRetry: false, tag: { kind: "off", text: "수집이 꺼져 다시 시도할 수 없음" } };
+  return { count, canRetry: true, tag: { kind: "warn", text: "다시 시도할 수 있음" } };
+}
+
+/** 누르기 전에 받는 확인. 메시지 1건 = 모델 호출 1건(에피소드)이라 건수만큼 비용이 든다. */
+export function retryConfirmText(count) {
+  const n = num(count);
+  return `보류 ${n}건을 다시 시도합니다. 모델 호출 비용이 ${n}건만큼 듭니다.\n계속할까요?`;
+}
+
+/** 서버 응답({released, users, started}) → 결과 안내. */
+export function retryResultText(result) {
+  const released = Number(result?.released ?? 0);
+  if (!(released > 0)) return "다시 시도할 보류 메시지가 없습니다.";
+  const who = `보류 ${num(released)}건(사용자 ${num(result.users ?? 0)}명)을 풀었습니다.`;
+  return `${who} 사건 정리를 뒤에서 다시 시작했습니다 — 메시지마다 10~15초쯤 걸리고, 수집 상한에 닿은 사용자는 여유가 생기면 이어집니다.`;
+}
+
+/** 다시 시도가 실패했을 때의 안내. 403은 권한 문제일 수도, 오래된 화면(CSRF 토큰)일 수도 있다. */
+export function retryErrorText(error) {
+  if (error?.status === 409 && error.code === "graph_disabled") {
+    return "사건 정리(그래프)가 꺼진 서버라 다시 시도할 수 없습니다.";
+  }
+  if (error?.status === 403) {
+    return "다시 시도하지 못했습니다. 권한이 없거나 로그인 정보가 바뀌었습니다 — 화면을 새로 고친 뒤 다시 누르세요.";
+  }
+  return `다시 시도하지 못했습니다. ${error?.message ?? ""}`.trim();
+}
 
 /** 코드 → 화면 문구. 표에 없는 코드는 코드를 그대로, 값이 없으면 "–". */
 export function label(map, code) {

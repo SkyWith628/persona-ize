@@ -19,6 +19,7 @@ import {
   duration,
   groupAccess,
   healthView,
+  heldView,
   label,
   num,
   percent,
@@ -360,7 +361,8 @@ export function renderCost(root, overview) {
   fill(root, ...nodes);
 }
 
-export function renderIngest(root, overview) {
+/** `actions.onRetryHeld(건수, 버튼)`을 주면 보류가 있을 때 보류 줄에 "다시 시도" 버튼을 낸다. */
+export function renderIngest(root, overview, actions = {}) {
   const { graph, health } = overview;
   const { jobs } = graph;
   const waiting = !graph.enabled
@@ -370,14 +372,21 @@ export function renderIngest(root, overview) {
       : tag("ok", "없음");
   const db = healthView(health.postgres);
   const graphDb = healthView(health.neo4j);
+  const held = heldView(graph);
+  let retry = null;
+  if (held.canRetry && typeof actions.onRetryHeld === "function") {
+    retry = el("button", { type: "button", class: "btn ghost row-action", text: "다시 시도" });
+    retry.addEventListener("click", () => actions.onRetryHeld(held.count, retry));
+  }
   fill(
     root,
     el("dl", { class: "rows" }, [
       row("사건 정리를 기다리는 메시지", el("b", { text: `${num(graph.pending_messages)}건 ` }), waiting),
       row(
         "거듭 실패해 보류된 메시지",
-        el("b", { text: `${num(graph.held_messages ?? 0)}건 ` }),
-        (graph.held_messages ?? 0) > 0 ? tag("warn", "graph_reset.py로 다시 시도") : tag("ok", "없음"),
+        el("b", { text: `${num(held.count)}건 ` }),
+        tag(held.tag.kind, held.tag.text),
+        retry,
       ),
       row(
         "대기·진행 중인 작업",
@@ -396,17 +405,19 @@ export function renderIngest(root, overview) {
       row("데이터베이스 (PostgreSQL)", tag(db.kind, db.text)),
       row("그래프 DB (Neo4j)", tag(graphDb.kind, graphDb.text)),
     ]),
-    hint("작업 수와 대기 메시지는 기간과 상관없이 지금 상태입니다."),
+    hint(
+      "작업 수와 대기·보류 메시지는 기간과 상관없이 지금 상태입니다. 다시 시도는 보류만 풀어 다시 넣습니다(이미 정리된 내용은 그대로) — 메시지마다 모델 호출 비용이 듭니다.",
+    ),
   );
 }
 
-export function renderOverview(roots, overview) {
+export function renderOverview(roots, overview, actions = {}) {
   renderKpis(roots.kpis, overview);
   renderDaily(roots.daily, overview);
   renderReasons(roots.reasons, overview);
   renderMix(roots.mix, overview);
   renderCost(roots.cost, overview);
-  renderIngest(roots.ingest, overview);
+  renderIngest(roots.ingest, overview, actions);
 }
 
 // ---------- 표 ----------
@@ -537,7 +548,7 @@ export function renderAccess(root, items) {
       [
         { title: "시각", cell: (g) => timeCell(g.newest) },
         { title: "관리자", cell: (g) => g.admin_username },
-        { title: "본 것", cell: (g) => g.actions.map((a) => label(ACTION_LABEL, a)).join(" · ") },
+        { title: "본 것·한 일", cell: (g) => g.actions.map((a) => label(ACTION_LABEL, a)).join(" · ") },
         { title: "호출", num: true, cell: (g) => `${num(g.count)}회` },
       ],
       groupAccess(items),

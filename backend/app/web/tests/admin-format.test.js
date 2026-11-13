@@ -2,8 +2,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { ApiError, readError } from "../js/admin/api.js";
+import { ApiError, readError, requestInit } from "../js/admin/api.js";
 import {
+  ACTION_LABEL,
   CHECK_LABEL,
   REASON_LABEL,
   axisStep,
@@ -15,10 +16,14 @@ import {
   gateFor,
   groupAccess,
   healthView,
+  heldView,
   label,
   num,
   percent,
   rangeText,
+  retryConfirmText,
+  retryErrorText,
+  retryResultText,
   share,
   usd,
 } from "../js/admin/format.js";
@@ -176,4 +181,53 @@ test("접근이 막힌 경우의 안내와 오류 본문 읽기", () => {
   const validation = readError(422, { detail: [{ loc: ["query", "limit"], msg: "bad" }] });
   assert.deepEqual([validation.code, validation.message], [null, "요청을 처리하지 못했습니다 (422)."]);
   assert.equal(readError(502, null).code, null);
+});
+
+test("보류 줄: 보류가 있고 수집이 켜져 있을 때만 다시 시도 버튼을 낸다", () => {
+  assert.deepEqual(heldView({ enabled: true, held_messages: 0 }), {
+    count: 0,
+    canRetry: false,
+    tag: { kind: "ok", text: "없음" },
+  });
+  // 필드가 없던 예전 서버 응답, 이상한 값도 0건으로 본다
+  for (const graph of [{ enabled: true }, { enabled: true, held_messages: null }, { enabled: true, held_messages: -2 }, undefined]) {
+    assert.equal(heldView(graph).canRetry, false);
+    assert.equal(heldView(graph).count, 0);
+  }
+  const held = heldView({ enabled: true, held_messages: 3 });
+  assert.deepEqual([held.count, held.canRetry, held.tag.kind], [3, true, "warn"]);
+  assert.doesNotMatch(held.tag.text, /graph_reset/); // 서버에서 스크립트를 돌리라는 안내는 더 없다
+  // 그래프가 꺼진 서버는 다시 넣을 곳이 없다 — 건수만 보이고 버튼은 없다
+  const off = heldView({ enabled: false, held_messages: 3 });
+  assert.deepEqual([off.count, off.canRetry, off.tag.kind], [3, false, "off"]);
+});
+
+test("다시 시도: 확인 문구는 건수와 비용을 말하고, 결과·오류를 문장으로 알린다", () => {
+  assert.equal(
+    retryConfirmText(3),
+    "보류 3건을 다시 시도합니다. 모델 호출 비용이 3건만큼 듭니다.\n계속할까요?",
+  );
+  assert.match(retryConfirmText(1234), /보류 1,234건.*1,234건만큼/);
+
+  assert.match(retryResultText({ released: 3, users: 2, started: true }), /^보류 3건\(사용자 2명\)을 풀었습니다\./);
+  assert.match(retryResultText({ released: 3, users: 2, started: true }), /다시 시작했습니다/);
+  assert.equal(retryResultText({ released: 0, users: 0, started: false }), "다시 시도할 보류 메시지가 없습니다.");
+  assert.equal(retryResultText(null), "다시 시도할 보류 메시지가 없습니다.");
+
+  assert.match(retryErrorText(new ApiError(409, "graph_disabled", "x")), /꺼진 서버/);
+  assert.match(retryErrorText(new ApiError(403, "forbidden", "x")), /새로 고친 뒤/);
+  assert.equal(
+    retryErrorText(new ApiError(0, "network", "서버에 연결하지 못했습니다.")),
+    "다시 시도하지 못했습니다. 서버에 연결하지 못했습니다.",
+  );
+  assert.equal(label(ACTION_LABEL, "graph_retry_held"), "보류 다시 시도");
+  assert.equal(label(ACTION_LABEL, "graph_retry_held_done"), "보류 다시 시도 결과");
+});
+
+test("쓰기 요청에만 CSRF 토큰을 싣는다", () => {
+  assert.deepEqual(requestInit("GET", "tok").headers, { Accept: "application/json" });
+  const post = requestInit("POST", "tok");
+  assert.deepEqual(post.headers, { Accept: "application/json", "X-CSRF-Token": "tok" });
+  assert.deepEqual([post.method, post.credentials, post.cache, "body" in post], ["POST", "same-origin", "no-store", false]);
+  assert.equal("X-CSRF-Token" in requestInit("POST", null).headers, false); // 토큰이 없으면 서버가 403으로 막는다
 });

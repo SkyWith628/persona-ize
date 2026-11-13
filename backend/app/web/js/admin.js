@@ -1,8 +1,17 @@
-// 운영 대시보드(/admin)의 시작점. 빌드 없는 ES 모듈이고, 관리자 API(/v1/admin/*)를 읽기만 한다.
+// 운영 대시보드(/admin)의 시작점. 빌드 없는 ES 모듈이고, 관리자 API(/v1/admin/*)를 읽는다.
+// 쓰기는 하나뿐이다: 수집 표의 "다시 시도"(보류된 그래프 메시지) — 확인을 받은 뒤에만 보낸다.
 // 화면을 열거나 새로 고칠 때마다 서버의 관리자 접근 기록에 남는다 — 그래서 자동 새로 고침은 하지 않는다.
 
-import { getJson } from "./admin/api.js";
-import { clock, gateFor, num, rangeText } from "./admin/format.js";
+import { getJson, postJson } from "./admin/api.js";
+import {
+  clock,
+  gateFor,
+  num,
+  rangeText,
+  retryConfirmText,
+  retryErrorText,
+  retryResultText,
+} from "./admin/format.js";
 import {
   renderAccess,
   renderFailure,
@@ -91,9 +100,45 @@ async function loadOverview() {
   const seq = ++state.overviewSeq;
   const overview = await getJson(`/v1/admin/overview?days=${state.days}`);
   if (seq !== state.overviewSeq) return false;
-  renderOverview(roots, overview);
+  renderOverview(roots, overview, { onRetryHeld: retryHeld });
   $("range-text").textContent = rangeText(overview);
   return true;
+}
+
+/**
+ * 수집 표의 "다시 시도": 확인 → 보류 풀기(POST) → 결과 안내 → 요약을 새로 읽는다.
+ * 수집은 서버가 뒤에서 하므로 바로 끝난다. 풀린 메시지는 요약의 "기다리는 메시지"로 옮겨 보인다.
+ */
+async function retryHeld(count, button) {
+  if (!window.confirm(retryConfirmText(count))) return;
+  button.disabled = true; // 두 번 눌러 두 번 보내지 않게. 성공하면 요약을 다시 그리며 버튼이 사라진다
+  busy(+1);
+  setStatus("보류된 메시지를 다시 시도하는 중입니다…", { quiet: true });
+  let text;
+  try {
+    // 토큰은 누를 때마다 새로 읽는다 (다른 탭에서 다시 로그인했을 수 있다)
+    const me = await getJson("/v1/auth/me");
+    text = retryResultText(await postJson("/v1/admin/graph/retry-held", me.csrf_token));
+  } catch (error) {
+    busy(-1);
+    button.disabled = false;
+    if (error.status === 401) handleError(error);
+    else setStatus(retryErrorText(error), { error: true });
+    return;
+  }
+  try {
+    if (await loadOverview()) markUpdated();
+  } catch (error) {
+    if (handleError(error)) return; // 접근이 막혔으면 안내 화면이 대신한다
+  } finally {
+    busy(-1);
+  }
+  setStatus(text);
+  // 버튼이 있던 자리에도 결과를 남긴다 (위쪽 안내는 화면 밖일 수 있다)
+  const note = document.createElement("p");
+  note.className = "hint";
+  note.textContent = text;
+  roots.ingest.append(note);
 }
 
 function renderUsersPager(page) {
