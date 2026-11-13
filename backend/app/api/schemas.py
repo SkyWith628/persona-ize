@@ -196,6 +196,11 @@ class ImportJobOut(BaseModel):
     graph_episodes: int
     graph_error: str | None
     created_at: datetime
+    index_done: int | None = Field(
+        None,
+        description="processing 동안: 벡터가 준비된 말투 묶음 수. 서버가 모르면 null (index_total과 함께)",
+    )
+    index_total: int | None = Field(None, description="processing 동안: 이번에 만들 말투 묶음 전체 수")
 
 
 # ---- 대화 가져오기: 원문 파싱 (카카오톡·텔레그램·붙여넣기·json) ----

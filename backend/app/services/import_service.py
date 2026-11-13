@@ -25,6 +25,8 @@ import asyncio
 import hashlib
 import json
 import logging
+from collections import Counter
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID, uuid4
@@ -62,6 +64,7 @@ RawSpeakerRole = Literal["me", "contact", "skip"]
 GENERIC_ME_NAMES = {"회원님", "me", "나"}
 ME_NAME_MAX = 50  # conversations.me_name 열 길이
 OFFLOAD_CHARS = 50_000  # 본문 합계가 이보다 크면 정규화·가림을 스레드에서 한다
+EMBED_BATCH = 64  # 묶음 임베딩을 이만큼씩 나눠 돌린다 — 배치가 끝날 때마다 진행률을 센다
 
 
 class ImportMessage(BaseModel):
@@ -201,6 +204,9 @@ class ImportService:
         self._index_wait = index_wait
         self._tasks: set[asyncio.Task[None]] = set()
         self._index_tasks: dict[UUID, asyncio.Task[ImportJob]] = {}  # 작업 id → 묶음 생성 중인 태스크
+        # 작업 id → (벡터가 준비된 묶음 수, 전체 묶음 수). 프로세스 메모리에만 둔다 — 서버가 다시 뜨면
+        # `resume_indexing`이 처음부터 다시 세므로 잃어도 된다. 묶음 생성이 끝나면 지운다.
+        self._index_progress: dict[UUID, tuple[int, int]] = {}
         self._conv_locks = KeyedLocks()  # 대화방 id → 저장·묶음 재생성·삭제를 한 번에 하나씩
 
     async def create_conversation(
@@ -487,8 +493,13 @@ class ImportService:
         """
         async with self._conv_locks.hold(("index", conv.id)):
             job = job.model_copy()
+            job_id = job.id
             try:
-                job.episodes = await self.reindex(user_id, conv)
+                job.episodes = await self.reindex(
+                    user_id,
+                    conv,
+                    on_progress=lambda done, total: self._set_index_progress(job_id, done, total),
+                )
                 job.status = "completed"
             except NotFoundError:
                 raise  # 저장하는 사이에 대화방이 지워졌다 — 남길 작업도 없다 (404)
@@ -497,6 +508,8 @@ class ImportService:
                 job.status = "failed"
                 job.error_code = "reindex_failed"
                 job.error_message = exception_kind(exc)  # 종류만 — 문구에는 원문이 섞일 수 있다
+            finally:
+                self._index_progress.pop(job_id, None)
             if job.status != "completed":
                 job.graph_status = "skipped"  # 묶음이 없으면 그래프 수집도 시작하지 않는다
             async with self._conv_locks.hold(conv.id):
@@ -505,6 +518,18 @@ class ImportService:
         if job.graph_status == "pending":
             job = await self._start_graph_ingest(user_id, conv.id, job)
         return job
+
+    def _set_index_progress(self, job_id: UUID, done: int, total: int) -> None:
+        if total > 0:
+            self._index_progress[job_id] = (min(done, total), total)
+
+    def index_progress(self, job_id: UUID) -> tuple[int, int] | None:
+        """묶음 생성 중인 작업의 (벡터가 준비된 묶음 수, 전체 묶음 수). 모르면 None.
+
+        이 프로세스가 지금 돌리는 작업만 안다 — 끝난 작업, 묶음을 세기 전(메시지를 읽는 중), 다른 프로세스가
+        돌리는 작업은 None이고 화면은 수치 없이 "분석 중"만 보여 준다.
+        """
+        return self._index_progress.get(job_id)
 
     async def resume_indexing(self) -> int:
         """서버가 도중에 죽어 `processing`으로 남은 작업의 묶음 생성을 다시 시작한다. 시작한 수.
@@ -595,12 +620,17 @@ class ImportService:
             graph_error=graph_error,
         )
 
-    async def reindex(self, user_id: str, conv: Conversation) -> int:
+    async def reindex(
+        self, user_id: str, conv: Conversation, *, on_progress: Callable[[int, int], None] | None = None
+    ) -> int:
         """대화방의 묶음을 전부 다시 만든다. 임베딩 모델을 바꿨을 때도 이걸 돌린다.
 
         본문(`context_text`)이 그대로인 묶음은 저장돼 있는 벡터를 다시 쓴다 — **같은 임베딩 버전일 때만**.
         메시지 몇 건을 더 가져올 때마다 방 전체(수천 묶음)를 다시 임베딩하던 것을 새 묶음만 하게 된다.
         모델(버전)이 바뀌면 다시 쓸 것이 없으므로 전부 새로 계산한다.
+
+        새로 임베딩할 본문이 `EMBED_BATCH`개를 넘으면 그만큼씩 나눠 돌리고, 배치가 끝날 때마다
+        `on_progress(벡터가 준비된 묶음 수, 전체 묶음 수)`를 부른다 (다시 쓴 벡터는 처음부터 센다).
         """
         all_messages = await self._conversations.list_messages(user_id, conv.id)
         drafts = build_episodes(all_messages, conv.source_key, self._window)
@@ -612,8 +642,19 @@ class ImportService:
             if f"{version}\n{d.context_text}" in known
         }
         fresh = list(dict.fromkeys(d.context_text for d in drafts if d.context_text not in vectors_by_text))
-        if fresh:
-            vectors_by_text.update(zip(fresh, await self._embedder.embed_passages(fresh), strict=True))
+        per_text = Counter(d.context_text for d in drafts)  # 같은 본문의 묶음은 벡터 하나로 함께 끝난다
+        done = sum(per_text[t] for t in vectors_by_text)
+        if on_progress is not None:
+            on_progress(done, len(drafts))
+        # 한 배치로 끝나면 예전과 똑같이 한 번에 부른다. 나눌 때는 길이순으로 줄 세워 배치 안의 길이를
+        # 고르게 한다 — 통째로 넘길 때 모델이 하던 길이 정렬(패딩 절약)을 배치로 나눠도 잃지 않는다.
+        ordered = fresh if len(fresh) <= EMBED_BATCH else sorted(fresh, key=len)
+        for start in range(0, len(ordered), EMBED_BATCH):
+            batch = ordered[start : start + EMBED_BATCH]
+            vectors_by_text.update(zip(batch, await self._embedder.embed_passages(batch), strict=True))
+            done += sum(per_text[t] for t in batch)
+            if on_progress is not None:
+                on_progress(done, len(drafts))
         vectors = [vectors_by_text[d.context_text] for d in drafts]
         return await self._conversations.replace_episodes(
             user_id, conv.id, conv.contact_id, drafts, vectors, version

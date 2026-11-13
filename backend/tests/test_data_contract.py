@@ -129,6 +129,8 @@ CONTRACT_FIELDS: dict[str, set[str]] = {
         "graph_episodes",
         "graph_error",
         "created_at",
+        "index_done",
+        "index_total",
     },
 }
 

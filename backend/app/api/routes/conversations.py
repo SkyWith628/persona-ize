@@ -49,7 +49,9 @@ def _conv_out(c: Conversation) -> ConversationOut:
     )
 
 
-def _job_out(j: ImportJob) -> ImportJobOut:
+def _job_out(j: ImportJob, progress: tuple[int, int] | None = None) -> ImportJobOut:
+    """`progress`: 묶음 생성 진행(`ImportService.index_progress`). 작업이 `processing`일 때만 싣는다."""
+    done, total = progress if progress is not None and j.status == "processing" else (None, None)
     return ImportJobOut(
         id=j.id,
         conversation_id=j.conversation_id,
@@ -63,6 +65,8 @@ def _job_out(j: ImportJob) -> ImportJobOut:
         graph_episodes=j.graph_episodes,
         graph_error=j.graph_error,
         created_at=j.created_at,
+        index_done=done,
+        index_total=total,
     )
 
 
@@ -138,7 +142,7 @@ async def conversation_stats(conversation_id: UUID, user_id: UserId, state: Stat
         graph_limited=limited,
         first_message_at=stats.first_message_at,
         last_message_at=stats.last_message_at,
-        latest_job=_job_out(job) if job is not None else None,
+        latest_job=_job_out(job, state.import_service.index_progress(job.id)) if job is not None else None,
     )
 
 
@@ -159,7 +163,7 @@ async def import_messages(
         mask_pii=state.settings.import_mask_pii,
         max_user_messages=state.settings.max_messages_per_user,
     )
-    return _job_out(job)
+    return _job_out(job, state.import_service.index_progress(job.id))
 
 
 @router.post(
@@ -192,12 +196,13 @@ async def import_raw(conversation_id: UUID, body: ImportRawIn, user_id: UserId, 
         keep_recent=body.keep_recent,
         max_user_messages=settings.max_messages_per_user,
     )
-    return _job_out(job)
+    return _job_out(job, state.import_service.index_progress(job.id))
 
 
 @router.get("/v1/imports/{job_id}", response_model=ImportJobOut)
 async def get_import(job_id: UUID, user_id: UserId, state: State) -> ImportJobOut:
-    return _job_out(await state.conversations.get_job(user_id, job_id))
+    job = await state.conversations.get_job(user_id, job_id)
+    return _job_out(job, state.import_service.index_progress(job.id))
 
 
 @router.delete("/v1/conversations/{conversation_id}", response_model=DeletionOut)
