@@ -823,7 +823,9 @@ export function mountImport(root, ctx) {
           "p",
           { class: "phase-title" },
           h("span", null, style.status === "completed" ? h("span", { "aria-hidden": "true" }, "✓ ") : null, style.title),
+          style.count ? h("span", { class: "phase-count" }, style.count) : null,
         ),
+        style.progress ? meter(style.progress.done, style.progress.total, "말투 분석 진행") : null,
         h("p", { class: "phase-detail" }, style.detail),
       );
       graphBox.className = ["phase", graph.tone ? `phase-${graph.tone}` : ""].filter(Boolean).join(" ");

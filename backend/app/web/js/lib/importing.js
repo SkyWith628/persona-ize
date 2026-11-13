@@ -299,7 +299,8 @@ export function previewView(preview, contactAlias = "", knownMeNames = []) {
 
 /**
  * 1단계(말투): 가져오기 작업 응답과 통계로 만든 한 줄. 상태: processing·completed·failed.
- * polling이 true인 동안 화면이 통계를 다시 읽는다.
+ * polling이 true인 동안 화면이 통계를 다시 읽는다. processing이고 서버가 진행률을 알려 주면
+ * count("묶음 1,500개 중 420개")와 progress({done, total}, 막대용)가 함께 온다.
  */
 export function stylePhaseView(job, stats) {
   const imported = job?.imported ?? null;
@@ -317,11 +318,15 @@ export function stylePhaseView(job, stats) {
   const latest = stats?.latest_job;
   const status = (latest && (!job || latest.id === job.id) ? latest.status : job?.status) || "completed";
   if (status === "processing") {
+    // 서버가 진행률을 알 때만(index_total) 수치와 막대를 보인다 — 옛 서버·재시작 직후에는 문구만 나온다
+    const progress = indexProgress(latest && (!job || latest.id === job.id) ? latest : job);
     return {
       status,
       tone: "",
       polling: true,
       empty,
+      progress,
+      count: progress ? `묶음 ${formatNumber(progress.total)}개 중 ${formatNumber(progress.done)}개` : "",
       title: "말투 분석 중이에요",
       detail: [...parts, "대화가 길면 몇 분 걸려요. 이 창을 닫아도 계속되고, 끝나기 전에는 말투 예시 없이 첨삭돼요."].join(" · "),
     };
@@ -338,6 +343,14 @@ export function stylePhaseView(job, stats) {
   }
   if (episodes != null) parts.push(`말투 묶음 ${formatNumber(episodes)}개`);
   return { status, tone: "ok", polling: false, empty, title: "말투 분석 완료 · 지금 바로 쓸 수 있어요", detail: parts.join(" · ") };
+}
+
+/** 작업 응답의 말투 묶음 진행률({done, total}). 서버가 모르거나(null) 값이 이상하면 null. */
+function indexProgress(source) {
+  const total = source?.index_total;
+  const done = source?.index_done;
+  if (!Number.isFinite(total) || !Number.isFinite(done) || total <= 0) return null;
+  return { done: Math.min(Math.max(done, 0), total), total };
 }
 
 const ACTIVE = new Set(["pending", "running"]);

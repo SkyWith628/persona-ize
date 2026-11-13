@@ -313,6 +313,33 @@ test("1단계: 말투 분석이 길면 뒤에서 이어진다 — 끝날 때까�
   assert.match(failed.detail, /다시 가져오면/);
 });
 
+test("1단계: 서버가 진행률을 알려 주면 묶음 수치와 막대 값을 보인다", () => {
+  const processing = { ...JOB, status: "processing", episodes: 0, graph_status: "pending", index_done: null, index_total: null };
+  // 모르는 경우(옛 서버는 필드가 없고, 재시작 직후에는 null) — 지금 문구 그대로
+  for (const unknown of [stylePhaseView({ ...JOB, status: "processing" }, null), stylePhaseView(processing, { ...STATS, latest_job: processing })]) {
+    assert.equal(unknown.title, "말투 분석 중이에요");
+    assert.equal(unknown.count, "");
+    assert.equal(unknown.progress, null);
+    assert.match(unknown.detail, /대화가 길면 몇 분 걸려요/);
+  }
+  // 통계의 최근 작업이 이 작업이면 그쪽 수치가 더 새롭다
+  const running = { ...processing, index_done: 420, index_total: 1500 };
+  const v = stylePhaseView({ ...processing, index_done: 0, index_total: 1500 }, { ...STATS, latest_job: running });
+  assert.deepEqual([v.status, v.polling, v.title], ["processing", true, "말투 분석 중이에요"]);
+  assert.equal(v.count, "묶음 1,500개 중 420개");
+  assert.deepEqual(v.progress, { done: 420, total: 1500 });
+  assert.match(v.detail, /이 창을 닫아도 계속되고/);
+  // 통계를 아직 못 읽었으면 가져오기 응답의 수치를 쓴다. 다른 작업의 수치는 쓰지 않는다
+  assert.equal(stylePhaseView(running, null).count, "묶음 1,500개 중 420개");
+  assert.equal(stylePhaseView(processing, { ...STATS, latest_job: { ...running, id: "other" } }).count, "");
+  // 이상한 값: 전체가 0이면 보이지 않고, 넘치면 전체에 맞춘다
+  assert.equal(stylePhaseView({ ...processing, index_done: 0, index_total: 0 }, null).progress, null);
+  assert.deepEqual(stylePhaseView({ ...processing, index_done: 9, index_total: 5 }, null).progress, { done: 5, total: 5 });
+  // 끝난 뒤에는 수치를 보이지 않는다
+  const done = stylePhaseView(processing, STATS);
+  assert.deepEqual([done.status, done.count, done.progress], ["completed", undefined, undefined]);
+});
+
 test("2단계: 사건 정리 중 38 / 312", () => {
   const v = graphPhaseView(STATS, JOB);
   assert.equal(v.status, "running");
