@@ -380,9 +380,25 @@ class Smoke:
         self.import_job = data
         if data.get("imported") != len(MESSAGES):
             raise StepError(f"가져온 수가 다릅니다: {data.get('imported')} (기대 {len(MESSAGES)})")
+        # 말투 묶음은 응답 뒤에 끝날 수 있다(status=processing) — 막 뜬 서버는 임베딩 모델을 읽느라 늦다.
+        # 끝날 때까지 작업 상태를 다시 읽는다. 뒤의 C 첨삭이 이 묶음을 쓴다.
+        deadline = time.monotonic() + self.args.index_wait
+        waited = False
+        while data.get("status") == "processing" and time.monotonic() < deadline:
+            time.sleep(1)
+            waited = True
+            data = self.expect(self.client.request("GET", f"/v1/imports/{data['id']}"), 200)
+        self.import_job = data
+        if data.get("status") == "processing":
+            raise StepError(
+                f"말투 분석이 {self.args.index_wait:.0f}초 안에 끝나지 않았습니다 (--index-wait)."
+            )
+        if data.get("status") == "failed":
+            raise StepError(f"말투 분석이 실패했습니다: {data.get('error_code')}")
         if not data.get("episodes"):
             raise StepError("문체 묶음이 만들어지지 않았습니다 (임베딩 확인).")
-        return f"메시지 {data['imported']}건, 묶음 {data['episodes']}개, 그래프 {data.get('graph_status')}"
+        text = f"메시지 {data['imported']}건, 묶음 {data['episodes']}개, 그래프 {data.get('graph_status')}"
+        return f"{text} (말투 분석을 기다림)" if waited else text
 
     def rewrite(self, condition: str, *, replay: bool = False) -> str:
         body = {
@@ -535,6 +551,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--health-only", action="store_true", help="헬스체크와 화면만 본다 (계정을 만들지 않는다)")
     p.add_argument("--skip-model", action="store_true", help="가져오기·첨삭을 건너뛴다 (모델 호출 없음)")
     p.add_argument("--no-import", action="store_true", help="가져오기와 C 첨삭을 건너뛴다 (그래프 수집 없음)")
+    p.add_argument("--index-wait", type=float, default=120.0, help="말투 분석이 끝나길 기다리는 시간(초)")
     p.add_argument("--graph-wait", type=float, default=90.0, help="그래프 수집이 끝나길 기다리는 시간(초)")
     p.add_argument("--require-graph", action="store_true", help="그래프 수집이 completed가 아니면 실패")
     p.add_argument("--keep-account", action="store_true", help="끝나도 계정을 지우지 않는다 (디버깅용)")
