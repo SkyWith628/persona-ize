@@ -185,7 +185,7 @@ D 실험에서 추가로 보는 것은 다음과 같다.
 
 ## 5. 기술 스택
 
-팀 설계 §4를 따른다: React + TypeScript, FastAPI, PostgreSQL + pgvector, 고정 워크플로 (필요 시 LangGraph).
+팀 설계 §4를 따른다: React + TypeScript, FastAPI, PostgreSQL + pgvector, 고정 워크플로 (LangGraph 상태 그래프, 2026-11-14 도입).
 D 실험에서만 **graphiti-core + Neo4j**를 추가한다 (스파이크: Aura Free, OpenAI).
 
 ---

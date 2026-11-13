@@ -25,7 +25,7 @@ mode: work
 완료 기준: 위 테스트·lint 통과 + 동작 변경에는 테스트 동반. "됐다"고 말하기 전에 실제로 실행한다.
 
 ## 구조
-- `backend/app/ai/` 워크플로: `preserve.py`(보존 항목 규칙) → `prompt.py`(prompts/*.md 조립) → `providers/`(fake | anthropic) → `validation.py` → `workflow.py`(재생성 1회, 실패 시 원문 유지)
+- `backend/app/ai/` 워크플로: `preserve.py`(보존 항목 규칙) → `prompt.py`(prompts/*.md 조립) → `providers/`(fake | anthropic) → `validation.py` → `workflow.py`(이 단계들을 잇는 **LangGraph 상태 그래프**, 2026-11-14 도입 — 재생성 1회, 실패 시 원문 유지)
 - `backend/app/ai/retrieval/` 조건별 검색기. A/B `NullRetriever`, C `vector.py VectorStyleRetriever`(같은 상대에게 쓴 본인 발화 묶음 kNN, 저장소가 벡터 검색 담당), D `composite.py` = C + `graph/retriever.py GraphContextRetriever`. NEO4J_URI가 비면 D = C
 - `backend/app/graph/` D 경로. `store.py` Protocol(테스트는 FakeGraphStore) ← `GraphitiStore`; `ingest.py`가 미수집 메시지를 **사용자별 잠금 아래 전체 시각 순**으로 `add_episode`(group_id=user_id, `messages.graph_ingested_at`으로 멱등; 잠금은 프로세스 안에서만); `retriever.py`(v2)는 상대 노드 중심 검색 → 상대·연결 사건 노드 엣지만 → as_of 이후 출처·무효화·같은 출처 중복 제외 → e5 유사도+최근성+사건 유형·중요도로 재정렬(상수 표), `purpose=context`. `schema.py`·`dates.py`는 스파이크 `graph/graphiti_p0/p0`의 복사본이며 **백엔드 쪽이 정본**(스파이크는 동결)
 - 가져오기: `services/import_service.py`(화자 지정 `speaker_map`, 해시 중복, 대화방 단위 재색인) → `ai/episodes.py`(본인 발화 연속 구간 + 앞 맥락 최대 window-1개 = 묶음 1개, 문체 예시는 본인 발화만) → `ai/embeddings.py`(local e5-small `query:`/`passage:` 접두, fake는 테스트용). `services/synthetic_loader.py`가 data/synthetic JSON을 적재
@@ -58,6 +58,7 @@ mode: work
 - `/v1/rewrites/usage`처럼 `/{request_id}` 뒤에 고정 경로를 붙이면 UUID 파싱 422가 난다 → 고정 경로는 별도 라우터(`/v1/usage`)
 - fake 프로바이더도 글자 수 기반 토큰 수를 보고한다(사용량 테스트용). 실제 토큰과 다르니 비용 계산엔 anthropic 결과만 쓴다
 - 설치 extra: `dev`(테스트·ruff), `db`(SQLAlchemy·asyncpg·pgvector·alembic, torch 없음 — CI가 이 조합으로 Postgres 통합 테스트를 돌린다), `embed`(sentence-transformers·torch), `graph`(graphiti). 로컬 개발은 `backend[dev,db,embed,graph]`
+- **LangSmith 추적을 켜지 않는다**(프롬프트에 초안·원문이 들어간다). `langgraph`(기본 의존성)에 `langsmith`가 딸려 오고, 환경변수 `LANGSMITH_TRACING`·`LANGSMITH_TRACING_V2`·`LANGCHAIN_TRACING_V2`·`LANGCHAIN_TRACING` 중 하나가 `true`면 그래프 실행의 입력·출력이 LangSmith로 나간다 — `core/guard.py`가 운영에서 막고(시작 거부) 개발에서는 시작 로그에 경고한다. `LANGCHAIN_TRACING`·`LANGCHAIN_HANDLER`는 `true`가 아닌 값(`1` 등)이어도 그래프 실행마다 RuntimeError를 낸다. **체크포인터도 붙이지 않는다**(상태에 원문이 들어 있어 그대로 저장된다). langsmith는 환경변수 조회를 프로세스 안에 기억한다(`lru_cache`) — 테스트에서 이 변수를 바꾸면 `langsmith.utils.get_env_var.cache_clear()`
 - 저장소 메서드는 전부 `async`다(Postgres가 기준). 라우트·서비스에서 `await`를 빼먹으면 코루틴 객체가 그대로 응답에 들어간다
 - 워커는 **1개**가 전제다: 로그인 실패 제한·요청 제한·그래프 수집 잠금·진행 중 요청 집계가 프로세스 메모리에 있다. 프록시 뒤에서는 uvicorn `--proxy-headers`(운영 이미지가 넣는다) — 앱에서 `X-Forwarded-For`를 직접 읽지 않는다
 - 정규식은 `re`가 GIL을 놓지 않아 스레드로 옮겨도 서버 전체가 멈춘다. 사용자 입력에 도는 패턴에 `\s*`가 맞닿는 식의 중첩 반복을 두지 않는다(2026-11-11 보안 검토: 가림 패턴 하나로 30KB 요청에 23초 정지)

@@ -37,6 +37,12 @@ Neo4j 자격증명은 `.env`의 `NEO4J_USERNAME`/`NEO4J_PASSWORD`. 기본 비밀
   고정하기 전에는 같은 날 만든 두 이미지의 anthropic이 2.6.0과 2.8.0으로 달랐다. CI도 같은 파일로 깐다.
   이미지에 실제로 깔린 목록: `docker run --rm --entrypoint cat persona-ize/backend:prod /opt/pz/pip-freeze.txt`
   (Git Bash에서는 앞에 `MSYS_NO_PATHCONV=1`).
+- 2026-11-14 `langgraph`(첨삭 워크플로)를 기본 의존성에 넣으면서 고정이 15줄 늘었다: langgraph·langchain-core·
+  langgraph-checkpoint·langgraph-prebuilt·langgraph-sdk·langsmith·langchain-protocol과 그 아래의 orjson·
+  ormsgpack·xxhash·jsonpatch·jsonpointer·uuid_utils·requests-toolbelt·zstandard. **`langsmith`는 쓰지 않는데
+  딸려 온다** — 추적 변수(`LANGSMITH_TRACING` 등)를 넣으면 프롬프트가 외부로 나가므로 운영 모드가 시작을 거부한다
+  (`backend/app/core/guard.py`). 추적을 켜지 않으면 이 패키지들은 네트워크를 쓰지 않는다(`--network none`에서
+  그래프 실행 확인).
 
 ### 의존성 버전 올리기
 1. `backend/constraints.txt`에서 올릴 패키지의 줄을 지우거나(그 패키지만 최신으로 깔린다) 버전을 고친다.

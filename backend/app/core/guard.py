@@ -1,6 +1,6 @@
 """운영 모드 검사 (계약 §4.1). `APP_ENV=production`이면 위험한 설정으로는 서버를 시작하지 않는다.
 
-`create_app`이 저장소를 만들기 전에 부른다. 개발 모드(기본값)에서는 아무 일도 하지 않는다.
+`create_app`이 저장소를 만들기 전에 부른다. 개발 모드(기본값)에서는 막지 않는다(아래 추적 경고만 한다).
 거부 사유는 한 번에 전부 보여 준다 — 하나 고치고 다시 띄우기를 반복하지 않게.
 
 비용 상한(2026-11-11 보안 검토): 모델 호출 비용이 끝없이 늘 수 있는 구성도 거부한다.
@@ -11,12 +11,19 @@
   (`USAGE_GLOBAL_DAILY_*`)가 둘 다 0이다 — 최악 비용이 "사용자 한도 × 가입자 수"로 끝이 없다.
 알고도 그렇게 띄우려면 `ALLOW_UNCAPPED_COSTS=true`(거부 대신 경고). 그래프 쪽은 모델을 부를 자격 증명이
 없으면(수집이 어차피 실패한다) 경고만 한다 — 키를 넣고 다시 띄우는 순간 이 검사에 걸린다.
+
+LangSmith 추적(2026-11-14, LangGraph 도입): `langgraph`를 깔면 `langsmith`가 함께 깔리고, 추적이 켜지면
+프롬프트(사용자의 초안·과거 대화 원문)가 외부 서비스로 나간다. 추적을 켜는 환경변수가 있으면 운영에서는
+시작하지 않고, 개발 모드에서는 띄우되 시작 로그에 경고한다(개발 서버에도 실제 대화가 있을 수 있다 —
+개발 모드에서 하는 일은 이것 하나다). 이 변수들은 `Settings`가 아니라 라이브러리가 `os.environ`에서 직접
+읽으므로 여기서도 `os.environ`을 본다.
 """
 
 from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
 from urllib.parse import unquote, urlsplit
 
@@ -27,6 +34,21 @@ log = logging.getLogger(__name__)
 DEV_DB_PASSWORD = "persona-dev-only"  # .env.example·docker-compose.yml의 개발 기본값
 DEV_NEO4J_PASSWORD = "neo4j-dev-only"
 ALLOW_HINT = "알고도 상한 없이 띄우려면 ALLOW_UNCAPPED_COSTS=true."
+
+# LangSmith 추적을 켜는 환경변수 (langsmith 0.14.17 `utils.tracing_is_enabled`·langchain-core 1.8.0
+# `callbacks/manager.py _configure`를 읽고 확인, 2026-11-14). langsmith는 앞의 넷을 이 순서로 찾아 처음 나온
+# 비지 않은 값이 정확히 "true"일 때 추적을 켠다. 뒤의 둘(LANGCHAIN_TRACING·LANGCHAIN_HANDLER)은 옛(v1) 추적
+# 표시이기도 해서, 추적이 켜지지 않는 값("1"·"True" 등)이면 그래프 실행마다 RuntimeError가 난다.
+TRACING_ENV_VARS = (
+    "LANGSMITH_TRACING_V2",
+    "LANGCHAIN_TRACING_V2",
+    "LANGSMITH_TRACING",
+    "LANGCHAIN_TRACING",
+    "LANGCHAIN_HANDLER",
+)
+# 두 라이브러리가 모두 "꺼짐"으로 치는 값만 통과시킨다(글자 그대로 — 공백·대문자 변형은 꺼짐이 아니다).
+TRACING_OFF_VALUES = frozenset({"", "0", "false", "False"})
+TRACING_KEY_VARS = ("LANGSMITH_API_KEY", "LANGCHAIN_API_KEY")
 
 
 class UnsafeConfigError(RuntimeError):
@@ -53,6 +75,26 @@ def has_model_credentials(settings: Settings) -> bool:
     둘 다 없으면 호출이 실패한다.
     """
     return bool(settings.anthropic_api_key.strip() or os.environ.get("ANTHROPIC_AUTH_TOKEN", "").strip())
+
+
+def tracing_env_names(environ: Mapping[str, str] | None = None) -> tuple[str, ...]:
+    """LangSmith 추적을 켜는 환경변수 가운데 꺼짐이 아닌 값이 든 것의 이름. 값은 돌려주지 않는다."""
+    env = os.environ if environ is None else environ
+    return tuple(name for name in TRACING_ENV_VARS if env.get(name, "") not in TRACING_OFF_VALUES)
+
+
+def tracing_api_key_names(environ: Mapping[str, str] | None = None) -> tuple[str, ...]:
+    """값이 든 LangSmith API 키 변수의 이름(값은 돌려주지 않는다). 키만으로는 아무것도 나가지 않는다."""
+    env = os.environ if environ is None else environ
+    return tuple(name for name in TRACING_KEY_VARS if env.get(name, "").strip())
+
+
+def _tracing_problem(names: tuple[str, ...]) -> str:
+    return (
+        f"LangSmith 추적 변수가 설정돼 있습니다({', '.join(names)}) — 추적이 켜지면 프롬프트에 든 사용자 "
+        "초안·대화 원문이 외부(LangSmith)로 나가고, 켜지지 않는 값이어도 첨삭 워크플로가 오류로 멈출 수 "
+        "있습니다. 이 변수를 환경에서 지우세요(.env 파일과 compose의 environment 모두)."
+    )
 
 
 def _uncapped_costs(settings: Settings) -> tuple[list[str], list[str]]:
@@ -135,6 +177,15 @@ def inspect_production_settings(settings: Settings) -> GuardReport:
             "(그래프를 쓰지 않으면 NEO4J_URI와 함께 비워 두세요)."
         )
 
+    tracing = tracing_env_names()
+    if tracing:
+        errors.append(_tracing_problem(tracing))
+    elif keys := tracing_api_key_names():
+        warnings.append(
+            f"{', '.join(keys)}가 설정돼 있습니다 — 추적이 꺼져 있어 쓰이지 않습니다. "
+            "이 서비스는 LangSmith를 쓰지 않으니 지우세요."
+        )
+
     uncapped, cost_warnings = _uncapped_costs(settings)
     if settings.allow_uncapped_costs:
         warnings.extend(f"ALLOW_UNCAPPED_COSTS=true라서 막지 않습니다: {problem}" for problem in uncapped)
@@ -174,9 +225,17 @@ def inspect_production_settings(settings: Settings) -> GuardReport:
 
 
 def enforce_production_guard(settings: Settings) -> GuardReport:
-    """운영 모드면 검사한다. 거부 사유가 있으면 로그에 남기고 `UnsafeConfigError`. 경고는 로그만."""
+    """운영 모드면 검사한다. 거부 사유가 있으면 로그에 남기고 `UnsafeConfigError`. 경고는 로그만.
+
+    개발 모드에서는 LangSmith 추적 변수만 본다 — 있으면 경고를 남기고 서버는 띄운다.
+    """
     if not settings.is_production:
-        return GuardReport()
+        tracing = tracing_env_names()
+        if not tracing:
+            return GuardReport()
+        warning = f"{_tracing_problem(tracing)} (개발 모드라 막지 않습니다 — 운영에서는 시작하지 않습니다.)"
+        log.warning("개발 설정 경고: %s", warning)
+        return GuardReport(warnings=(warning,))
     report = inspect_production_settings(settings)
     for warning in report.warnings:
         log.warning("운영 설정 경고: %s", warning)

@@ -313,6 +313,10 @@ scripts/ops/run.sh scripts/graph_reset.py --user <이름> --dry-run
 - [ ] `APP_ENV=production`, `AUTH_ALLOW_HEADER_STUB=false`, `SESSION_COOKIE_SECURE=true` (compose가 기본으로 이 값을 넣는다)
 - [ ] DB·Neo4j 비밀번호가 새로 만든 값(개발용 `persona-dev-only`·`neo4j-dev-only` 아님)
 - [ ] `REGISTER_INVITE_CODE`가 있거나 가입이 닫혀 있다
+- [ ] LangSmith 추적 변수(`LANGSMITH_TRACING`·`LANGSMITH_TRACING_V2`·`LANGCHAIN_TRACING_V2`·`LANGCHAIN_TRACING`·
+      `LANGCHAIN_HANDLER`)가 `.env.production`에도 서버 셸에도 없다. 첨삭 워크플로(LangGraph)와 함께 `langsmith`가
+      깔려 있어, 켜지면 프롬프트에 든 초안·대화 원문이 안내문에 없는 곳(LangSmith)으로 나간다. 있으면 backend가
+      시작을 거부한다(`false`·`0`·빈 값은 통과). `LANGSMITH_API_KEY`만 있으면 경고만 한다
 - [ ] `ADMIN_USERNAMES`의 계정을 서버에서 만들었다(7단계) — backend 시작 로그에 "관리자 계정이 아직 없습니다" 경고가 없다
 - [ ] Console 월 한도, 전체 차단기(`USAGE_GLOBAL_DAILY_*`), 그래프 상한(`GRAPH_INGEST_*`)이 0이 아니다
 - [ ] 방화벽: 들어오는 포트는 80·443(+SSH는 내 IP). `scripts/ops/compose.sh ps`에서 포트가 보이는 것은 caddy뿐
@@ -348,7 +352,7 @@ scripts/ops/run.sh scripts/graph_reset.py --user <이름> --dry-run
 | 증상 | 원인과 조치 |
 |---|---|
 | 첨삭이 전부 "원문 유지"로 나온다. 스모크가 `모델 호출 실패로 원문을 유지했습니다` | Claude 호출이 실패한 것이다. **크레딧이 0이면 API가 400을 돌려준다**(Console → Billing). 그 밖에 키 오타, Console 월 한도 도달. `scripts/ops/compose.sh logs backend \| grep -i "model unavailable"` |
-| `compose ps`에서 backend가 `Restarting` | 시작 명령이 실패한다. `logs --tail 50 backend`: ① 마이그레이션 실패 ② 운영 모드 검사가 설정을 거부(메시지에 어떤 설정인지 나온다) ③ DB 비밀번호 불일치(`password authentication failed` → 11장) |
+| `compose ps`에서 backend가 `Restarting` | 시작 명령이 실패한다. `logs --tail 50 backend`: ① 마이그레이션 실패 ② 운영 모드 검사가 설정을 거부(메시지에 어떤 설정인지 나온다 — `LangSmith 추적 변수가 설정돼 있습니다`면 괄호 안의 변수를 `.env.production`과 셸에서 지운다) ③ DB 비밀번호 불일치(`password authentication failed` → 11장) |
 | neo4j가 `Restarting`·`unhealthy`, 로그에 `OutOfMemory` 또는 종료 코드 137 | 메모리 부족. `free -h`로 확인 → 스왑 추가, `NEO4J_HEAP_SIZE`/`NEO4J_PAGECACHE_SIZE`를 줄이거나 서버를 키운다. `NEO4J_MEM_LIMIT`는 힙 + 페이지 캐시 + 1GB쯤으로 둔다(JVM이 힙 밖에서 쓰는 메모리가 있다) |
 | 브라우저가 인증서 오류, caddy 로그에 `could not get certificate` | DNS가 이 서버를 가리키는지(`dig +short`), 80·443이 밖에서 열려 있는지, 다른 프로그램이 80/443을 쓰지 않는지. 고친 뒤 `compose.sh restart caddy`. 반복 실패로 발급 횟수 제한에 걸리면 기다려야 한다. `logs caddy \| grep -i -E "acme\|obtain\|challenge"` |
 | 화면에 "서버를 점검하고 있습니다", API가 502 | backend가 내려가 있거나 뜨는 중. 1분 넘게 계속되면 `ps`·`logs backend` |

@@ -8,6 +8,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import sys
+from collections.abc import Iterator
 
 import pytest
 from fastapi import HTTPException, Request
@@ -18,10 +20,14 @@ from app.core.config import Settings
 from app.core.guard import (
     DEV_DB_PASSWORD,
     DEV_NEO4J_PASSWORD,
+    TRACING_ENV_VARS,
+    TRACING_KEY_VARS,
     GuardReport,
     UnsafeConfigError,
     enforce_production_guard,
     inspect_production_settings,
+    tracing_api_key_names,
+    tracing_env_names,
 )
 from app.core.middleware import CONTENT_SECURITY_POLICY
 from app.main import create_app
@@ -135,6 +141,154 @@ def test_guard_passes_quietly_when_everything_is_set() -> None:
         "*" in w for w in inspect_production_settings(_settings(**PROD, cors_allow_origins="*")).warnings
     )
     assert any("localhost" in w for w in inspect_production_settings(_settings(**PROD)).warnings)
+
+
+# ---------- LangSmith 추적 (LangGraph와 함께 깔린다 — 켜지면 프롬프트의 초안·원문이 밖으로 나간다) ----------
+
+TRACING_KEY = "lsv2_pt_SECRETMARK_0123456789"
+
+
+def _forget_langsmith_env_cache() -> None:
+    """langsmith는 환경변수 조회를 프로세스 안에 기억한다(lru_cache) — 테스트가 넣은 값이 남지 않게 비운다."""
+    utils = sys.modules.get("langsmith.utils")
+    if utils is not None:
+        utils.get_env_var.cache_clear()
+
+
+@pytest.fixture
+def clean_tracing_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[pytest.MonkeyPatch]:
+    """개발자 셸에 남아 있을지 모르는 추적 변수를 지운 상태에서 시작한다."""
+    for name in (*TRACING_ENV_VARS, *TRACING_KEY_VARS, "LANGSMITH_ENDPOINT", "LANGSMITH_PROJECT"):
+        monkeypatch.delenv(name, raising=False)
+    _forget_langsmith_env_cache()
+    yield monkeypatch
+    _forget_langsmith_env_cache()  # monkeypatch가 값을 되돌리기 전에 돈다 — 그 뒤로는 새로 읽는다
+
+
+def _prod_errors() -> list[str]:
+    return list(inspect_production_settings(_settings(**PROD)).errors)
+
+
+def test_tracing_variable_list_matches_what_the_libraries_read() -> None:
+    """langsmith는 TRACING_V2 → TRACING을 LANGSMITH_·LANGCHAIN_ 순으로 찾는다. 나머지는 옛(v1) 표시."""
+    assert TRACING_ENV_VARS == (
+        "LANGSMITH_TRACING_V2",
+        "LANGCHAIN_TRACING_V2",
+        "LANGSMITH_TRACING",
+        "LANGCHAIN_TRACING",
+        "LANGCHAIN_HANDLER",
+    )
+    assert tracing_env_names({}) == ()
+    assert tracing_env_names({"LANGSMITH_TRACING": "true", "OTHER": "true"}) == ("LANGSMITH_TRACING",)
+    assert tracing_api_key_names({"LANGCHAIN_API_KEY": " ", "LANGSMITH_API_KEY": "k"}) == (
+        "LANGSMITH_API_KEY",
+    )
+
+
+@pytest.mark.parametrize("name", TRACING_ENV_VARS)
+@pytest.mark.parametrize("value", ["true", "True", "TRUE", "1", "yes", "local", " true", " "])
+def test_guard_refuses_each_tracing_variable_in_production(
+    clean_tracing_env: pytest.MonkeyPatch, name: str, value: str
+) -> None:
+    """추적을 켜는 값은 true 하나지만 나머지도 막는다 — 켜려던 값이고, 일부는 그래프 실행을 오류로 멈춘다."""
+    assert _prod_errors() == []
+    clean_tracing_env.setenv(name, value)
+    errors = _prod_errors()
+    assert len(errors) == 1
+    assert "LangSmith 추적 변수가 설정돼 있습니다" in errors[0] and f"({name})" in errors[0]
+    assert "지우세요" in errors[0]
+    with pytest.raises(UnsafeConfigError) as raised:
+        create_app(_settings(**PROD))
+    assert name in str(raised.value) and "서버를 시작하지 않습니다" in str(raised.value)
+
+
+@pytest.mark.parametrize("name", TRACING_ENV_VARS)
+@pytest.mark.parametrize("value", ["false", "False", "0", ""])
+def test_guard_passes_when_tracing_variable_is_off(
+    clean_tracing_env: pytest.MonkeyPatch, name: str, value: str
+) -> None:
+    clean_tracing_env.setenv(name, value)
+    report = inspect_production_settings(_settings(**PROD))
+    assert report.errors == ()
+    assert not any("LangSmith" in w for w in report.warnings)
+
+
+@pytest.mark.parametrize("value", [None, "false", "False", "0", ""])
+def test_values_the_guard_lets_through_keep_tracing_off_in_the_library(
+    clean_tracing_env: pytest.MonkeyPatch, value: str | None
+) -> None:
+    """가드가 통과시키는 값이면 설치된 langsmith도 추적을 꺼진 것으로 판정한다(판정 함수만 부른다)."""
+    ls_utils = pytest.importorskip("langsmith.utils")
+    for name in TRACING_ENV_VARS:
+        if value is not None:
+            clean_tracing_env.setenv(name, value)
+    assert tracing_env_names() == ()
+    ls_utils.get_env_var.cache_clear()
+    assert ls_utils.tracing_is_enabled() is False
+
+
+def test_guard_lists_every_tracing_variable_in_one_reason(clean_tracing_env: pytest.MonkeyPatch) -> None:
+    clean_tracing_env.setenv("LANGCHAIN_TRACING_V2", "true")
+    clean_tracing_env.setenv("LANGSMITH_TRACING", "true")
+    clean_tracing_env.setenv("LANGSMITH_TRACING_V2", "false")  # 꺼진 것은 적지 않는다
+    errors = _prod_errors()
+    assert len(errors) == 1 and "(LANGCHAIN_TRACING_V2, LANGSMITH_TRACING)" in errors[0]
+    # langsmith 기준으로는 앞선 변수의 false가 이겨 꺼지지만, 한 줄만 지워도 켜지는 구성이라 막는다
+    clean_tracing_env.delenv("LANGCHAIN_TRACING_V2")
+    assert len(_prod_errors()) == 1
+    # 다른 거부 사유와 함께 한 번에 보여 준다
+    both = inspect_production_settings(_settings(**{**PROD, "session_cookie_secure": False})).errors
+    assert len(both) == 2
+
+
+def test_guard_never_prints_tracing_key_or_values(
+    clean_tracing_env: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    endpoint = "https://collector.example.invalid/SECRETMARK"
+    clean_tracing_env.setenv("LANGSMITH_API_KEY", TRACING_KEY)
+    clean_tracing_env.setenv("LANGCHAIN_API_KEY", TRACING_KEY)
+    clean_tracing_env.setenv("LANGSMITH_ENDPOINT", endpoint)
+    clean_tracing_env.setenv("LANGSMITH_PROJECT", "SECRETMARK-project")
+
+    # 키만 있고 추적은 꺼져 있다: 막지 않고, 이름만 적어 지우라고 알려 준다
+    with caplog.at_level(logging.INFO, logger="app.core.guard"):
+        report = enforce_production_guard(_settings(**PROD))
+    assert report.errors == ()
+    assert ["LANGSMITH_API_KEY, LANGCHAIN_API_KEY" in w for w in report.warnings if "LangSmith" in w] == [
+        True
+    ]
+
+    # 추적까지 켜면 거부 — 메시지·로그 어디에도 키·주소·변수 값이 없다
+    clean_tracing_env.setenv("LANGSMITH_TRACING", "SECRETMARK-value")
+    with caplog.at_level(logging.INFO, logger="app.core.guard"), pytest.raises(UnsafeConfigError) as raised:
+        enforce_production_guard(_settings(**PROD))
+    assert "LANGSMITH_TRACING" in str(raised.value)
+    everything = "\n".join([str(raised.value), *report.warnings, *(r.getMessage() for r in caplog.records)])
+    assert "SECRETMARK" not in everything and "lsv2_" not in everything
+
+
+def test_development_starts_but_warns_when_tracing_is_on(
+    clean_tracing_env: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    clean_tracing_env.setenv("LANGSMITH_TRACING", "true")
+    clean_tracing_env.setenv("LANGSMITH_API_KEY", TRACING_KEY)
+    with caplog.at_level(logging.WARNING, logger="app.core.guard"):
+        app = create_app(_settings())  # 개발 모드: 막지 않는다
+    assert TestClient(app).get("/healthz").status_code == 200
+    guard_records = [r for r in caplog.records if r.name == "app.core.guard"]
+    warnings = [r.getMessage() for r in guard_records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1 and len(guard_records) == 1
+    assert "개발 설정 경고" in warnings[0] and "(LANGSMITH_TRACING)" in warnings[0]
+    assert "대화 원문이 외부(LangSmith)로" in warnings[0] and "SECRETMARK" not in warnings[0]
+    report = enforce_production_guard(_settings())
+    assert report.errors == () and len(report.warnings) == 1
+
+    # 꺼져 있으면(키만 남아 있어도) 개발 모드는 조용하다
+    caplog.clear()
+    clean_tracing_env.setenv("LANGSMITH_TRACING", "false")
+    with caplog.at_level(logging.WARNING, logger="app.core.guard"):
+        assert enforce_production_guard(_settings()) == GuardReport()
+    assert caplog.records == []
 
 
 def test_production_hides_docs_and_health_details() -> None:

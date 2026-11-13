@@ -360,3 +360,10 @@
 - 확인: 테스트 570개(비켜 주는 경우·제때 못 비키는 경우·정리 실패 뒤 수집 재개), 웹 142개, ruff 통과.
 - 실제 haiku·Neo4j: 6건 중 2건이 들어간 시점에 맞바꾸기 → 8.5초에 응답(넣던 3번째까지 끝내고 멈춤, 3건 삭제·재수집 대상). 52초 뒤 6/6, 옛 화자로 남은 본문 0, 이름 중복 0, 멈췄던 첫 작업도 `completed`. 에피소드 9건(약 $0.32), 계정 삭제 때 모델 호출 0회.
 
+## 2026-11-14 첨삭 워크플로를 LangGraph 상태 그래프로
+- 변경: `RewriteWorkflow.run()`을 `StateGraph`(analyze → retrieve → compose → generate → validate → recommend | fallback)로 다시 짰다(langgraph 1.2.21, 딸린 패키지 15개를 `constraints.txt`에 고정). 갈림길은 generate·validate 뒤 두 곳이고 경로는 고정이다 — 모델이 단계를 고르지 않는다. 공개 모양(`provider`·`retrievers`·`prompt_version`, `run`)은 그대로.
+- 동작은 그대로: 예전 구현을 `tests/legacy_workflow.py`에 얼려 두고 54개 시나리오로 대조한다(`test_workflow_parity.py` — 결과·프롬프트·호출 횟수·로그까지, 뺀 것은 `latency_ms`뿐. 예전 쪽을 18가지로 살짝 바꾸면 전부 잡는다). 차이 0. 기존 `test_workflow.py` 11개는 고치지 않았다.
+- 원문이 밖으로 나가지 않게: 상태에 초안·대화 원문이 있어 체크포인터·저장소·캐시 없이 컴파일한다. `langsmith`가 함께 깔리므로 추적을 세 겹으로 막는다 — 모듈 import 때 프로세스 전체에서 끄고, 실행 구간을 한 번 더 감싸고, 추적 변수(`LANGSMITH_TRACING` 등 5개)가 있으면 운영은 시작을 거부·개발은 경고한다(`core/guard.py`). 꺼진 상태에서 네트워크로 나가는 것은 없었다(`--network none`에서 그래프 실행, 소켓 시도 0건).
+- 비용: 요청당 약 +4ms(0.13ms → 3.9ms), 인스턴스당 컴파일 약 7ms. 기능이 늘어난 것은 없다 — 구조가 그래프로 드러나고 팀 설계서의 선택 항목을 채운 것이다.
+- 확인: 테스트 786개, ruff 통과. 가짜 모델 서버에서 스모크 17단계 통과(B·C 첨삭, `LANGSMITH_TRACING=true`를 일부러 넣은 상태). 실제 Opus 호출과 운영 이미지 재빌드는 하지 않았다.
+
