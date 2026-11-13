@@ -338,6 +338,17 @@ class PostgresConversationRepo:
             raise VersionConflictError("같은 내용의 가져오기 작업이 이미 있습니다.") from exc
         return job
 
+    async def processing_jobs(self) -> list[ImportJob]:
+        async with self._sessions() as s:
+            rows = (
+                await s.execute(
+                    select(ImportJobRow)
+                    .where(ImportJobRow.status == "processing")
+                    .order_by(ImportJobRow.created_at, ImportJobRow.id)
+                )
+            ).scalars()
+            return [_job(row) for row in rows]
+
     async def get_job(self, user_id: str, job_id: UUID) -> ImportJob:
         async with self._sessions() as s:
             row = await s.scalar(
@@ -450,7 +461,9 @@ class PostgresConversationRepo:
         async with self._sessions.begin() as s:
             result = await s.execute(
                 delete(ImportJobRow).where(
-                    ImportJobRow.created_at < before, ImportJobRow.graph_status.not_in(("pending", "running"))
+                    ImportJobRow.created_at < before,
+                    ImportJobRow.status != "processing",
+                    ImportJobRow.graph_status.not_in(("pending", "running")),
                 )
             )
         return int(result.rowcount or 0)

@@ -132,7 +132,7 @@ export const CONDITION_LABEL = {
   D: "D 사건 맥락",
 };
 
-export const JOB_STATUS_LABEL = { completed: "완료", failed: "실패" };
+export const JOB_STATUS_LABEL = { processing: "처리 중", completed: "완료", failed: "실패" };
 
 export const GRAPH_STATUS_LABEL = {
   skipped: "안 함",

@@ -8,8 +8,10 @@
   수를 보고한다.
 - 묶음은 대화방 단위로 다시 만든다 (새 메시지가 앞 맥락이 될 수 있어서). 36개 수준에서는 재임베딩 비용이 작다.
 - 그래프 수집은 사용자 단위 직렬(`GraphIngestService.ingest_user`) — 방 사이 시간 순서를 지키기 위해.
-- 지금은 요청 안에서 동기로 끝낸다. 응답 모양(202 + job)은 설계대로 두어 뒤에 비동기 작업으로 바꿀 수
-  있게 한다.
+- 메시지 저장은 요청 안에서 끝내고, 묶음 생성·임베딩은 작업(`_index_job`)으로 돌린다. `index_wait`가
+  None(스크립트·평가·테스트 기본)이면 끝날 때까지 기다려 예전과 같고, 초 단위 값(API)이면 그만큼만 기다린 뒤
+  `processing` 작업을 돌려준다 — 나머지는 뒤에서 끝나고 `GET /v1/imports/{id}`로 확인한다. 서버가 도중에
+  죽어 `processing`으로 남은 작업은 다음 시작 때 `resume_indexing`이 이어받는다.
 - 원문 가져오기(`import_parsed`): `app.importers`가 읽은 결과에 화자 지정(me/contact/skip)을 입혀 같은 경로로
   저장한다. 파서가 못 읽은 줄은 미리보기(`POST /v1/imports/parse`)의 `skipped_lines`·`problems`로 보여 주고,
   화자 지정 누락·결과 0건·상한 초과는 아무것도 저장하지 않고 422.
@@ -185,6 +187,7 @@ class ImportService:
         window: int = DEFAULT_WINDOW,
         graph_ingest: GraphIngestService | None = None,
         graph_mode: GraphMode = "off",
+        index_wait: float | None = None,
     ) -> None:
         self._contacts = contacts
         self._conversations = conversations
@@ -194,7 +197,10 @@ class ImportService:
         self._graph_ingest = graph_ingest
         # off: 그래프 안 씀 / sync: 요청 안에서 수집(스크립트·평가) / background: 응답 뒤 수집(API)
         self.graph_mode: GraphMode = graph_mode if graph_ingest is not None else "off"
+        # None: 묶음 생성이 끝날 때까지 기다린다 / 초: 그만큼만 기다리고 나머지는 뒤에서 (API)
+        self._index_wait = index_wait
         self._tasks: set[asyncio.Task[None]] = set()
+        self._index_tasks: dict[UUID, asyncio.Task[ImportJob]] = {}  # 작업 id → 묶음 생성 중인 태스크
         self._conv_locks = KeyedLocks()  # 대화방 id → 저장·묶음 재생성·삭제를 한 번에 하나씩
 
     async def create_conversation(
@@ -343,21 +349,37 @@ class ImportService:
     ) -> ImportJob:
         """정규화된 메시지를 저장하고 묶음을 다시 만든다. 같은 내용(해시)이면 기존 작업을 돌려준다.
 
-        저장과 묶음 다시 만들기는 **대화방 단위로 한 번에 하나씩** 한다. 같은 방에 가져오기 두 건이 겹치면
-        서로의 묶음 교체가 엇갈려 묶음이 두 벌 남았고, 같은 파일을 동시에 올리면 유일 제약에 걸려 한쪽이
-        500이었다 (2026-11-11 검토). 그래프 수집은 잠금 밖에서 시작한다 (오래 걸린다).
+        저장과 묶음 다시 만들기는 각각 **대화방 단위로 한 번에 하나씩** 한다. 같은 방에 가져오기 두 건이
+        겹치면 서로의 묶음 교체가 엇갈려 묶음이 두 벌 남았고, 같은 파일을 동시에 올리면 유일 제약에 걸려
+        한쪽이 500이었다 (2026-11-11 검토). 그래프 수집은 잠금 밖에서 시작한다 (오래 걸린다).
         """
         digest = source_hash(messages)
         if max_user_messages is None:
-            job, start_graph = await self._save_locked(user_id, conv, messages, digest, me_name_from)
+            job, start_graph, task = await self._save_locked(user_id, conv, messages, digest, me_name_from)
         else:
             # 계정당 보관 한도: 세고 넣는 사이에 같은 사용자의 다른 가져오기가 끼어들지 못하게 한다.
             async with self._conv_locks.hold(("quota", user_id)):
                 await self._check_message_quota(user_id, conv, messages, max_user_messages)
-                job, start_graph = await self._save_locked(user_id, conv, messages, digest, me_name_from)
+                job, start_graph, task = await self._save_locked(
+                    user_id, conv, messages, digest, me_name_from
+                )
+        if task is not None:
+            return await self._await_index(task, job)
         if start_graph:
             job = await self._start_graph_ingest(user_id, conv.id, job)
         return job
+
+    async def _await_index(self, task: asyncio.Task[ImportJob], job: ImportJob) -> ImportJob:
+        """묶음 생성 태스크를 기다린다. 기다리는 시간을 넘기면 `processing` 작업을 그대로 돌려준다.
+
+        요청이 끊겨도(취소) 태스크는 계속 돈다 — 메시지는 이미 저장됐고 묶음만 남았다.
+        """
+        if self._index_wait is None:
+            return await asyncio.shield(task)
+        try:
+            return await asyncio.wait_for(asyncio.shield(task), timeout=self._index_wait)
+        except TimeoutError:
+            return job
 
     async def _save_locked(
         self,
@@ -366,7 +388,7 @@ class ImportService:
         messages: list[NewMessage],
         digest: str,
         me_name_from: tuple[ParsedImport, dict[str, RawSpeakerRole]] | None,
-    ) -> tuple[ImportJob, bool]:
+    ) -> tuple[ImportJob, bool, asyncio.Task[ImportJob] | None]:
         async with self._conv_locks.hold(conv.id):
             if me_name_from is not None:  # 첫 가져오기인지는 잠금 안에서 봐야 한다
                 conv = await self._adopt_me_name(user_id, conv, *me_name_from)
@@ -393,37 +415,41 @@ class ImportService:
 
     async def _store(
         self, user_id: str, conv: Conversation, messages: list[NewMessage], digest: str
-    ) -> tuple[ImportJob, bool]:
-        """(작업, 그래프 수집을 시작할 것인가). 대화방 잠금 안에서 부른다."""
+    ) -> tuple[ImportJob, bool, asyncio.Task[ImportJob] | None]:
+        """(작업, 그래프 수집을 시작할 것인가, 묶음 생성 태스크). 대화방 잠금 안에서 부른다.
+
+        메시지를 넣고 `processing` 작업을 남긴 뒤 묶음 생성 태스크를 띄운다 — 태스크는 이 잠금이 풀린 뒤
+        같은 잠금을 다시 잡고 돈다. 태스크가 있으면 그래프 수집은 태스크가 끝에서 시작한다.
+        """
         existing = await self._conversations.find_job(user_id, conv.id, digest)
         if existing is not None and existing.status == "completed":
             # 저장은 끝났다. 그래프 수집만 덜 됐으면(상한에 걸렸거나 실패) 같은 파일을 다시 올렸을 때
             # 남은 것을 이어서 넣는다 — 작업의 graph_episodes는 이번 실행에서 넣은 수가 된다.
-            return existing, await self._should_retry_graph(user_id, existing)
-        # 묶음 생성이 실패했던 작업(failed)은 같은 내용을 다시 올리면 같은 작업 id로 다시 시도한다.
+            return existing, await self._should_retry_graph(user_id, existing), None
+        resumed = existing is not None and existing.status == "processing"
+        if resumed:
+            running = self._index_tasks.get(existing.id)
+            if running is not None and not running.done():
+                return existing, False, running  # 같은 파일을 또 올렸다 — 돌고 있는 것을 같이 기다린다
+        # 묶음 생성이 실패했던 작업(failed)이나 서버가 죽어 processing으로 남은 작업은 같은 내용을 다시
+        # 올리면 같은 작업 id로 다시 시도한다.
 
         inserted, duplicates = await self._conversations.add_messages(user_id, conv.id, messages)
+        if resumed:
+            # 처음 올렸을 때 넣은 수를 잃지 않는다 (다시 올린 지금은 전부 중복으로 세어진다)
+            inserted, duplicates = existing.imported + inserted, existing.duplicates
         job = ImportJob(
             id=existing.id if existing is not None else uuid4(),
             user_id=user_id,
             conversation_id=conv.id,
             source_hash=digest,
-            status="completed",
+            status="processing",
             imported=inserted,
             duplicates=duplicates,
+            # 묶음 생성 뒤에 이어질 그래프 수집을 미리 '대기'로 보여 준다 (화면이 '안 씀'으로 읽지 않게)
+            graph_status="pending" if self.graph_mode != "off" and inserted > 0 else "skipped",
             created_at=datetime.now(UTC),
         )
-        try:
-            job.episodes = await self.reindex(user_id, conv)
-        except NotFoundError:
-            raise  # 저장하는 사이에 대화방이 지워졌다 — 남길 작업도 없다 (404)
-        except Exception as exc:  # noqa: BLE001 - 임베딩·저장 장애는 작업 실패로 기록하고 재시도 가능하게 둔다
-            log.warning("import reindex failed conversation=%s: %s", conv.id, exception_kind(exc))
-            job.status = "failed"
-            job.error_code = "reindex_failed"
-            job.error_message = exception_kind(exc)  # 종류만 — 문구에는 원문이 섞일 수 있다
-        if self.graph_mode != "off" and job.status == "completed" and inserted > 0:
-            job.graph_status = "pending"
         try:
             job = await self._conversations.save_job(job)
         except VersionConflictError:
@@ -432,8 +458,71 @@ class ImportService:
             other = await self._conversations.find_job(user_id, conv.id, digest)
             if other is None:
                 raise
-            return other, False
-        return job, job.graph_status == "pending"
+            return other, False, None
+        return job, False, self._start_index(user_id, conv, job)
+
+    def _start_index(self, user_id: str, conv: Conversation, job: ImportJob) -> asyncio.Task[ImportJob]:
+        task = asyncio.create_task(self._index_job(user_id, conv, job), name=f"import-index-{job.id}")
+        self._index_tasks[job.id] = task
+
+        def _done(t: asyncio.Task[ImportJob]) -> None:
+            if self._index_tasks.get(job.id) is t:
+                del self._index_tasks[job.id]
+            if t.cancelled():
+                return
+            exc = t.exception()  # 기다리는 요청이 없어도 "never retrieved" 경고가 남지 않게 꺼낸다
+            if exc is not None and not isinstance(exc, NotFoundError):
+                log.warning("import index task failed job=%s: %s", job.id, exception_kind(exc))
+
+        task.add_done_callback(_done)
+        return task
+
+    async def _index_job(self, user_id: str, conv: Conversation, job: ImportJob) -> ImportJob:
+        """묶음을 다시 만들고 작업을 completed/failed로 닫는다. 끝나면 그래프 수집을 시작한다.
+
+        묶음 생성은 대화방마다 한 번에 하나씩 돈다(`("index", 방)` 잠금) — 늦게 시작한 쪽이 더 새 메시지를
+        읽으므로 차례만 지키면 마지막 묶음이 맞다. 저장·삭제가 쓰는 대화방 잠금은 임베딩 동안 쥐지 않는다
+        (몇 분씩 걸릴 수 있어 그동안 같은 방의 다른 가져오기와 삭제가 멈추면 안 된다).
+        그 사이 대화방이 지워졌으면 NotFoundError — 작업도 함께 지워졌으니 남길 것이 없다.
+        """
+        async with self._conv_locks.hold(("index", conv.id)):
+            job = job.model_copy()
+            try:
+                job.episodes = await self.reindex(user_id, conv)
+                job.status = "completed"
+            except NotFoundError:
+                raise  # 저장하는 사이에 대화방이 지워졌다 — 남길 작업도 없다 (404)
+            except Exception as exc:  # noqa: BLE001 - 임베딩·저장 장애는 작업 실패로 기록하고 재시도 가능하게 둔다
+                log.warning("import reindex failed conversation=%s: %s", conv.id, exception_kind(exc))
+                job.status = "failed"
+                job.error_code = "reindex_failed"
+                job.error_message = exception_kind(exc)  # 종류만 — 문구에는 원문이 섞일 수 있다
+            if job.status != "completed":
+                job.graph_status = "skipped"  # 묶음이 없으면 그래프 수집도 시작하지 않는다
+            async with self._conv_locks.hold(conv.id):
+                await self._conversations.get(user_id, conv.id)  # 지워진 방에 작업을 되살리지 않는다
+                job = await self._conversations.save_job(job)
+        if job.graph_status == "pending":
+            job = await self._start_graph_ingest(user_id, conv.id, job)
+        return job
+
+    async def resume_indexing(self) -> int:
+        """서버가 도중에 죽어 `processing`으로 남은 작업의 묶음 생성을 다시 시작한다. 시작한 수.
+
+        모델 호출이 없는 작업이다(로컬 임베딩). 서버 시작 때 한 번 부른다.
+        """
+        started = 0
+        for job in await self._conversations.processing_jobs():
+            running = self._index_tasks.get(job.id)
+            if running is not None and not running.done():
+                continue
+            try:
+                conv = await self._conversations.get(job.user_id, job.conversation_id)
+            except NotFoundError:
+                continue
+            self._start_index(job.user_id, conv, job)
+            started += 1
+        return started
 
     async def _should_retry_graph(self, user_id: str, job: ImportJob) -> bool:
         """끝난 가져오기를 다시 올렸을 때 그래프 수집을 다시 시도할 것인가.
@@ -467,7 +556,10 @@ class ImportService:
             log.warning("background graph ingest failed job=%s: %s", job_id, exception_kind(exc))
 
     async def wait_graph_tasks(self) -> None:
-        """테스트·종료용: 떠 있는 백그라운드 수집을 기다린다."""
+        """테스트·종료용: 떠 있는 묶음 생성과 백그라운드 수집을 기다린다."""
+        if self._index_tasks:  # 묶음 생성이 끝나야 그래프 수집 태스크가 생긴다
+            await asyncio.gather(*list(self._index_tasks.values()), return_exceptions=True)
+            await asyncio.sleep(0)  # 끝난 태스크의 정리 콜백이 돌 차례를 준다
         if self._tasks:
             await asyncio.gather(*self._tasks, return_exceptions=True)
 
@@ -478,7 +570,9 @@ class ImportService:
         사용자의 삭제 요청은 원문 삭제가 우선이고, 그래프 잔여물은 재시도 대상으로 남긴다.
         """
         conv = await self._conversations.get(user_id, conversation_id)  # 소유권
-        async with self._conv_locks.hold(conv.id):  # 진행 중인 가져오기의 저장이 끝난 뒤에 지운다
+        # 진행 중인 가져오기의 저장이 끝난 뒤에 지운다. 뒤에서 도는 묶음 생성은 기다리지 않는다 —
+        # 지워진 방을 만나면 그쪽이 그만둔다.
+        async with self._conv_locks.hold(conv.id):
             return await self._delete_conversation(user_id, conv)
 
     async def _delete_conversation(self, user_id: str, conv: Conversation) -> DeletionResult:

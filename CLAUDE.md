@@ -81,6 +81,7 @@ mode: work
 - 삭제는 모두 동기이고 그래프 → DB 순서다: `DELETE /v1/conversations/{id}`(에피소드 `remove_episode`), `DELETE /v1/contacts/{id}`(대화방별 삭제 → 첨삭 이력 → 상대·페르소나 CASCADE), `DELETE /v1/auth/me`(비밀번호 재확인, 상대 전부 → group `DETACH DELETE` → 사용량·세션·사용자). 그래프 실패는 `graph_error(s)`로 남고 DB는 지워진다. 서비스는 `services/deletion_service.py`
 - E2E는 컨테이너로 띄운다(`make up-all`, 또는 운영 구성 리허설 `docs/deploy.md` 14장). 호스트 venv의 uvicorn은 Smart App Control 때문에 이 PC에서 뜨지 않는다
 - DB 문자열 열 길이: `rewrite_results.*_version`은 200자(0004). D 검색기 버전 문자열이 64자를 넘어 500이 났었다. 새 버전 문자열을 만들면 열 길이를 확인한다
+- 가져오기 API는 메시지 저장까지만 요청 안에서 끝낸다. 묶음 생성·임베딩은 태스크(`ImportService._index_job`)로 돌고 요청은 `IMPORT_INDEX_WAIT_SECONDS`(기본 2초)만 기다린다 — 넘으면 작업이 `processing`으로 나가고 뒤에서 `completed`/`failed`가 된다. `ImportService`를 직접 만드는 스크립트·평가·테스트는 `index_wait=None`이라 끝까지 기다린다(예전과 같다). 잠금은 둘이다: 저장·삭제는 대화방 잠금, 묶음 생성은 `("index", 방)` 잠금 — 임베딩 동안 대화방 잠금을 쥐지 않으므로 삭제가 먼저 끝날 수 있고, 그때 묶음 생성은 NotFoundError로 조용히 그만둔다. 죽은 서버가 남긴 `processing` 작업은 시작 때 `resume_indexing`이 이어받는다(로그 `import resume:`)
 - 가져오기 API 뒤 그래프 수집은 백그라운드(`asyncio.create_task`)라 응답의 `graph_status`는 pending이다. `GET /v1/imports/{id}`로 completed를 확인한다. 서버 프로세스가 죽으면 미수집분은 다음 서버 시작 때 `resume_all`이 이어받는다(`GRAPH_RESUME_ON_START`, 로그 `graph resume:`), 또는 다음 가져오기·`import_synthetic.py --graph`·`graph_reset.py`
 - 보존 항목 추출은 규칙 기반이라 오탐이 있다. 규칙을 바꾸면 `evals/preserve_rules.md`도 같이 고친다
 - fake 프로바이더는 원문을 그대로 돌려준다 → 검증은 항상 통과. 실제 품질은 `--provider anthropic`으로만 본다. 2026-11-08 실측(5사례×A/B, Opus·Sonnet 5.5)은 `evals/results/2026-11-08-first-real-run.md`

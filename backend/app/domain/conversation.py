@@ -60,7 +60,7 @@ def graph_units(text: str) -> int:
 
 
 SpeakerRole = Literal["me", "contact"]
-ImportStatus = Literal["completed", "failed"]
+ImportStatus = Literal["processing", "completed", "failed"]
 # limited: 그래프 수집 상한(GRAPH_INGEST_*_CAP)에 닿아 멈췄다. 미수집 메시지는 남아 있다 (DB 열 16자).
 GraphStatus = Literal["skipped", "pending", "running", "completed", "failed", "limited"]
 

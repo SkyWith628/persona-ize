@@ -42,6 +42,12 @@ class Settings(BaseSettings):
     embedding_model: str = "intfloat/multilingual-e5-small"
     embedding_dim: int = Field(384, gt=0)
     max_import_messages: int = Field(5000, gt=0)
+    import_index_wait_seconds: float = Field(
+        2.0,
+        ge=0,
+        le=600,
+        description="가져오기 요청이 묶음 생성을 기다리는 초. 넘으면 processing으로 답하고 뒤에서 끝낸다",
+    )
     retrieval_top_k: int = Field(4, ge=1, le=20)
     # 사용량 제어 (사용자·하루, 한국 시간 날짜). 넘으면 429. 0이면 전부 막는다.
     usage_daily_rewrite_limit: int = Field(200, ge=0)

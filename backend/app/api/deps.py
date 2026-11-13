@@ -166,6 +166,7 @@ def build_state(settings: Settings) -> AppState:
         max_messages=settings.max_import_messages,
         graph_ingest=graph_ingest,
         graph_mode="background",
+        index_wait=settings.import_index_wait_seconds,
     )
     return AppState(
         settings=settings,

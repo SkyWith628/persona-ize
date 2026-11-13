@@ -202,6 +202,10 @@ class ConversationRepo(Protocol):
 
     async def get_job(self, user_id: str, job_id: UUID) -> ImportJob: ...
 
+    async def processing_jobs(self) -> list[ImportJob]:
+        """묶음 생성이 끝나지 않은(status=processing) 작업 전부, 오래된 것부터 (서버 시작 시 이어받기)."""
+        ...
+
     async def mark_graph_ingested(self, user_id: str, message_ids: list[UUID], at: datetime) -> None:
         """그래프에 넣은 메시지를 표시한다 (재실행 멱등)."""
         ...
@@ -234,7 +238,7 @@ class ConversationRepo(Protocol):
         ...
 
     async def purge_jobs(self, before: datetime) -> int:
-        """before 이전에 만든 가져오기 작업을 지운다 (그래프 수집 중인 pending/running은 남김). 지운 수."""
+        """before 이전에 만든 가져오기 작업을 지운다 (묶음 생성 중·그래프 수집 중인 것은 남김). 지운 수."""
         ...
 
     async def conversation_stats(self, user_id: str, conversation_id: UUID) -> ConversationStats:

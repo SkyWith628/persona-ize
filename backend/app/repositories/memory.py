@@ -408,6 +408,11 @@ class InMemoryConversationRepo:
         self._jobs[job.id] = job
         return job
 
+    async def processing_jobs(self) -> list[ImportJob]:
+        return sorted(
+            (j for j in self._jobs.values() if j.status == "processing"), key=lambda j: j.created_at
+        )
+
     async def get_job(self, user_id: str, job_id: UUID) -> ImportJob:
         job = self._jobs.get(job_id)
         if job is None or job.user_id != user_id:
@@ -480,7 +485,9 @@ class InMemoryConversationRepo:
         gone = [
             jid
             for jid, j in self._jobs.items()
-            if j.created_at < before and j.graph_status not in ("pending", "running")
+            if j.created_at < before
+            and j.status != "processing"
+            and j.graph_status not in ("pending", "running")
         ]
         for jid in gone:
             del self._jobs[jid]

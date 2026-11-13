@@ -297,7 +297,10 @@ export function previewView(preview, contactAlias = "", knownMeNames = []) {
 
 // ---------- 가져온 뒤 진행 상태 ----------
 
-/** 1단계(말투): 가져오기 작업 응답과 통계로 만든 한 줄. */
+/**
+ * 1단계(말투): 가져오기 작업 응답과 통계로 만든 한 줄. 상태: processing·completed·failed.
+ * polling이 true인 동안 화면이 통계를 다시 읽는다.
+ */
 export function stylePhaseView(job, stats) {
   const imported = job?.imported ?? null;
   const duplicates = job?.duplicates ?? 0;
@@ -309,8 +312,32 @@ export function stylePhaseView(job, stats) {
     parts.push(`메시지 ${formatNumber(imported)}개 저장`);
   }
   if (duplicates > 0) parts.push(`이미 있던 ${formatNumber(duplicates)}개는 건너뜀`);
+  const empty = imported === 0 && duplicates > 0;
+  // 통계의 최근 작업이 이 작업이면 그쪽 상태가 더 새롭다(묶음 생성은 응답 뒤에 끝날 수 있다)
+  const latest = stats?.latest_job;
+  const status = (latest && (!job || latest.id === job.id) ? latest.status : job?.status) || "completed";
+  if (status === "processing") {
+    return {
+      status,
+      tone: "",
+      polling: true,
+      empty,
+      title: "말투 분석 중이에요",
+      detail: [...parts, "대화가 길면 몇 분 걸려요. 이 창을 닫아도 계속되고, 끝나기 전에는 말투 예시 없이 첨삭돼요."].join(" · "),
+    };
+  }
+  if (status === "failed") {
+    return {
+      status,
+      tone: "bad",
+      polling: false,
+      empty,
+      title: "말투 분석을 끝내지 못했어요",
+      detail: [...parts, "메시지는 저장됐어요. 같은 대화를 다시 가져오면 이어서 분석해요."].join(" · "),
+    };
+  }
   if (episodes != null) parts.push(`말투 묶음 ${formatNumber(episodes)}개`);
-  return { title: "말투 분석 완료 · 지금 바로 쓸 수 있어요", detail: parts.join(" · "), empty: imported === 0 && duplicates > 0 };
+  return { status, tone: "ok", polling: false, empty, title: "말투 분석 완료 · 지금 바로 쓸 수 있어요", detail: parts.join(" · ") };
 }
 
 const ACTIVE = new Set(["pending", "running"]);

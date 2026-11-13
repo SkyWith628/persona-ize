@@ -295,6 +295,22 @@ test("1단계: 말투 분석은 바로 끝난다", () => {
   assert.equal(v.title, "말투 분석 완료 · 지금 바로 쓸 수 있어요");
   assert.equal(v.detail, "메시지 312개 중 내 메시지 168개 · 말투 묶음 57개");
   assert.equal(stylePhaseView({ ...JOB, imported: 10, duplicates: 2 }, null).detail, "메시지 10개 저장 · 이미 있던 2개는 건너뜀 · 말투 묶음 57개");
+  assert.deepEqual([v.status, v.tone, v.polling], ["completed", "ok", false]);
+});
+
+test("1단계: 말투 분석이 길면 뒤에서 이어진다 — 끝날 때까지 다시 읽는다", () => {
+  const processing = { ...JOB, status: "processing", episodes: 0, graph_status: "pending" };
+  const first = stylePhaseView(processing, null);
+  assert.equal(first.status, "processing");
+  assert.equal(first.polling, true);
+  assert.match(first.title, /분석 중/);
+  assert.doesNotMatch(first.detail, /말투 묶음/);
+  // 통계의 최근 작업이 같은 작업이면 그쪽 상태를 따른다
+  assert.equal(stylePhaseView(processing, { ...STATS, latest_job: JOB }).status, "completed");
+  assert.equal(stylePhaseView(processing, { ...STATS, latest_job: { ...JOB, id: "other" } }).status, "processing");
+  const failed = stylePhaseView(processing, { ...STATS, latest_job: { ...JOB, status: "failed", error_code: "reindex_failed" } });
+  assert.deepEqual([failed.status, failed.tone, failed.polling], ["failed", "bad", false]);
+  assert.match(failed.detail, /다시 가져오면/);
 });
 
 test("2단계: 사건 정리 중 38 / 312", () => {

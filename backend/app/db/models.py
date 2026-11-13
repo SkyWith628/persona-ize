@@ -154,7 +154,7 @@ class ImportJobRow(Base):
         PG_UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False
     )
     source_hash: Mapped[str] = mapped_column(String(64), nullable=False)
-    status: Mapped[str] = mapped_column(String(16), nullable=False)  # completed | failed
+    status: Mapped[str] = mapped_column(String(16), nullable=False)  # processing | completed | failed
     imported: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     duplicates: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     episodes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

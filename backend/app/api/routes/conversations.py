@@ -147,7 +147,8 @@ async def conversation_stats(conversation_id: UUID, user_id: UserId, state: Stat
 async def import_messages(
     conversation_id: UUID, body: ImportPayload, user_id: UserId, state: State
 ) -> ImportJobOut:
-    """지금은 요청 안에서 처리를 끝내고 완료된 작업을 돌려준다 (202는 설계의 비동기 전환을 위해 유지)."""
+    """메시지를 저장하고 작업을 돌려준다. 묶음 생성이 `IMPORT_INDEX_WAIT_SECONDS` 안에 끝나면 `completed`,
+    아니면 `processing` — 나머지는 뒤에서 끝나고 `GET /v1/imports/{id}`로 확인한다."""
     job = await state.import_service.import_messages(
         user_id,
         conversation_id,

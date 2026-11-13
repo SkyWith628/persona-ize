@@ -58,7 +58,7 @@ settings: `formality·friendliness·directness`(1~5), `length`(shorter/same/long
 | `POST /v1/conversations` `{contact_id, title?, source_key?, me_name?}` | 대화방. `me_name`은 그래프 수집에 쓰는 내 이름(`회원님`·`나`·`me` 같은 자리표시 이름은 저장하지 않는다) |
 | `POST /v1/conversations/{id}/imports/raw` `{format?, text, speaker_map, tz_offset_minutes?, chat_id?, keep_recent?}` | **원문 가져오기**. `speaker_map`: `{"<이름>": "me"|"contact"|"skip"}` — 지도에 없는 화자가 있으면 422(이름 나열), `skip`은 그 화자 메시지를 버린다(단체방). `keep_recent`는 최근 N건만. 응답 202 + 작업 |
 | `POST /v1/conversations/{id}/imports` `{messages[], speaker_map?}` | JSON 메시지 가져오기(기존). 메시지: `{"id":"m01","speaker":"김민수","sent_at":"2026-10-05T09:31:00+09:00","text":"..."}` |
-| `GET /v1/imports/{job_id}` | 작업 상태 |
+| `GET /v1/imports/{job_id}` | 작업 상태. `status`: `processing`(메시지는 저장됐고 말투 묶음·임베딩을 뒤에서 만드는 중) → `completed` / `failed`(`error_code: reindex_failed`, 같은 내용을 다시 올리면 같은 작업으로 다시 시도). 두 가져오기 요청은 묶음 생성을 `IMPORT_INDEX_WAIT_SECONDS`(기본 2초)만 기다린다 — 그 안에 끝나면 응답이 이미 `completed`, 아니면 `processing`이라 이 주소(또는 대화방 `stats`의 `latest_job`)를 다시 읽는다. `processing` 동안 C/D 첨삭은 예전 묶음(첫 가져오기면 없음)으로 돌고, 그래프 수집(`graph_status: pending`)은 묶음이 끝난 뒤 시작한다. 서버가 도중에 재시작되면 다음 시작 때 이어서 끝낸다 |
 | `GET /v1/conversations?contact_id=`, `GET /v1/conversations/{id}` | 목록·조회 |
 | `GET /v1/conversations/{id}/messages?limit=` | 메시지 목록. `limit`(1~5000)을 주면 가장 최근 N건, 생략하면 전부 |
 | `GET /v1/conversations/{id}/stats` | `{messages, my_messages, episodes, graph_enabled, graph_ingested, graph_pending, graph_limited, first_message_at, last_message_at, latest_job}` — 가져오기 진행 표시용 |

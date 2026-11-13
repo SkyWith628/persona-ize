@@ -67,6 +67,16 @@ async def _resume_graph(container) -> None:  # noqa: ANN001
         log.warning("graph resume failed: %s", safe_exception_message(exc))
 
 
+async def _resume_imports(container) -> None:  # noqa: ANN001
+    """이전 프로세스가 끝내지 못한 가져오기의 묶음 생성을 이어받는다 (모델 호출 없음)."""
+    try:
+        started = await container.import_service.resume_indexing()
+        if started:
+            log.info("import resume: %s", started)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("import resume failed: %s", safe_exception_message(exc))
+
+
 async def _warn_missing_admins(container) -> None:  # noqa: ANN001
     """운영 모드: `ADMIN_USERNAMES`의 이름으로 가입된 계정이 없으면 알린다.
 
@@ -98,6 +108,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = container.settings
     log.info("env=%s storage=%s graph=%s", settings.app_env, container.storage, container.graph_enabled)
     tasks = [asyncio.create_task(_warm_up_embedder(container), name="warm-up-embedder")]
+    tasks.append(asyncio.create_task(_resume_imports(container), name="import-resume"))
     if container.graph_enabled and settings.graph_resume_on_start:
         tasks.append(asyncio.create_task(_resume_graph(container), name="graph-resume"))
     if settings.housekeeping_interval_hours > 0:  # 주기 정리 (실패해도 서버는 산다 — core/periodic.py)

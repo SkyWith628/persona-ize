@@ -75,7 +75,8 @@ async def test_overlapping_imports_leave_one_complete_set_of_episodes() -> None:
     stats = await conversations.conversation_stats("u", conv.id)
     assert (stats.messages, stats.my_messages) == (80, 40)
     assert stats.episodes == 40  # 내 발화 구간 하나에 묶음 하나 — 빠진 것도 겹친 것도 없다
-    assert (first.episodes, second.episodes) == (20, 40)  # 차례대로 끝났다
+    # 두 파일의 메시지가 먼저 저장되고 묶음은 그 뒤에 차례로 만든다 — 어느 작업이든 방 전체의 묶음 수를 본다
+    assert (first.episodes, second.episodes) == (40, 40)
     assert len(svc._conv_locks) == 0  # 잠금은 쓰는 동안만 남는다
 
 
@@ -88,19 +89,21 @@ async def test_the_same_file_uploaded_at_once_is_stored_once() -> None:
     assert svc._embedder.batches == [20]  # 임베딩도 한 번만
 
 
-async def test_deleting_a_conversation_waits_for_the_import_in_progress() -> None:
+async def test_deleting_a_conversation_during_indexing_leaves_nothing_behind() -> None:
     conversations, svc, conv = await _memory(SlowEmbedder([0.05]))
     importing = asyncio.create_task(svc.import_messages("u", conv.id, _file(0)))
-    await asyncio.sleep(0.01)  # 가져오기가 묶음을 만드는 중
+    await asyncio.sleep(0.01)  # 메시지는 저장됐고 묶음을 만드는 중
     deleted = await svc.delete_conversation("u", conv.id)
-    job = await importing
-    # 가져오기가 끝난 뒤에 지워진다: 반쯤 저장된 채 지워지거나, 지운 방에 묶음이 다시 생기지 않는다
-    assert (job.status, job.imported) == ("completed", 40)
-    assert (deleted.messages, deleted.episodes) == (40, 20)
+    # 삭제는 임베딩이 끝나기를 기다리지 않는다(2026-11-13). 저장된 메시지는 전부 지워지고,
+    # 뒤늦게 끝난 묶음 생성이 지운 방에 묶음이나 작업을 다시 만들지 않는다.
+    assert (deleted.messages, deleted.episodes) == (40, 0)
+    with pytest.raises(NotFoundError):
+        await importing
     with pytest.raises(NotFoundError):
         await conversations.get("u", conv.id)
     with pytest.raises(NotFoundError):
         await svc.import_messages("u", conv.id, _file(1))
+    assert len(svc._conv_locks) == 0
 
 
 # ---- PostgreSQL: 실제로 요청이 엇갈린다 ------------------------------------------------------------

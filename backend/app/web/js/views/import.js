@@ -805,18 +805,25 @@ export function mountImport(root, ctx) {
   function mountProgress(job) {
     const c = contact();
     const nothingNew = (job.imported ?? 0) === 0;
-    const styleBox = h("div", { class: "phase phase-ok" });
+    const styleBox = h("div", { class: "phase" });
     const graphBox = h("div", { class: "phase" });
     let lastStatus;
 
     let progress = null; // 진행 수치가 얼마나 오래 그대로인지(trackProgress)
     const update = (stats, statsMissing = false) => {
       const style = stylePhaseView(job, stats);
-      if (stats) progress = trackProgress(progress, stats, Date.now());
+      // 말투 분석이 도는 동안은 사건 정리가 아직 시작 전이다 — 멈춘 것으로 세지 않는다
+      if (style.status === "processing") progress = null;
+      else if (stats) progress = trackProgress(progress, stats, Date.now());
       const graph = graphPhaseView(stats, job, { stalled: Boolean(progress?.stalled) });
+      styleBox.className = ["phase", style.tone ? `phase-${style.tone}` : ""].filter(Boolean).join(" ");
       setChildren(
         styleBox,
-        h("p", { class: "phase-title" }, h("span", null, h("span", { "aria-hidden": "true" }, "✓ "), style.title)),
+        h(
+          "p",
+          { class: "phase-title" },
+          h("span", null, style.status === "completed" ? h("span", { "aria-hidden": "true" }, "✓ ") : null, style.title),
+        ),
         h("p", { class: "phase-detail" }, style.detail),
       );
       graphBox.className = ["phase", graph.tone ? `phase-${graph.tone}` : ""].filter(Boolean).join(" ");
@@ -830,11 +837,12 @@ export function mountImport(root, ctx) {
           : null,
       );
       // 숫자가 바뀔 때마다 읽어 주면 시끄럽다 — 상태가 바뀔 때만 알린다
-      if (graph.status !== lastStatus) {
-        lastStatus = graph.status;
+      const statusKey = `${style.status}/${graph.status}`;
+      if (statusKey !== lastStatus) {
+        lastStatus = statusKey;
         liveEl.textContent = `${style.title}. ${graph.title}${graph.count ? ` ${graph.count}` : ""}`;
       }
-      return graph.polling;
+      return graph.polling || style.polling;
     };
 
     setChildren(
@@ -924,7 +932,7 @@ export function mountImport(root, ctx) {
     );
     let conversationId = st.target === NEW_CONVERSATION ? null : st.target;
     let created = false;
-    // 서버는 이 요청 안에서 저장과 말투 분석을 끝낸다 — 끝날 때까지 같은 대화를 또 올리지 못하게 표시해 둔다
+    // 서버는 이 요청 안에서 저장을 끝낸다(말투 분석은 길면 뒤에서 이어진다) — 응답이 올 때까지 같은 대화를 또 올리지 못하게 표시해 둔다
     let finish;
     running = { alias: c.alias, done: new Promise((resolve) => (finish = resolve)) };
     window.addEventListener("beforeunload", warnBeforeLeave);
