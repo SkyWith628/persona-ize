@@ -203,6 +203,34 @@ class ImportJobOut(BaseModel):
     index_total: int | None = Field(None, description="processing 동안: 이번에 만들 말투 묶음 전체 수")
 
 
+class SpeakerRolesIn(StoredBody):
+    """화자 역할 고치기: "이 메시지는 `speaker_role`이 한 말이다". 지금과 다르면 방 전체의 나↔상대를 맞바꾼다.
+
+    바꾸는 방향이 아니라 맞는 상태를 적으므로 같은 요청을 다시 보내도 도로 뒤집히지 않는다.
+    """
+
+    message_id: UUID = Field(description="기준 메시지 (`GET /v1/conversations/{id}/messages`의 id)")
+    speaker_role: SpeakerRole = Field(description="그 메시지를 실제로 쓴 쪽")
+    me_name: str | None = Field(
+        None,
+        max_length=50,
+        description="역할이 바뀔 때 새로 쓸 내 표시 이름. 생략하면 비운다 (예전 이름은 상대의 것이었다)",
+    )
+
+
+class SpeakerRolesOut(BaseModel):
+    conversation_id: UUID
+    changed: bool = Field(description="거짓이면 이미 맞는 상태라 아무것도 하지 않았다")
+    messages: int = Field(description="역할이 바뀐 메시지 수")
+    my_messages: int = Field(description="바뀐 뒤 내 메시지 수 (changed가 거짓이면 0)")
+    me_name: str | None
+    graph_episodes_removed: int = Field(description="그래프에서 지운 에피소드 수 (다시 수집한다)")
+    graph_requeued: int = Field(description="다시 수집 대상으로 돌린 메시지 수")
+    job: ImportJobOut | None = Field(
+        description="묶음을 다시 만드는 작업 — `GET /v1/imports/{id}`로 확인. 바뀐 것이 없으면 null"
+    )
+
+
 # ---- 대화 가져오기: 원문 파싱 (카카오톡·텔레그램·붙여넣기·json) ----
 
 

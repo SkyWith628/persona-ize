@@ -163,6 +163,23 @@ class ImportJob(BaseModel):
     created_at: datetime
 
 
+class SpeakerRoleChange(BaseModel):
+    """화자 역할 고치기의 결과 (`PUT /v1/conversations/{id}/speaker-roles`).
+
+    메시지에는 원래 화자 이름이 없고 역할(me/contact)만 남아 있어, 고칠 수 있는 것은 방 전체의
+    나↔상대 맞바꾸기뿐이다.
+    """
+
+    conversation_id: UUID
+    changed: bool = Field(description="거짓이면 이미 그 역할이라 아무것도 하지 않았다")
+    messages: int = Field(0, description="역할이 바뀐 메시지 수")
+    my_messages: int = Field(0, description="바뀐 뒤 내 메시지 수")
+    me_name: str | None = None
+    graph_removed: int = Field(0, description="그래프에서 지운 에피소드 수 (잘못된 역할로 들어간 것)")
+    graph_requeued: int = Field(0, description="다시 수집 대상으로 돌린 메시지 수")
+    job: ImportJob | None = Field(None, description="묶음을 다시 만드는 작업. 바뀐 것이 없으면 None")
+
+
 class ConversationStats(BaseModel):
     """대화방 하나의 집계 (`GET /v1/conversations/{id}/stats`)."""
 

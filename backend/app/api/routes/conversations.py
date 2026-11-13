@@ -28,6 +28,8 @@ from app.api.schemas import (
     ImportJobOut,
     ImportRawIn,
     MessageOut,
+    SpeakerRolesIn,
+    SpeakerRolesOut,
 )
 from app.domain.conversation import Conversation, ImportJob
 from app.importers import parse_import
@@ -197,6 +199,31 @@ async def import_raw(conversation_id: UUID, body: ImportRawIn, user_id: UserId, 
         max_user_messages=settings.max_messages_per_user,
     )
     return _job_out(job, state.import_service.index_progress(job.id))
+
+
+@router.put("/v1/conversations/{conversation_id}/speaker-roles", response_model=SpeakerRolesOut)
+async def set_speaker_roles(
+    conversation_id: UUID, body: SpeakerRolesIn, user_id: UserId, state: State
+) -> SpeakerRolesOut:
+    """화자(나/상대)를 잘못 지정한 가져오기를 대화방을 지우지 않고 고친다 — 방 전체의 나↔상대 맞바꾸기.
+
+    기준 메시지가 이미 `speaker_role`이면 `changed=false`로 끝난다(멱등). 바뀌면 묶음을 뒤에서 다시 만들고
+    (`job`), 그래프가 켜져 있으면 이 방의 에피소드를 지우고 다시 수집한다(상한은 그대로 따른다).
+    그래프 수집이 돌고 있으면 409, 그래프에 닿지 못하면 아무것도 바꾸지 않고 503.
+    """
+    r = await state.import_service.set_speaker_role(
+        user_id, conversation_id, body.message_id, body.speaker_role, body.me_name
+    )
+    return SpeakerRolesOut(
+        conversation_id=r.conversation_id,
+        changed=r.changed,
+        messages=r.messages,
+        my_messages=r.my_messages,
+        me_name=r.me_name,
+        graph_episodes_removed=r.graph_removed,
+        graph_requeued=r.graph_requeued,
+        job=_job_out(r.job) if r.job is not None else None,
+    )
 
 
 @router.get("/v1/imports/{job_id}", response_model=ImportJobOut)

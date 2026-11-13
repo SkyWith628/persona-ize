@@ -35,13 +35,20 @@ from pydantic import BaseModel, Field, model_validator
 
 from app.ai.embeddings import Embedder
 from app.ai.episodes import DEFAULT_WINDOW, build_episodes
-from app.core.errors import InvalidInputError, NotFoundError, VersionConflictError
+from app.core.errors import (
+    DomainError,
+    GraphUnavailableError,
+    InvalidInputError,
+    NotFoundError,
+    VersionConflictError,
+)
 from app.domain.conversation import (
     Conversation,
     DeletionResult,
     ImportJob,
     NewMessage,
     SpeakerRole,
+    SpeakerRoleChange,
     exception_kind,
 )
 from app.domain.usage import QuotaExceededError
@@ -618,6 +625,92 @@ class ImportService:
             episodes=deleted_episodes,
             graph_episodes=graph_removed,
             graph_error=graph_error,
+        )
+
+    async def set_speaker_role(
+        self,
+        user_id: str,
+        conversation_id: UUID,
+        message_id: UUID,
+        speaker_role: SpeakerRole,
+        me_name: str | None = None,
+    ) -> SpeakerRoleChange:
+        """화자를 잘못 지정한 가져오기를 대화방을 지우지 않고 고친다: "이 메시지는 `speaker_role`이 한 말".
+
+        메시지에는 원래 화자 이름이 남아 있지 않아(역할만 저장한다) 고칠 수 있는 것은 방 전체의 나↔상대
+        맞바꾸기다. 기준 메시지가 이미 그 역할이면 아무것도 하지 않는다 — 같은 요청을 다시 보내도 도로
+        뒤집히지 않는다(멱등). 바뀌면
+        - 그래프: 이 방에서 이미 들어간 에피소드는 잘못된 역할로 만든 것이라 지우고 다시 수집 대상으로
+          돌린다. 이 사용자의 수집이 돌고 있으면 409(끝난 뒤 다시) — 기다리면 요청이 몇 시간 걸릴 수 있다.
+          그래프에 닿지 못하면 아무것도 바꾸지 않고 503.
+        - 내 이름(`me_name`): 첫 가져오기에서 '나'로 지정한 화자의 이름이었으므로 준 값으로 바꾼다
+          (안 주면 비운다 — 그래프 에피소드의 화자는 '사용자'가 된다).
+        - 묶음: 가져오기와 같은 `processing` 작업으로 뒤에서 다시 만든다(`_index_job`). 돌고 있는 묶음
+          생성이 있으면 그 뒤에 줄을 선다 — 늦게 시작한 쪽이 바뀐 역할을 읽는다. 그래프 재수집은 그 작업이
+          끝나며 시작하고 수집 상한을 그대로 따른다.
+        """
+        conv = await self._conversations.get(user_id, conversation_id)  # 소유권
+        async with self._conv_locks.hold(conv.id):  # 진행 중인 저장·삭제가 끝난 뒤에
+            anchor = await self._conversations.get_message(user_id, conv.id, message_id)
+            if anchor.speaker_role == speaker_role:
+                return SpeakerRoleChange(conversation_id=conv.id, changed=False, me_name=conv.me_name)
+            name = (me_name or "").strip()
+            new_name = name if name and name not in GENERIC_ME_NAMES else None
+            changed = 0
+            swapping = False
+
+            async def swap() -> None:
+                nonlocal changed, swapping
+                swapping = True
+                changed = await self._conversations.swap_speaker_roles(user_id, conv.id)
+                await self._conversations.set_me_name(user_id, conv.id, new_name)
+
+            removed = requeued = 0
+            if self._graph_ingest is None:
+                await swap()
+            else:
+                try:
+                    done = await self._graph_ingest.reset_conversation_if_idle(user_id, conv.id, swap)
+                except DomainError:
+                    raise
+                except Exception as exc:
+                    if swapping:
+                        raise  # 그래프는 비웠고 역할을 바꾸다 실패했다 (DB 장애) — 다시 요청하면 이어진다
+                    log.warning(
+                        "speaker role graph reset failed conversation=%s: %s", conv.id, exception_kind(exc)
+                    )
+                    raise GraphUnavailableError(
+                        "지난 약속·사건 기록을 정리하지 못해 화자를 바꾸지 않았습니다. 잠시 뒤 다시 하세요."
+                    ) from exc
+                if done is None:
+                    raise VersionConflictError(
+                        "지난 약속·사건 정리가 진행 중입니다. 정리가 끝난 뒤 다시 시도하세요."
+                    )
+                removed, requeued = done
+            stats = await self._conversations.conversation_stats(user_id, conv.id)
+            job = await self._conversations.save_job(
+                ImportJob(
+                    id=uuid4(),
+                    user_id=user_id,
+                    conversation_id=conv.id,
+                    # 파일 내용이 아니라 이번 변경을 가리키는 값 — 같은 방의 다른 작업과 겹치지 않는다
+                    source_hash=hashlib.sha256(f"speaker-roles:{uuid4().hex}".encode()).hexdigest(),
+                    status="processing",
+                    graph_status="pending" if self.graph_mode != "off" and stats.messages > 0 else "skipped",
+                    created_at=datetime.now(UTC),
+                )
+            )
+            task = self._start_index(user_id, conv, job)
+        job = await self._await_index(task, job)
+        return SpeakerRoleChange(
+            conversation_id=conv.id,
+            changed=True,
+            messages=changed,
+            my_messages=stats.my_messages,
+            me_name=new_name,
+            graph_removed=removed,
+            graph_requeued=requeued,
+            job=job,
         )
 
     async def reindex(

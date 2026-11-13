@@ -9,7 +9,7 @@ from datetime import UTC, date, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import and_, delete, func, or_, select, update
+from sqlalchemy import and_, case, delete, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 
@@ -217,6 +217,30 @@ class PostgresConversationRepo:
         if limit is not None:
             rows = list(reversed(rows))
         return [_message(r) for r in rows]
+
+    async def get_message(self, user_id: str, conversation_id: UUID, message_id: UUID) -> Message:
+        async with self._sessions() as s:
+            conv = await self._owned(s, user_id, conversation_id)
+            row = await s.scalar(
+                select(MessageRow).where(
+                    MessageRow.id == message_id,
+                    MessageRow.conversation_id == conv.id,
+                    MessageRow.user_id == user_id,
+                )
+            )
+        if row is None:
+            raise NotFoundError("메시지를 찾을 수 없습니다.")
+        return _message(row)
+
+    async def swap_speaker_roles(self, user_id: str, conversation_id: UUID) -> int:
+        async with self._sessions.begin() as s:
+            conv = await self._owned(s, user_id, conversation_id)
+            result = await s.execute(
+                update(MessageRow)
+                .where(MessageRow.conversation_id == conv.id, MessageRow.user_id == user_id)
+                .values(speaker_role=case((MessageRow.speaker_role == "me", "contact"), else_="me"))
+            )
+        return int(result.rowcount or 0)
 
     async def message_keys(self, user_id: str, conversation_id: UUID) -> set[str]:
         async with self._sessions() as s:

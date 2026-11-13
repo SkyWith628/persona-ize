@@ -328,6 +328,21 @@ class InMemoryConversationRepo:
         ordered = sorted(self._messages[conv.id], key=lambda m: m.sent_at)
         return ordered if limit is None else ordered[-limit:]
 
+    async def get_message(self, user_id: str, conversation_id: UUID, message_id: UUID) -> Message:
+        conv = await self.get(user_id, conversation_id)
+        for m in self._messages[conv.id]:
+            if m.id == message_id:
+                return m
+        raise NotFoundError("메시지를 찾을 수 없습니다.")
+
+    async def swap_speaker_roles(self, user_id: str, conversation_id: UUID) -> int:
+        conv = await self.get(user_id, conversation_id)
+        self._messages[conv.id] = [
+            m.model_copy(update={"speaker_role": "contact" if m.speaker_role == "me" else "me"})
+            for m in self._messages[conv.id]
+        ]
+        return len(self._messages[conv.id])
+
     async def message_keys(self, user_id: str, conversation_id: UUID) -> set[str]:
         conv = await self.get(user_id, conversation_id)
         return {m.source_key for m in self._messages[conv.id]}

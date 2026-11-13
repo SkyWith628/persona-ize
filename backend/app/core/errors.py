@@ -61,6 +61,13 @@ class ModelRefusalError(ModelUnavailableError):
     code = "model_refusal"
 
 
+class GraphUnavailableError(DomainError):
+    """그래프 저장소에 닿지 못해 요청을 끝내지 못했다. 바꾼 것이 없으니 나중에 다시 하면 된다."""
+
+    status_code = 503
+    code = "graph_unavailable"
+
+
 class UsageLimitError(DomainError):
     """하루 사용량 한도 초과. 자정(KST) 이후 다시 가능."""
 

@@ -27,6 +27,7 @@ CONTRACT_PATHS: list[tuple[str, str]] = [
     ("post", "/v1/conversations/{conversation_id}/imports/raw"),
     ("get", "/v1/conversations/{conversation_id}/stats"),
     ("get", "/v1/conversations/{conversation_id}/messages"),
+    ("put", "/v1/conversations/{conversation_id}/speaker-roles"),
     ("delete", "/v1/conversations/{conversation_id}"),
     ("get", "/v1/imports/{job_id}"),
     ("get", "/v1/data/summary"),
@@ -131,6 +132,17 @@ CONTRACT_FIELDS: dict[str, set[str]] = {
         "created_at",
         "index_done",
         "index_total",
+    },
+    "SpeakerRolesIn": {"message_id", "speaker_role", "me_name"},
+    "SpeakerRolesOut": {
+        "conversation_id",
+        "changed",
+        "messages",
+        "my_messages",
+        "me_name",
+        "graph_episodes_removed",
+        "graph_requeued",
+        "job",
     },
 }
 

@@ -49,7 +49,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from datetime import UTC, date, datetime, time, timedelta, timezone
 from uuid import UUID
 
@@ -483,6 +483,29 @@ class GraphIngestService:
         """테스트·종료용: `start_resume`으로 띄운 수집을 기다린다."""
         while self._tasks:
             await asyncio.gather(*list(self._tasks), return_exceptions=True)
+
+    async def reset_conversation_if_idle(
+        self, user_id: str, conversation_id: UUID, then: Callable[[], Awaitable[None]]
+    ) -> tuple[int, int] | None:
+        """이 사용자의 수집이 돌고 있지 않을 때만, 대화방 하나를 그래프에서 지우고 `then`을 실행한다.
+
+        화자 역할을 고칠 때 쓴다: 에피소드 삭제 → 수집 표시 비우기 → `then`(역할 바꾸기)을 수집 잠금
+        안에서 차례로 해, 그 사이에 시작한 수집이 옛 역할의 본문을 넣지 못하게 한다. 수집이 돌고 있으면
+        (잠금을 기다리는 수집이 있어도) 아무것도 하지 않고 None — 끝나기까지 몇 분에서 몇 시간이 걸릴 수
+        있어 기다리지 않는다. 돌려주는 값은 `reset`과 같다. 다시 넣는 것은 부른 쪽이 한다.
+        """
+        key = ("user", user_id)
+        if self._locks.busy(key):
+            return None
+        # 비어 있는 잠금은 양보 없이 잡힌다 — 위의 확인과 사이가 뜨지 않는다
+        async with self._locks.hold(key):
+            conv = await self._conversations.get(user_id, conversation_id)
+            messages = await self._conversations.list_messages(user_id, conv.id)
+            names = [f"{conv.source_key}:{m.source_key}" for m in messages if m.graph_ingested_at is not None]
+            removed = await self._store.remove_episodes(user_id, names) if names else 0
+            reset = await self._conversations.reset_graph_ingested(user_id, conv.id)
+            await then()
+        return removed, reset
 
     async def resume_all(self) -> dict[str, int]:
         """서버 시작·주기 작업: 미수집 메시지가 남은 사용자마다 이어서 넣고, 작업 상태를 정리한다.

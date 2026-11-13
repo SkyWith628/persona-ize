@@ -158,6 +158,14 @@ class ConversationRepo(Protocol):
         """sent_at 순. limit을 주면 가장 최근 limit건만 (역시 sent_at 순)."""
         ...
 
+    async def get_message(self, user_id: str, conversation_id: UUID, message_id: UUID) -> Message:
+        """이 대화방의 메시지 하나. 없거나 다른 방·남의 것이면 NotFoundError."""
+        ...
+
+    async def swap_speaker_roles(self, user_id: str, conversation_id: UUID) -> int:
+        """이 대화방 모든 메시지의 화자 역할을 맞바꾼다 (me ↔ contact). 바꾼 메시지 수."""
+        ...
+
     async def message_keys(self, user_id: str, conversation_id: UUID) -> set[str]:
         """이 대화방에 이미 있는 메시지 키(source_key)들 — 새로 들어갈 수를 미리 세는 데 쓴다."""
         ...
