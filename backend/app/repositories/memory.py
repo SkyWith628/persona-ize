@@ -23,6 +23,8 @@ from app.domain.conversation import (
     ImportJob,
     Message,
     NewMessage,
+    SpeakerCount,
+    SpeakerRole,
     graph_units,
 )
 from app.domain.persona import PersonaSettings, PersonaVersion, RelationshipType
@@ -314,6 +316,7 @@ class InMemoryConversationRepo:
                     conversation_id=conv.id,
                     source_key=nm.source_key,
                     speaker_role=nm.speaker_role,
+                    speaker_name=nm.speaker_name,
                     sent_at=nm.sent_at,
                     text=nm.text,
                 )
@@ -342,6 +345,49 @@ class InMemoryConversationRepo:
             for m in self._messages[conv.id]
         ]
         return len(self._messages[conv.id])
+
+    async def fill_speaker_names(self, user_id: str, conversation_id: UUID, names: dict[str, str]) -> int:
+        conv = await self.get(user_id, conversation_id)
+        filled = 0
+        out: list[Message] = []
+        for msg in self._messages[conv.id]:
+            name = names.get(msg.source_key) if msg.speaker_name is None else None
+            if name:
+                msg = msg.model_copy(update={"speaker_name": name})
+                filled += 1
+            out.append(msg)
+        self._messages[conv.id] = out
+        return filled
+
+    async def speakers(self, user_id: str, conversation_id: UUID) -> list[SpeakerCount]:
+        conv = await self.get(user_id, conversation_id)
+        counts: dict[tuple[str | None, str], int] = {}
+        for msg in self._messages[conv.id]:
+            key = (msg.speaker_name, msg.speaker_role)
+            counts[key] = counts.get(key, 0) + 1
+        found = [
+            SpeakerCount(name=name, speaker_role=role, messages=n)  # type: ignore[arg-type]
+            for (name, role), n in counts.items()
+        ]
+        return sorted(found, key=lambda sp: (sp.name is None, -sp.messages, sp.name or "", sp.speaker_role))
+
+    async def apply_speaker_roles(
+        self, user_id: str, conversation_id: UUID, roles: dict[str, SpeakerRole], remove: set[str]
+    ) -> tuple[int, int]:
+        conv = await self.get(user_id, conversation_id)
+        changed = removed = 0
+        out: list[Message] = []
+        for msg in self._messages[conv.id]:
+            if msg.speaker_name is not None and msg.speaker_name in remove:
+                removed += 1
+                continue
+            role = roles.get(msg.speaker_name) if msg.speaker_name is not None else None
+            if role is not None and role != msg.speaker_role:
+                msg = msg.model_copy(update={"speaker_role": role})
+                changed += 1
+            out.append(msg)
+        self._messages[conv.id] = out
+        return changed, removed
 
     async def message_keys(self, user_id: str, conversation_id: UUID) -> set[str]:
         conv = await self.get(user_id, conversation_id)
@@ -517,15 +563,23 @@ class InMemoryConversationRepo:
                 n += 1
         return n
 
-    async def reset_graph_ingested(self, user_id: str, conversation_id: UUID | None = None) -> int:
+    async def reset_graph_ingested(
+        self, user_id: str, conversation_id: UUID | None = None, message_ids: list[UUID] | None = None
+    ) -> int:
         n = 0
+        only = None if message_ids is None else set(message_ids)
+        cleared = {"graph_ingested_at": None, "graph_attempts": 0, "graph_held_at": None}
         for conv_id, msgs in self._messages.items():
             conv = self._conversations.get(conv_id)
             if conv is None or conv.user_id != user_id or (conversation_id and conv_id != conversation_id):
                 continue
-            n += sum(1 for m in msgs if m.graph_ingested_at is not None or m.graph_attempts > 0)
-            cleared = {"graph_ingested_at": None, "graph_attempts": 0, "graph_held_at": None}
-            self._messages[conv_id] = [m.model_copy(update=cleared) for m in msgs]
+            out: list[Message] = []
+            for m in msgs:
+                if only is None or m.id in only:
+                    n += int(m.graph_ingested_at is not None or m.graph_attempts > 0)
+                    m = m.model_copy(update=cleared)
+                out.append(m)
+            self._messages[conv_id] = out
         return n
 
     async def purge_jobs(self, before: datetime) -> int:

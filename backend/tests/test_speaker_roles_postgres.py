@@ -168,3 +168,64 @@ def test_api_flow_on_postgres(pg_url: str) -> None:
         assert [m["speaker_role"] for m in after] == ["contact", "me", "contact", "me"]
         assert client.put(url, json=body, headers=h).json()["changed"] is False
         assert client.delete(f"/v1/conversations/{conv_id}", headers=h).status_code == 200
+
+
+async def test_repo_speaker_names_on_postgres(repos) -> None:  # noqa: ANN001
+    """0011: 이름 저장·채우기·화자별 역할·제외, 일부 메시지만 그래프 표시 비우기 — 이 방에만 닿는다."""
+    contacts, convs = repos
+    a = _user()
+    boss = await contacts.create(a, "박지현", "superior")
+    c1 = await convs.create(a, boss.id, "방1", "json", "c1")
+    c2 = await convs.create(a, boss.id, "방2", "json", "c2")
+    named = [
+        _msg("m1", "me", 1).model_copy(update={"speaker_name": "김민수"}),
+        _msg("m2", "contact", 2).model_copy(update={"speaker_name": "박지현"}),
+        _msg("m3", "contact", 3).model_copy(update={"speaker_name": "최유진"}),
+        _msg("m4", "contact", 4),  # 이름 없이 들어온 메시지
+    ]
+    for conv in (c1, c2):
+        await convs.add_messages(a, conv.id, named)
+
+    async def speakers(conv_id: uuid.UUID) -> list[tuple[str | None, str, int]]:
+        return [(sp.name, sp.speaker_role, sp.messages) for sp in await convs.speakers(a, conv_id)]
+
+    everyone = [("김민수", "me", 1), ("박지현", "contact", 1), ("최유진", "contact", 1), (None, "contact", 1)]
+    assert await speakers(c1.id) == everyone
+    assert [m.speaker_name for m in await convs.list_messages(a, c1.id)] == [
+        "김민수",
+        "박지현",
+        "최유진",
+        None,
+    ]
+
+    # 빈 이름만 채운다 — 이미 있는 이름, 다른 방, 모르는 키는 그대로
+    filled = await convs.fill_speaker_names(a, c1.id, {"m1": "다른이름", "m4": "이서연", "없는키": "누구"})
+    assert filled == 1
+    assert [m.speaker_name for m in await convs.list_messages(a, c1.id)] == [
+        "김민수",
+        "박지현",
+        "최유진",
+        "이서연",
+    ]
+    assert await convs.fill_speaker_names(a, c1.id, {}) == 0
+
+    msgs = await convs.list_messages(a, c1.id)
+    await convs.mark_graph_ingested(a, [m.id for m in msgs], datetime(2026, 10, 6, tzinfo=UTC))
+    assert await convs.reset_graph_ingested(a, c1.id, []) == 0
+    assert await convs.reset_graph_ingested(a, c1.id, [msgs[2].id]) == 1
+    assert [m.graph_ingested_at is None for m in await convs.list_messages(a, c1.id)] == [
+        False,
+        False,
+        True,
+        False,
+    ]
+
+    with pytest.raises(NotFoundError):
+        await convs.apply_speaker_roles("someone-else", c1.id, {"김민수": "contact"}, set())
+    changed, removed = await convs.apply_speaker_roles(
+        a, c1.id, {"김민수": "contact", "박지현": "me", "이서연": "contact"}, {"최유진"}
+    )
+    assert (changed, removed) == (2, 1)  # 이서연은 이미 상대다
+    assert await speakers(c1.id) == [("김민수", "contact", 1), ("박지현", "me", 1), ("이서연", "contact", 1)]
+    assert await speakers(c2.id) == everyone
+    assert (await convs.conversation_stats(a, c1.id)).messages == 3

@@ -191,6 +191,8 @@ class MessageRow(Base):
     )
     source_key: Mapped[str] = mapped_column(String(64), nullable=False)
     speaker_role: Mapped[str] = mapped_column(String(8), nullable=False)  # me | contact
+    # 내보내기에 적혀 있던 화자 이름 (0011). 그전 메시지와 역할로만 올린 메시지는 NULL.
+    speaker_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
     sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     text: Mapped[str] = mapped_column(Text, nullable=False)
     graph_ingested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

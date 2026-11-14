@@ -21,6 +21,8 @@ from app.domain.conversation import (
     ImportJob,
     Message,
     NewMessage,
+    SpeakerCount,
+    SpeakerRole,
 )
 from app.domain.persona import PersonaSettings, PersonaVersion, RelationshipType
 from app.domain.rewrite import Feedback, RewriteRecord, RewriteResult
@@ -166,6 +168,26 @@ class ConversationRepo(Protocol):
         """이 대화방 모든 메시지의 화자 역할을 맞바꾼다 (me ↔ contact). 바꾼 메시지 수."""
         ...
 
+    async def fill_speaker_names(self, user_id: str, conversation_id: UUID, names: dict[str, str]) -> int:
+        """화자 이름이 비어 있는 메시지에 이름을 채운다 (`names`: source_key → 이름). 채운 수.
+
+        이미 이름이 있는 메시지는 건드리지 않는다. 역할도 바꾸지 않는다.
+        """
+        ...
+
+    async def speakers(self, user_id: str, conversation_id: UUID) -> list[SpeakerCount]:
+        """이 대화방의 화자(이름 × 역할)와 메시지 수. 많이 말한 순, 이름을 모르는 묶음은 끝에."""
+        ...
+
+    async def apply_speaker_roles(
+        self, user_id: str, conversation_id: UUID, roles: dict[str, SpeakerRole], remove: set[str]
+    ) -> tuple[int, int]:
+        """화자 이름별로 역할을 정하고(`roles`), `remove`의 화자가 쓴 메시지를 지운다.
+
+        이름이 저장된 메시지만 대상이다. (역할이 바뀐 메시지 수, 지운 메시지 수).
+        """
+        ...
+
     async def message_keys(self, user_id: str, conversation_id: UUID) -> set[str]:
         """이 대화방에 이미 있는 메시지 키(source_key)들 — 새로 들어갈 수를 미리 세는 데 쓴다."""
         ...
@@ -253,8 +275,13 @@ class ConversationRepo(Protocol):
         """미수집 메시지가 남지 않은 대화방의 pending/running/limited 작업을 completed로. 바꾼 수."""
         ...
 
-    async def reset_graph_ingested(self, user_id: str, conversation_id: UUID | None = None) -> int:
-        """graph_ingested_at과 실패 횟수·보류를 비워 다시 수집 대상으로 만든다 (그래프 재구축). 바꾼 수."""
+    async def reset_graph_ingested(
+        self, user_id: str, conversation_id: UUID | None = None, message_ids: list[UUID] | None = None
+    ) -> int:
+        """graph_ingested_at과 실패 횟수·보류를 비워 다시 수집 대상으로 만든다 (그래프 재구축). 바꾼 수.
+
+        `message_ids`를 주면 그 메시지만 (빈 목록이면 아무것도 하지 않는다).
+        """
         ...
 
     async def purge_jobs(self, before: datetime) -> int:

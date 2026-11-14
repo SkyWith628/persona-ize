@@ -522,9 +522,17 @@ class GraphIngestService:
             await asyncio.sleep(0)
 
     async def reset_conversation(
-        self, user_id: str, conversation_id: UUID, then: Callable[[], Awaitable[None]]
+        self,
+        user_id: str,
+        conversation_id: UUID,
+        then: Callable[[], Awaitable[None]],
+        *,
+        message_ids: set[UUID] | None = None,
     ) -> tuple[int, int] | None:
         """대화방 하나를 그래프에서 지우고 `then`을 실행한다. 이 사용자의 수집이 돌고 있으면 비켜 달라고 한다.
+
+        `message_ids`를 주면 그 메시지의 에피소드만 지우고 그 메시지만 다시 수집 대상으로 돌린다 — 화자 한
+        명의 역할만 바뀌었을 때 방 전체를 다시 넣지 않는다(에피소드마다 모델 비용이 든다).
 
         화자 역할을 고칠 때 쓴다: 에피소드 삭제 → 수집 표시 비우기 → `then`(역할 바꾸기)을 수집 잠금
         안에서 차례로 해, 그 사이에 시작한 수집이 옛 역할의 본문을 넣지 못하게 한다.
@@ -546,13 +554,17 @@ class GraphIngestService:
                     limit.reschedule(None)  # 잠금을 잡았다 — 여기서부터는 시간 제한이 없다
                     conv = await self._conversations.get(user_id, conversation_id)
                     messages = await self._conversations.list_messages(user_id, conv.id)
+                    if message_ids is not None:
+                        messages = [m for m in messages if m.id in message_ids]
                     names = [
                         f"{conv.source_key}:{m.source_key}"
                         for m in messages
                         if m.graph_ingested_at is not None
                     ]
                     removed = await self._store.remove_episodes(user_id, names) if names else 0
-                    reset = await self._conversations.reset_graph_ingested(user_id, conv.id)
+                    reset = await self._conversations.reset_graph_ingested(
+                        user_id, conv.id, None if message_ids is None else [m.id for m in messages]
+                    )
                     await then()
             finished = True
             return removed, reset

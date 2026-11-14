@@ -174,6 +174,7 @@ async def export_my_data(user_id: UserId, state: State) -> JSONResponse:
                         {
                             "id": m.source_key,
                             "speaker_role": m.speaker_role,
+                            "speaker_name": m.speaker_name,
                             "sent_at": m.sent_at.isoformat(),
                             "text": m.text,
                         }

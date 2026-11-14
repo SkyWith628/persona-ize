@@ -328,7 +328,7 @@ def test_export_downloads_everything_i_own(client: TestClient, user_b: dict[str,
     assert [p["version"] for p in contact["persona_versions"]] == [1]
     (conv,) = contact["conversations"]
     assert (conv["id"], conv["source_key"], len(conv["messages"])) == (conv_id, "c1", 7)
-    assert set(conv["messages"][0]) == {"id", "speaker_role", "sent_at", "text"}
+    assert set(conv["messages"][0]) == {"id", "speaker_role", "speaker_name", "sent_at", "text"}
     (rewrite,) = contact["rewrites"]
     assert (rewrite["id"], rewrite["condition"], rewrite["channel"]) == (rec["id"], "B", "desktop")
     assert rewrite["result"]["result_text"] == DRAFT

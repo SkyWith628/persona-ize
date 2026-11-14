@@ -28,6 +28,7 @@ from app.api.schemas import (
     ImportJobOut,
     ImportRawIn,
     MessageOut,
+    SpeakerOut,
     SpeakerRolesIn,
     SpeakerRolesOut,
 )
@@ -110,9 +111,27 @@ async def list_messages(
     """시각 순 메시지. `limit`을 주면 가장 최근 N건만 돌려준다 (생략하면 예전처럼 전부)."""
     return [
         MessageOut(
-            id=m.id, source_key=m.source_key, speaker_role=m.speaker_role, sent_at=m.sent_at, text=m.text
+            id=m.id,
+            source_key=m.source_key,
+            speaker_role=m.speaker_role,
+            speaker_name=m.speaker_name,
+            sent_at=m.sent_at,
+            text=m.text,
         )
         for m in await state.conversations.list_messages(user_id, conversation_id, limit)
+    ]
+
+
+@router.get("/v1/conversations/{conversation_id}/speakers", response_model=list[SpeakerOut])
+async def list_speakers(conversation_id: UUID, user_id: UserId, state: State) -> list[SpeakerOut]:
+    """이 대화방의 화자(이름 × 역할)와 메시지 수 — 화자별로 역할을 고칠 때 쓴다.
+
+    `name`이 null인 줄은 이름 없이 저장된 메시지다(이 기능 전에 가져왔거나 역할로만 올린 것). 같은
+    내보내기를 다시 올리면 이름이 채워진다.
+    """
+    return [
+        SpeakerOut(name=sp.name, speaker_role=sp.speaker_role, messages=sp.messages)
+        for sp in await state.conversations.speakers(user_id, conversation_id)
     ]
 
 
@@ -205,19 +224,29 @@ async def import_raw(conversation_id: UUID, body: ImportRawIn, user_id: UserId, 
 async def set_speaker_roles(
     conversation_id: UUID, body: SpeakerRolesIn, user_id: UserId, state: State
 ) -> SpeakerRolesOut:
-    """화자(나/상대)를 잘못 지정한 가져오기를 대화방을 지우지 않고 고친다 — 방 전체의 나↔상대 맞바꾸기.
+    """화자(나/상대)를 잘못 지정한 가져오기를 대화방을 지우지 않고 고친다.
 
-    기준 메시지가 이미 `speaker_role`이면 `changed=false`로 끝난다(멱등). 바뀌면 묶음을 뒤에서 다시 만들고
-    (`job`), 그래프가 켜져 있으면 이 방의 에피소드를 지우고 다시 수집한다(상한은 그대로 따른다).
-    그래프 수집이 돌고 있으면 409, 그래프에 닿지 못하면 아무것도 바꾸지 않고 503.
+    - `message_id` + `speaker_role`: 방 전체의 나↔상대 맞바꾸기.
+    - `speakers`: 화자 이름별로 나/상대/제외(`skip` — 그 화자의 메시지를 지운다). 이름이 저장된 메시지만.
+
+    이미 맞는 상태면 `changed=false`로 끝난다(멱등). 바뀌면 묶음을 뒤에서 다시 만들고(`job`), 그래프가
+    켜져 있으면 바뀐 메시지의 에피소드를 지우고 다시 수집한다(상한은 그대로 따른다).
+    그래프 수집이 제때 비키지 않으면 409, 그래프에 닿지 못하면 아무것도 바꾸지 않고 503.
     """
-    r = await state.import_service.set_speaker_role(
-        user_id, conversation_id, body.message_id, body.speaker_role, body.me_name
-    )
+    if body.speakers is not None:
+        r = await state.import_service.set_speaker_roles(
+            user_id, conversation_id, body.speakers, body.me_name
+        )
+    else:
+        assert body.message_id is not None and body.speaker_role is not None  # 스키마가 보장한다
+        r = await state.import_service.set_speaker_role(
+            user_id, conversation_id, body.message_id, body.speaker_role, body.me_name
+        )
     return SpeakerRolesOut(
         conversation_id=r.conversation_id,
         changed=r.changed,
         messages=r.messages,
+        messages_removed=r.messages_removed,
         my_messages=r.my_messages,
         me_name=r.me_name,
         graph_episodes_removed=r.graph_removed,

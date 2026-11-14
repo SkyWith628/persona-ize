@@ -8,7 +8,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
 
-from app.domain.conversation import GraphStatus, ImportStatus, SpeakerRole
+from app.domain.conversation import SPEAKER_NAME_MAX, GraphStatus, ImportStatus, SpeakerRole
 from app.domain.persona import Adjust, PersonaSettings, RelationshipType
 from app.domain.rewrite import (
     INT4_MAX,
@@ -171,8 +171,17 @@ class MessageOut(BaseModel):
     id: UUID
     source_key: str
     speaker_role: SpeakerRole
+    speaker_name: str | None = Field(None, description="내보내기의 화자 이름. 모르면 null")
     sent_at: datetime
     text: str
+
+
+class SpeakerOut(BaseModel):
+    """대화방 안의 화자 한 명. `name`이 null이면 이름 없이 저장된 메시지 묶음(화자별로 고칠 수 없다)."""
+
+    name: str | None
+    speaker_role: SpeakerRole
+    messages: int
 
 
 class DeletionOut(BaseModel):
@@ -203,25 +212,55 @@ class ImportJobOut(BaseModel):
     index_total: int | None = Field(None, description="processing 동안: 이번에 만들 말투 묶음 전체 수")
 
 
+SPEAKER_ROLES_MAX = 200  # 한 번에 고칠 수 있는 화자 수
+
+
 class SpeakerRolesIn(StoredBody):
     """화자 역할 고치기: "이 메시지는 `speaker_role`이 한 말이다". 지금과 다르면 방 전체의 나↔상대를 맞바꾼다.
 
     바꾸는 방향이 아니라 맞는 상태를 적으므로 같은 요청을 다시 보내도 도로 뒤집히지 않는다.
+
+
+    둘 중 하나로 보낸다.
+    - `message_id` + `speaker_role`: 방 전체 맞바꾸기 (화자 이름이 없는 예전 대화도 된다).
+    - `speakers`: 화자 이름별 지정 `{"이름": "me" | "contact" | "skip"}` — 적지 않은 화자는 그대로 두고,
+      `skip`은 그 화자의 메시지를 지운다. 이름은 `GET /v1/conversations/{id}/speakers`의 것.
     """
 
-    message_id: UUID = Field(description="기준 메시지 (`GET /v1/conversations/{id}/messages`의 id)")
-    speaker_role: SpeakerRole = Field(description="그 메시지를 실제로 쓴 쪽")
+    message_id: UUID | None = Field(
+        None, description="기준 메시지 (`GET /v1/conversations/{id}/messages`의 id)"
+    )
+    speaker_role: SpeakerRole | None = Field(None, description="그 메시지를 실제로 쓴 쪽")
+    speakers: dict[str, Literal["me", "contact", "skip"]] | None = Field(
+        None, description="화자 이름 → 맞는 역할. skip은 그 화자의 메시지를 지운다"
+    )
     me_name: str | None = Field(
         None,
         max_length=50,
-        description="역할이 바뀔 때 새로 쓸 내 표시 이름. 생략하면 비운다 (예전 이름은 상대의 것이었다)",
+        description="'나'가 바뀔 때 새로 쓸 내 표시 이름. 생략하면 맞바꾸기는 비우고, 화자별 지정은 "
+        "'나'가 한 사람이면 그 이름을 쓴다",
     )
+
+    @model_validator(mode="after")
+    def _one_mode(self) -> SpeakerRolesIn:
+        by_anchor = self.message_id is not None or self.speaker_role is not None
+        if self.speakers is not None:
+            if by_anchor:
+                raise ValueError("speakers와 message_id·speaker_role은 함께 보낼 수 없습니다.")
+            if not self.speakers or len(self.speakers) > SPEAKER_ROLES_MAX:
+                raise ValueError(f"speakers에는 화자를 1~{SPEAKER_ROLES_MAX}명 적습니다.")
+            if any(not name or len(name) > SPEAKER_NAME_MAX for name in self.speakers):
+                raise ValueError(f"화자 이름은 1~{SPEAKER_NAME_MAX}자입니다.")
+        elif self.message_id is None or self.speaker_role is None:
+            raise ValueError("message_id와 speaker_role을 함께 보내거나, speakers를 보냅니다.")
+        return self
 
 
 class SpeakerRolesOut(BaseModel):
     conversation_id: UUID
     changed: bool = Field(description="거짓이면 이미 맞는 상태라 아무것도 하지 않았다")
     messages: int = Field(description="역할이 바뀐 메시지 수")
+    messages_removed: int = Field(0, description="제외(skip)로 지운 메시지 수")
     my_messages: int = Field(description="바뀐 뒤 내 메시지 수 (changed가 거짓이면 0)")
     me_name: str | None
     graph_episodes_removed: int = Field(description="그래프에서 지운 에피소드 수 (다시 수집한다)")

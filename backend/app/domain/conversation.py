@@ -60,6 +60,15 @@ def graph_units(text: str) -> int:
 
 
 SpeakerRole = Literal["me", "contact"]
+SPEAKER_NAME_MAX = 64  # messages.speaker_name 열 길이
+
+
+def speaker_label(name: str | None) -> str | None:
+    """저장할 화자 이름: 앞뒤 공백을 떼고 열 길이에 맞춘다. 역할 낱말(me/contact)·빈 값은 이름이 아니다."""
+    label = (name or "").strip()[:SPEAKER_NAME_MAX].strip()
+    return label if label and label not in ("me", "contact") else None
+
+
 ImportStatus = Literal["processing", "completed", "failed"]
 # limited: 그래프 수집 상한(GRAPH_INGEST_*_CAP)에 닿아 멈췄다. 미수집 메시지는 남아 있다 (DB 열 16자).
 GraphStatus = Literal["skipped", "pending", "running", "completed", "failed", "limited"]
@@ -81,6 +90,7 @@ class NewMessage(BaseModel):
 
     source_key: str = Field(min_length=1, max_length=64)
     speaker_role: SpeakerRole
+    speaker_name: str | None = Field(None, max_length=SPEAKER_NAME_MAX, description="내보내기의 화자 이름")
     sent_at: datetime
     text: str = Field(min_length=1, max_length=4000)
 
@@ -91,6 +101,9 @@ class Message(BaseModel):
     conversation_id: UUID
     source_key: str
     speaker_role: SpeakerRole
+    speaker_name: str | None = Field(
+        None, description="내보내기의 화자 이름. 모르면 None (0011 이전, 역할로만 올린 메시지)"
+    )
     sent_at: datetime
     text: str
     graph_ingested_at: datetime | None = Field(None, description="그래프(D)에 넣은 시각. None이면 미수집")
@@ -163,16 +176,25 @@ class ImportJob(BaseModel):
     created_at: datetime
 
 
+class SpeakerCount(BaseModel):
+    """대화방 안의 화자 한 명(이름 × 역할)과 메시지 수. 이름을 모르는 메시지는 `name=None`으로 묶인다."""
+
+    name: str | None
+    speaker_role: SpeakerRole
+    messages: int
+
+
 class SpeakerRoleChange(BaseModel):
     """화자 역할 고치기의 결과 (`PUT /v1/conversations/{id}/speaker-roles`).
 
-    메시지에는 원래 화자 이름이 없고 역할(me/contact)만 남아 있어, 고칠 수 있는 것은 방 전체의
-    나↔상대 맞바꾸기뿐이다.
+    두 가지로 고친다: 방 전체의 나↔상대 맞바꾸기(기준 메시지 하나로), 화자 이름별 지정(나/상대/제외 —
+    원래 화자 이름이 저장된 메시지만).
     """
 
     conversation_id: UUID
     changed: bool = Field(description="거짓이면 이미 그 역할이라 아무것도 하지 않았다")
     messages: int = Field(0, description="역할이 바뀐 메시지 수")
+    messages_removed: int = Field(0, description="제외(skip)로 지운 메시지 수")
     my_messages: int = Field(0, description="바뀐 뒤 내 메시지 수")
     me_name: str | None = None
     graph_removed: int = Field(0, description="그래프에서 지운 에피소드 수 (잘못된 역할로 들어간 것)")

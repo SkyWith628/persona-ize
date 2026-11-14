@@ -427,6 +427,7 @@ def test_api_fixes_roles_without_deleting_the_room(
         "conversation_id",
         "changed",
         "messages",
+        "messages_removed",
         "my_messages",
         "me_name",
         "graph_episodes_removed",

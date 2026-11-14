@@ -34,6 +34,8 @@ from app.domain.conversation import (
     ImportJob,
     Message,
     NewMessage,
+    SpeakerCount,
+    SpeakerRole,
 )
 
 # 그래프 수집 상한에서 메시지 한 건을 세는 양 (domain.conversation.graph_units와 같은 식): 1 + 글자 수 // 1000
@@ -74,6 +76,7 @@ def _message(row: MessageRow) -> Message:
         conversation_id=row.conversation_id,
         source_key=row.source_key,
         speaker_role=row.speaker_role,  # type: ignore[arg-type]
+        speaker_name=row.speaker_name,
         sent_at=row.sent_at,
         text=row.text,
         graph_ingested_at=row.graph_ingested_at,
@@ -185,6 +188,7 @@ class PostgresConversationRepo:
                             conversation_id=conv.id,
                             source_key=nm.source_key,
                             speaker_role=nm.speaker_role,
+                            speaker_name=nm.speaker_name,
                             sent_at=nm.sent_at,
                             text=nm.text,
                             created_at=now,
@@ -241,6 +245,66 @@ class PostgresConversationRepo:
                 .values(speaker_role=case((MessageRow.speaker_role == "me", "contact"), else_="me"))
             )
         return int(result.rowcount or 0)
+
+    async def fill_speaker_names(self, user_id: str, conversation_id: UUID, names: dict[str, str]) -> int:
+        if not names:
+            return 0
+        filled = 0
+        async with self._sessions.begin() as s:
+            conv = await self._owned(s, user_id, conversation_id)
+            rows = (
+                await s.scalars(
+                    select(MessageRow).where(
+                        MessageRow.conversation_id == conv.id,
+                        MessageRow.user_id == user_id,
+                        MessageRow.speaker_name.is_(None),
+                    )
+                )
+            ).all()
+            for row in rows:
+                name = names.get(row.source_key)
+                if name:
+                    row.speaker_name = name
+                    filled += 1
+        return filled
+
+    async def speakers(self, user_id: str, conversation_id: UUID) -> list[SpeakerCount]:
+        async with self._sessions() as s:
+            conv = await self._owned(s, user_id, conversation_id)
+            rows = (
+                await s.execute(
+                    select(MessageRow.speaker_name, MessageRow.speaker_role, func.count())
+                    .where(MessageRow.conversation_id == conv.id, MessageRow.user_id == user_id)
+                    .group_by(MessageRow.speaker_name, MessageRow.speaker_role)
+                )
+            ).all()
+        found = [SpeakerCount(name=name, speaker_role=role, messages=int(n)) for name, role, n in rows]
+        return sorted(found, key=lambda sp: (sp.name is None, -sp.messages, sp.name or "", sp.speaker_role))
+
+    async def apply_speaker_roles(
+        self, user_id: str, conversation_id: UUID, roles: dict[str, SpeakerRole], remove: set[str]
+    ) -> tuple[int, int]:
+        changed = removed = 0
+        async with self._sessions.begin() as s:
+            conv = await self._owned(s, user_id, conversation_id)
+            mine = (MessageRow.conversation_id == conv.id, MessageRow.user_id == user_id)
+            for role in ("me", "contact"):
+                names = [name for name, r in roles.items() if r == role]
+                if not names:
+                    continue
+                result = await s.execute(
+                    update(MessageRow)
+                    .where(*mine, MessageRow.speaker_name.in_(names), MessageRow.speaker_role != role)
+                    .values(speaker_role=role)
+                )
+                changed += int(result.rowcount or 0)
+            if remove:
+                # episode_messages는 FK ON DELETE CASCADE — 묶음은 부른 쪽이 다시 만든다
+                result = await s.execute(
+                    delete(MessageRow).where(*mine, MessageRow.speaker_name.in_(sorted(remove)))
+                )
+                removed = int(result.rowcount or 0)
+        return changed, removed
 
     async def message_keys(self, user_id: str, conversation_id: UUID) -> set[str]:
         async with self._sessions() as s:
@@ -498,7 +562,11 @@ class PostgresConversationRepo:
             )
         return int(result.rowcount or 0)
 
-    async def reset_graph_ingested(self, user_id: str, conversation_id: UUID | None = None) -> int:
+    async def reset_graph_ingested(
+        self, user_id: str, conversation_id: UUID | None = None, message_ids: list[UUID] | None = None
+    ) -> int:
+        if message_ids is not None and not message_ids:
+            return 0
         stmt = (
             update(MessageRow)
             .where(
@@ -509,6 +577,8 @@ class PostgresConversationRepo:
         )
         if conversation_id is not None:
             stmt = stmt.where(MessageRow.conversation_id == conversation_id)
+        if message_ids is not None:
+            stmt = stmt.where(MessageRow.id.in_(message_ids))
         async with self._sessions.begin() as s:
             result = await s.execute(stmt)
         return int(result.rowcount or 0)

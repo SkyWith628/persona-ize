@@ -26,7 +26,7 @@ import hashlib
 import json
 import logging
 from collections import Counter
-from collections.abc import Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID, uuid4
@@ -44,12 +44,14 @@ from app.core.errors import (
 )
 from app.domain.conversation import (
     Conversation,
+    ConversationStats,
     DeletionResult,
     ImportJob,
     NewMessage,
     SpeakerRole,
     SpeakerRoleChange,
     exception_kind,
+    speaker_label,
 )
 from app.domain.usage import QuotaExceededError
 from app.importers import ParsedImport
@@ -157,7 +159,15 @@ def normalize_messages(payload: ImportPayload) -> list[NewMessage]:
             problems.append(f"{where}: 메시지 id가 중복됩니다")
             continue
         seen.add(m.id)
-        out.append(NewMessage(source_key=m.id, speaker_role=role, sent_at=m.sent_at, text=text))
+        out.append(
+            NewMessage(
+                source_key=m.id,
+                speaker_role=role,
+                speaker_name=speaker_label(m.speaker),  # 역할 낱말(me/contact)로 올린 것은 이름이 없다
+                sent_at=m.sent_at,
+                text=text,
+            )
+        )
     if unknown_speakers:
         names = ", ".join(sorted(unknown_speakers))
         problems.insert(0, f"화자 지정이 필요합니다. speaker_map에 me/contact를 지정하세요: {names}")
@@ -185,6 +195,12 @@ def source_hash(messages: list[NewMessage]) -> str:
         (m.sent_at.astimezone(UTC).isoformat(), m.source_key, m.speaker_role, m.text) for m in messages
     )
     return hashlib.sha256(json.dumps(canonical, ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+def _clean_me_name(name: str | None) -> str | None:
+    """대화방의 내 이름으로 쓸 수 있는 값. '회원님' 같은 표기·너무 긴 이름·빈 값은 None."""
+    label = (name or "").strip()
+    return label if label and label not in GENERIC_ME_NAMES and len(label) <= ME_NAME_MAX else None
 
 
 class ImportService:
@@ -310,7 +326,13 @@ class ImportService:
             role = speaker_map.get(m.speaker, m.speaker)
             if role in ROLE_NAMES:  # skip은 버린다
                 messages.append(
-                    NewMessage(source_key=m.id, speaker_role=role, sent_at=m.sent_at, text=m.text)  # type: ignore[arg-type]
+                    NewMessage(
+                        source_key=m.id,
+                        speaker_role=role,  # type: ignore[arg-type]
+                        speaker_name=speaker_label(m.speaker),
+                        sent_at=m.sent_at,
+                        text=m.text,
+                    )
                 )
         if keep_recent is not None:
             messages = sorted(messages, key=lambda x: x.sent_at)[-keep_recent:]
@@ -435,7 +457,18 @@ class ImportService:
         메시지를 넣고 `processing` 작업을 남긴 뒤 묶음 생성 태스크를 띄운다 — 태스크는 이 잠금이 풀린 뒤
         같은 잠금을 다시 잡고 돈다. 태스크가 있으면 그래프 수집은 태스크가 끝에서 시작한다.
         """
+        # 이미 들어와 있는 메시지에 화자 이름이 비어 있으면(0011 이전에 가져온 방) 이번 파일의 이름으로
+        # 채운다 — 같은 내보내기를 다시 올리면 화자별로 고칠 수 있게 된다. 역할은 건드리지 않는다.
+        names = {m.source_key: m.speaker_name for m in messages if m.speaker_name}
+        if names:
+            await self._conversations.fill_speaker_names(user_id, conv.id, names)
         existing = await self._conversations.find_job(user_id, conv.id, digest)
+        if existing is not None and existing.status == "completed":
+            # 끝난 가져오기라도 그 뒤에 화자 제외(`set_speaker_roles`의 skip)로 메시지가 지워졌을 수 있다 —
+            # 빠진 것이 있으면 처음 올린 것처럼 다시 넣는다 (같은 작업 id로).
+            stored = await self._conversations.message_keys(user_id, conv.id)
+            if any(m.source_key not in stored for m in messages):
+                existing = existing.model_copy(update={"status": "failed"})
         if existing is not None and existing.status == "completed":
             # 저장은 끝났다. 그래프 수집만 덜 됐으면(상한에 걸렸거나 실패) 같은 파일을 다시 올렸을 때
             # 남은 것을 이어서 넣는다 — 작업의 graph_episodes는 이번 실행에서 넣은 수가 된다.
@@ -680,8 +713,8 @@ class ImportService:
     ) -> SpeakerRoleChange:
         """화자를 잘못 지정한 가져오기를 대화방을 지우지 않고 고친다: "이 메시지는 `speaker_role`이 한 말".
 
-        메시지에는 원래 화자 이름이 남아 있지 않아(역할만 저장한다) 고칠 수 있는 것은 방 전체의 나↔상대
-        맞바꾸기다. 기준 메시지가 이미 그 역할이면 아무것도 하지 않는다 — 같은 요청을 다시 보내도 도로
+        방 전체의 나↔상대 맞바꾸기다 (화자 이름이 없는 예전 메시지도 된다. 화자별로는 `set_speaker_roles`).
+        기준 메시지가 이미 그 역할이면 아무것도 하지 않는다 — 같은 요청을 다시 보내도 도로
         뒤집히지 않는다(멱등). 바뀌면
         - 그래프: 이 방에서 이미 들어간 에피소드는 잘못된 역할로 만든 것이라 지우고 다시 수집 대상으로
           돌린다. 이 사용자의 수집이 돌고 있으면 넣던 메시지까지만 끝내고 비켜 준다(보통 10초 안팎) —
@@ -698,53 +731,16 @@ class ImportService:
             anchor = await self._conversations.get_message(user_id, conv.id, message_id)
             if anchor.speaker_role == speaker_role:
                 return SpeakerRoleChange(conversation_id=conv.id, changed=False, me_name=conv.me_name)
-            name = (me_name or "").strip()
-            new_name = name if name and name not in GENERIC_ME_NAMES else None
+            new_name = _clean_me_name(me_name)
             changed = 0
-            swapping = False
 
             async def swap() -> None:
-                nonlocal changed, swapping
-                swapping = True
+                nonlocal changed
                 changed = await self._conversations.swap_speaker_roles(user_id, conv.id)
                 await self._conversations.set_me_name(user_id, conv.id, new_name)
 
-            removed = requeued = 0
-            if self._graph_ingest is None:
-                await swap()
-            else:
-                try:
-                    done = await self._graph_ingest.reset_conversation(user_id, conv.id, swap)
-                except DomainError:
-                    raise
-                except Exception as exc:
-                    if swapping:
-                        raise  # 그래프는 비웠고 역할을 바꾸다 실패했다 (DB 장애) — 다시 요청하면 이어진다
-                    log.warning(
-                        "speaker role graph reset failed conversation=%s: %s", conv.id, exception_kind(exc)
-                    )
-                    raise GraphUnavailableError(
-                        "지난 약속·사건 기록을 정리하지 못해 화자를 바꾸지 않았습니다. 잠시 뒤 다시 하세요."
-                    ) from exc
-                if done is None:
-                    raise VersionConflictError(
-                        "지난 약속·사건 정리가 바로 멈추지 않아 바꾸지 못했습니다. 잠시 뒤 다시 하세요."
-                    )
-                removed, requeued = done
-            stats = await self._conversations.conversation_stats(user_id, conv.id)
-            job = await self._conversations.save_job(
-                ImportJob(
-                    id=uuid4(),
-                    user_id=user_id,
-                    conversation_id=conv.id,
-                    # 파일 내용이 아니라 이번 변경을 가리키는 값 — 같은 방의 다른 작업과 겹치지 않는다
-                    source_hash=hashlib.sha256(f"speaker-roles:{uuid4().hex}".encode()).hexdigest(),
-                    status="processing",
-                    graph_status="pending" if self.graph_mode != "off" and stats.messages > 0 else "skipped",
-                    created_at=datetime.now(UTC),
-                )
-            )
-            task = self._start_index(user_id, conv, job)
+            removed, requeued = await self._reset_graph_then(user_id, conv, swap)
+            stats, job, task = await self._start_role_reindex(user_id, conv)
         job = await self._await_index(task, job)
         return SpeakerRoleChange(
             conversation_id=conv.id,
@@ -756,6 +752,164 @@ class ImportService:
             graph_requeued=requeued,
             job=job,
         )
+
+    async def set_speaker_roles(
+        self,
+        user_id: str,
+        conversation_id: UUID,
+        roles: dict[str, RawSpeakerRole],
+        me_name: str | None = None,
+    ) -> SpeakerRoleChange:
+        """화자 이름별로 역할을 고친다: `{"이름": "me" | "contact" | "skip"}`. 적지 않은 화자는 그대로 둔다.
+
+        원래 화자 이름이 저장된 메시지만 대상이다(`messages.speaker_name`, 0011) — 그전에 가져온 방은 같은
+        내보내기를 다시 올리면 이름이 채워진다. 맞는 상태를 적으므로 다시 보내도 결과가 같다(멱등).
+        - `skip`은 그 화자의 메시지를 **지운다**(단체방에서 잘못 넣은 사람 빼기). 이미 없는 이름의 `skip`은
+          아무 일도 하지 않는다. 방에 없는 이름에 me/contact를 주면 422, 전부 지워지게 되면 422.
+        - 제외했던 화자를 되살리는 것은 여기서 못 한다(메시지를 저장하지 않았다) — 그 화자를 넣어 다시
+          올리면 빠진 메시지만 더 들어온다.
+        - 그래프: 바뀌거나 지워지는 메시지의 에피소드만 지우고, 바뀐 것만 다시 수집한다. 내 이름이 달라지면
+          (에피소드 본문마다 내 이름이 들어 있다) 방 전체를 다시 넣는다.
+        - 내 이름: '나'였던 화자가 '나'에서 빠졌을 때만 바뀐다 — 준 값, 없으면 '나'가 한 사람일 때 그
+          이름, 아니면 비운다. (준 값은 '나'인 화자가 달라질 때만 쓴다.)
+        - 묶음·수집 재시작·오류(409·503)는 `set_speaker_role`과 같다.
+        """
+        conv = await self._conversations.get(user_id, conversation_id)  # 소유권
+        async with self._conv_locks.hold(conv.id):
+            current = await self._conversations.speakers(user_id, conv.id)
+            named: dict[str, set[str]] = {}
+            for sp in current:
+                if sp.name is not None:
+                    named.setdefault(sp.name, set()).add(sp.speaker_role)
+            unknown = sorted(n for n, r in roles.items() if n not in named and r != "skip")
+            if unknown:
+                raise InvalidInputError(
+                    "이 대화방에 그 이름으로 저장된 화자가 없습니다: "
+                    + ", ".join(unknown[:10])
+                    + ". 화자 이름은 GET /v1/conversations/{id}/speakers로 확인하세요 "
+                    "(이름이 없는 예전 대화는 같은 파일을 다시 올리면 채워집니다)."
+                )
+            remove = {n for n, r in roles.items() if r == "skip" and n in named}
+            assign: dict[str, SpeakerRole] = {
+                n: r  # type: ignore[misc]
+                for n, r in roles.items()
+                if r != "skip" and named[n] != {r}
+            }
+            if not remove and not assign:
+                return SpeakerRoleChange(conversation_id=conv.id, changed=False, me_name=conv.me_name)
+            if sum(sp.messages for sp in current if sp.name in remove) >= sum(sp.messages for sp in current):
+                raise InvalidInputError(
+                    "모든 화자를 제외하면 메시지가 남지 않습니다. 대화방을 지우려면 대화방 삭제를 쓰세요."
+                )
+
+            def mine(role_of: Callable[[str, str], str | None]) -> set[str | None]:
+                return {sp.name for sp in current if role_of(sp.name or "", sp.speaker_role) == "me"}
+
+            me_before = mine(lambda _name, role: role)
+            me_after = mine(
+                lambda name, role: None if name in remove else assign.get(name, role)  # type: ignore[arg-type]
+            )
+            new_name = conv.me_name
+            if me_after != me_before:
+                # 지금까지 '나'였던 화자가 그대로 '나'면(다른 화자가 더해졌을 뿐) 이름은 그대로 맞다
+                only = next(iter(me_after)) if len(me_after) == 1 else None
+                kept = conv.me_name if me_before and me_before <= me_after else None
+                new_name = _clean_me_name(me_name) or kept or _clean_me_name(only)
+            affected: set[UUID] | None = None
+            if new_name == conv.me_name:
+                affected = {
+                    m.id
+                    for m in await self._conversations.list_messages(user_id, conv.id)
+                    if m.speaker_name is not None
+                    and (
+                        m.speaker_name in remove
+                        or assign.get(m.speaker_name, m.speaker_role) != m.speaker_role
+                    )
+                }
+            changed = dropped = 0
+
+            async def apply() -> None:
+                nonlocal changed, dropped
+                changed, dropped = await self._conversations.apply_speaker_roles(
+                    user_id, conv.id, assign, remove
+                )
+                if new_name != conv.me_name:
+                    await self._conversations.set_me_name(user_id, conv.id, new_name)
+
+            removed, requeued = await self._reset_graph_then(user_id, conv, apply, affected)
+            stats, job, task = await self._start_role_reindex(user_id, conv)
+        job = await self._await_index(task, job)
+        return SpeakerRoleChange(
+            conversation_id=conv.id,
+            changed=True,
+            messages=changed,
+            messages_removed=dropped,
+            my_messages=stats.my_messages,
+            me_name=new_name,
+            graph_removed=removed,
+            graph_requeued=requeued,
+            job=job,
+        )
+
+    async def _reset_graph_then(
+        self,
+        user_id: str,
+        conv: Conversation,
+        apply: Callable[[], Awaitable[None]],
+        message_ids: set[UUID] | None = None,
+    ) -> tuple[int, int]:
+        """그래프에서 이 방(또는 `message_ids`)의 에피소드를 지운 뒤 `apply`(역할 바꾸기)를 한다.
+
+        (지운 에피소드 수, 다시 수집 대상으로 돌린 메시지 수). 그래프를 안 쓰면 `apply`만 한다.
+        수집이 제때 비키지 않으면 409, 그래프에 닿지 못하면 아무것도 바꾸지 않고 503.
+        """
+        applying = False
+
+        async def then() -> None:
+            nonlocal applying
+            applying = True
+            await apply()
+
+        if self._graph_ingest is None:
+            await then()
+            return 0, 0
+        try:
+            done = await self._graph_ingest.reset_conversation(
+                user_id, conv.id, then, message_ids=message_ids
+            )
+        except DomainError:
+            raise
+        except Exception as exc:
+            if applying:
+                raise  # 그래프는 비웠고 역할을 바꾸다 실패했다 (DB 장애) — 다시 요청하면 이어진다
+            log.warning("speaker role graph reset failed conversation=%s: %s", conv.id, exception_kind(exc))
+            raise GraphUnavailableError(
+                "지난 약속·사건 기록을 정리하지 못해 화자를 바꾸지 않았습니다. 잠시 뒤 다시 하세요."
+            ) from exc
+        if done is None:
+            raise VersionConflictError(
+                "지난 약속·사건 정리가 바로 멈추지 않아 바꾸지 못했습니다. 잠시 뒤 다시 하세요."
+            )
+        return done
+
+    async def _start_role_reindex(
+        self, user_id: str, conv: Conversation
+    ) -> tuple[ConversationStats, ImportJob, asyncio.Task[ImportJob]]:
+        """역할이 바뀐 방의 묶음을 다시 만드는 작업을 남기고 태스크를 띄운다. 대화방 잠금 안에서 부른다."""
+        stats = await self._conversations.conversation_stats(user_id, conv.id)
+        job = await self._conversations.save_job(
+            ImportJob(
+                id=uuid4(),
+                user_id=user_id,
+                conversation_id=conv.id,
+                # 파일 내용이 아니라 이번 변경을 가리키는 값 — 같은 방의 다른 작업과 겹치지 않는다
+                source_hash=hashlib.sha256(f"speaker-roles:{uuid4().hex}".encode()).hexdigest(),
+                status="processing",
+                graph_status="pending" if self.graph_mode != "off" and stats.messages > 0 else "skipped",
+                created_at=datetime.now(UTC),
+            )
+        )
+        return stats, job, self._start_index(user_id, conv, job)
 
     async def reindex(
         self, user_id: str, conv: Conversation, *, on_progress: Callable[[int, int], None] | None = None
