@@ -289,7 +289,7 @@ function messagesNode(messages, contactAlias, showNames = false) {
 }
 
 /** 대화방 하나의 내용(메시지 + 사건 정리 진행). */
-function conversationBody(conv, contactAlias) {
+function conversationBody(conv, contactAlias, contactId) {
   const statsEl = h("div", { class: "conv-stats" });
   const body = h("div", { class: "conv-body" });
   let latestStats = null; // 맞바꾸기 확인 창이 사건 정리 안내를 넣을지 정하는 데 쓴다
@@ -354,6 +354,17 @@ function conversationBody(conv, contactAlias) {
           swapBtn,
           fixBtn,
         ),
+        // 가져올 때 제외한 사람은 저장하지 않아 여기서 되살릴 수 없다 — 같은 파일을 이 대화방에 다시 가져온다
+        h(
+          "div",
+          { class: "conv-roles" },
+          h("span", { class: "muted" }, "가져올 때 제외한 사람을 다시 넣거나 뒤의 대화를 더하려면, 대화 파일을 이 대화방에 이어서 가져오세요."),
+          h(
+            "a",
+            { class: "btn", href: buildHash("import", {}, { contact: contactId, conversation: conv.id }), "aria-label": `${conv.title}에 이어서 가져오기` },
+            "이어서 가져오기",
+          ),
+        ),
         statsEl,
         messagesNode(list, contactAlias, showsSpeakerNames(speakers)),
       ];
@@ -399,7 +410,7 @@ export function mountConversations(box, { contact }) {
       list.map((conv) => {
         const isOpen = openId === conv.id;
         const panel = h("div", { class: "conv-panel", hidden: !isOpen });
-        if (isOpen) panel.append(conversationBody(conv, contact.alias));
+        if (isOpen) panel.append(conversationBody(conv, contact.alias, contact.id));
         const toggle = h(
           "button",
           {

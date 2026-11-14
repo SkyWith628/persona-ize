@@ -6,14 +6,17 @@ import { api } from "../api.js";
 import { describeError, isMissingEndpoint, isUnavailable } from "../lib/errors.js";
 import { countCodePoints, formatBytes, formatDateTime, formatNumber, initial, josa } from "../lib/format.js";
 import {
+  applyKnownRoles,
   checkRoles,
   checkSize,
   decodeBytes,
   encodingLabel,
+  existingSpeakerNotes,
   graphPhaseView,
   isGroupRoom,
   keepRecentFor,
   keptMessages,
+  knownRoles,
   meName,
   METHODS,
   previewView,
@@ -60,6 +63,9 @@ export function mountImport(root, ctx) {
     roles: {},
     keepRecent: null,
     existing: [], // 이 상대의 기존 대화방
+    known: {}, // 대화방 id → 그 대화방에 저장된 화자(GET …/speakers). 못 받으면 빈 배열
+    rolesTouched: false, // 사용자가 화자를 직접 골랐는가 — 고른 뒤에는 저장 위치를 바꿔도 덮어쓰지 않는다
+    wantTarget: ctx.route.query.conversation || null, // 대화방 화면에서 "이어서 가져오기"로 왔을 때
     target: NEW_CONVERSATION,
     title: "",
     agreed: false,
@@ -208,9 +214,11 @@ export function mountImport(root, ctx) {
       st.existing.map((conv) => conv.me_name),
     );
     st.roles = { ...st.view.roles };
+    st.rolesTouched = false;
     st.keepRecent = keepRecentFor(st.view.speakers, st.roles, st.view.maxMessages).value;
+    const wanted = st.existing.find((conv) => conv.id === st.wantTarget);
     const sameTitle = st.existing.find((conv) => st.view.titleHint && conv.title === st.view.titleHint);
-    st.target = sameTitle ? sameTitle.id : st.existing.length === 1 ? st.existing[0].id : NEW_CONVERSATION;
+    st.target = (wanted || sameTitle)?.id || (st.existing.length === 1 ? st.existing[0].id : NEW_CONVERSATION);
     st.title = st.view.titleHint || `${c.alias}${josa(c.alias, "과/와")}의 대화`;
     st.agreed = false;
   }
@@ -544,6 +552,7 @@ export function mountImport(root, ctx) {
     }
     const err = errorLine();
     const rolesWarn = h("p", { class: "note note-warn", hidden: true });
+    const existingNote = h("div", { class: "note", role: "status", hidden: true });
     const sampleBox = h("ol", { class: "chat chat-sample", "aria-label": "표본 메시지" });
     const keepInfo = h("p", { class: "muted" });
     const agreeId = uid("agree");
@@ -625,6 +634,7 @@ export function mountImport(root, ctx) {
                 class: "btn",
                 onClick: () => {
                   st.roles = skipUnassigned(st.roles);
+                  st.rolesTouched = true;
                   syncRoleInputs();
                   showError(err, "");
                   renderSample();
@@ -637,9 +647,53 @@ export function mountImport(root, ctx) {
       ]);
     }
 
+    /** 기존 대화방에 이어서 가져올 때: 이미 있는 사람, 다르게 골라 바뀌지 않는 사람, 새로 들어오는 사람. */
+    function renderExistingNote() {
+      const stored = st.target === NEW_CONVERSATION ? null : st.known[st.target];
+      const notes = stored ? existingSpeakerNotes(v.speakers, st.roles, stored) : { known: null, conflicts: [], fresh: null };
+      const lines = [notes.known, notes.fresh].filter(Boolean);
+      setChildren(existingNote, [
+        lines.map((line) => h("p", null, line)),
+        notes.conflicts.length
+          ? [
+              h("ul", { class: "plain-list" }, notes.conflicts.map((line) => h("li", null, line))),
+              h("p", null, "이미 가져온 메시지의 화자를 바꾸거나 빼려면, 가져온 뒤 상대 화면의 과거 대화에서 '화자별로 고치기'를 써 주세요."),
+            ]
+          : null,
+      ]);
+      existingNote.hidden = !lines.length && !notes.conflicts.length;
+      existingNote.className = notes.conflicts.length ? "note note-warn" : "note";
+    }
+
+    /** 저장할 대화방이 정해지면 그 대화방의 화자를 받아 와, 사용자가 아직 고르지 않았으면 저장된 대로 골라 둔다. */
+    function useTarget() {
+      const target = st.target;
+      const apply = () => {
+        if (destroyed || st.target !== target || st.view !== v || !existingNote.isConnected) return;
+        if (!st.rolesTouched) {
+          st.roles = target === NEW_CONVERSATION ? { ...v.roles } : applyKnownRoles(v.roles, knownRoles(st.known[target]));
+          syncRoleInputs();
+          renderSample();
+        }
+        renderKeepInfo();
+      };
+      if (target === NEW_CONVERSATION || st.known[target]) {
+        apply();
+        return;
+      }
+      api.conversations
+        .speakers(target)
+        .catch(() => []) // 못 받아도(예전 서버) 가져오기는 그대로 된다 — 안내만 빠진다
+        .then((stored) => {
+          st.known[target] = Array.isArray(stored) ? stored : [];
+          apply();
+        });
+    }
+
     function renderKeepInfo() {
       renderKeepField();
       renderGroupNote();
+      renderExistingNote();
       const kept = keptMessages(v.speakers, st.roles);
       const limited = st.keepRecent ? Math.min(kept, st.keepRecent) : kept;
       keepInfo.textContent = `가져올 메시지: 약 ${formatNumber(limited)}개 (제외한 사람의 메시지는 빼고 셌어요)`;
@@ -671,6 +725,7 @@ export function mountImport(root, ctx) {
                 checked: st.roles[sp.name] === opt.value,
                 onChange: () => {
                   st.roles[sp.name] = opt.value;
+                  st.rolesTouched = true;
                   showError(err, "");
                   renderSample();
                   renderKeepInfo();
@@ -709,6 +764,7 @@ export function mountImport(root, ctx) {
                 onChange: () => {
                   st.target = opt.id;
                   titleField.hidden = st.target !== NEW_CONVERSATION;
+                  useTarget();
                 },
               }),
               h("label", { for: inputId }, h("span", { class: "option-title" }, opt.title), h("span", { class: "option-desc" }, opt.desc)),
@@ -795,10 +851,11 @@ export function mountImport(root, ctx) {
         groupNote,
         h("div", { class: "speaker-list" }, speakerRows),
         rolesWarn,
+        existingNote,
         h(
           "p",
           { class: "hint" },
-          "꼭 확인해 주세요. 나와 상대를 바꿔서 가져오면 다시 올려도 고쳐지지 않아요(같은 메시지는 건너뛰어요). 그럴 때는 상대 화면의 과거 대화에서 '나·상대 맞바꾸기'로 고칠 수 있어요.",
+          "꼭 확인해 주세요. 화자를 잘못 골라 가져오면 다시 올려도 고쳐지지 않아요(같은 메시지는 건너뛰어요). 그럴 때는 상대 화면의 과거 대화에서 '화자별로 고치기'나 '나·상대 맞바꾸기'로 고칠 수 있어요.",
         ),
 
         h("h3", { class: "section-sub" }, `앞부분 ${formatNumber(v.sample.length)}개`),
@@ -846,6 +903,7 @@ export function mountImport(root, ctx) {
     );
     renderSample();
     renderKeepInfo();
+    useTarget();
   }
 
   // ---------- ④ 가져오기 ----------

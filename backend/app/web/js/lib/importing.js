@@ -521,3 +521,63 @@ export function graphPhaseView(stats, job, { stalled = false } = {}) {
       };
   }
 }
+
+// ---------- 기존 대화방에 이어서 가져올 때: 이미 있는 화자 ----------
+//
+// 같은 대화방에 다시 올리면 이미 있는 메시지는 건너뛴다 — 화자를 다르게 골라도 저장된 역할은 바뀌지 않는다.
+// 그래서 그 대화방에 저장된 화자(GET …/speakers)를 미리 골라 두고, 다르게 고르면 바뀌지 않는다고 알린다.
+
+/**
+ * 대화방에 저장된 화자 → { 이름: "me" | "contact" }. 이름 없는 메시지와, 한 이름에 두 역할이 섞인 화자는 뺀다.
+ * @param {Array<{name: string|null, speaker_role: string, messages: number}>} stored GET …/speakers 응답
+ */
+export function knownRoles(stored) {
+  const seen = {};
+  for (const sp of stored || []) {
+    if (!sp || !sp.name || !["me", "contact"].includes(sp.speaker_role)) continue;
+    seen[sp.name] = sp.name in seen && seen[sp.name] !== sp.speaker_role ? null : sp.speaker_role;
+  }
+  return Object.fromEntries(Object.entries(seen).filter(([, role]) => role));
+}
+
+/**
+ * 추천 역할 위에, 대화방에 이미 저장된 화자의 역할을 덮어쓴 새 지정표. 파일에 없는 이름은 더하지 않는다.
+ * @param {Record<string, string|null>} roles suggestRoles 결과
+ * @param {Record<string, string>} known knownRoles 결과
+ */
+export function applyKnownRoles(roles, known) {
+  return Object.fromEntries(Object.entries(roles || {}).map(([name, role]) => [name, known?.[name] || role]));
+}
+
+const ROLE_WORD = { me: "나", contact: "상대", skip: "제외" };
+
+/**
+ * 기존 대화방에 이어서 가져올 때의 안내.
+ * @param {Array<{name: string}>} speakers 이번 파일의 화자
+ * @param {Record<string, string|null>} roles 지금 고른 역할
+ * @param {Array} stored 그 대화방의 GET …/speakers 응답
+ * @returns {{known: string|null, conflicts: string[], fresh: string|null}}
+ *   known: 이미 있는 사람 한 줄, conflicts: 다르게 골라 바뀌지 않는 사람마다 한 줄, fresh: 새로 들어오는 사람 한 줄
+ */
+export function existingSpeakerNotes(speakers, roles, stored) {
+  const known = knownRoles(stored);
+  const inFile = (speakers || []).map((sp) => sp.name);
+  const both = inFile.filter((name) => known[name]);
+  if (!Object.keys(known).length) return { known: null, conflicts: [], fresh: null };
+  const conflicts = both
+    .filter((name) => roles?.[name] && roles[name] !== known[name])
+    .map((name) =>
+      roles[name] === "skip"
+        ? `${name}: 이 대화방에 '${ROLE_WORD[known[name]]}'로 저장돼 있어요. 여기서 '제외'로 골라도 이미 가져온 메시지는 남아요.`
+        : `${name}: 이 대화방에 '${ROLE_WORD[known[name]]}'로 저장돼 있어요. 여기서 '${ROLE_WORD[roles[name]]}'로 골라도 이미 가져온 메시지는 바뀌지 않아요.`,
+    );
+  const fresh = inFile.filter((name) => !known[name] && roles?.[name] && roles[name] !== "skip");
+  return {
+    // 다르게 고른 사람이 있으면 "저장된 대로 골라 두었어요"는 맞지 않는다 — 누가 어떻게 저장돼 있는지만 적는다
+    known: both.length
+      ? `이 대화방에 이미 있는 사람: ${both.map((name) => `${name}(${ROLE_WORD[known[name]]})`).join(", ")}.${conflicts.length ? "" : " 저장된 대로 골라 두었어요."}`
+      : null,
+    conflicts,
+    fresh: fresh.length ? `이 대화방에 없던 사람: ${fresh.join(", ")}. 이 사람의 메시지가 새로 들어와요.` : null,
+  };
+}

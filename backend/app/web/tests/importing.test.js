@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  applyKnownRoles,
+  existingSpeakerNotes,
+  knownRoles,
   MAX_IMPORT_CHARS,
   chatTypeLabel,
   checkRoles,
@@ -519,4 +522,56 @@ test("단체방: '최근 N개만'은 제외한 사람을 뺀 수로 정한다", 
   // 적으면 선택지를 내놓지 않는다
   const tiny = keepRecentFor([{ name: "김민수", count: 300 }, { name: "박지현", count: 200 }], {}, 5000, 1000);
   assert.deepEqual([tiny.keep.needed, tiny.value], [false, null]);
+});
+
+// ---------- 기존 대화방에 이어서 가져올 때 ----------
+
+const STORED = [
+  { name: "김민수", speaker_role: "me", messages: 120 },
+  { name: "박지현", speaker_role: "contact", messages: 80 },
+  { name: null, speaker_role: "contact", messages: 5 },
+];
+const FILE_SPEAKERS = [{ name: "박지현" }, { name: "김민수" }, { name: "최유진" }];
+
+test("저장된 화자의 역할: 이름 없는 메시지와 역할이 섞인 이름은 뺀다", () => {
+  assert.deepEqual(knownRoles(STORED), { 김민수: "me", 박지현: "contact" });
+  assert.deepEqual(knownRoles([...STORED, { name: "박지현", speaker_role: "me", messages: 1 }]), { 김민수: "me" });
+  assert.deepEqual(knownRoles(null), {});
+  assert.deepEqual(knownRoles([{ name: "x", speaker_role: "skip", messages: 1 }]), {});
+});
+
+test("저장된 역할을 추천 위에 덮어쓴다 — 파일에 없는 이름은 더하지 않는다", () => {
+  const suggested = { 박지현: "me", 김민수: null, 최유진: null };
+  assert.deepEqual(applyKnownRoles(suggested, knownRoles(STORED)), { 박지현: "contact", 김민수: "me", 최유진: null });
+  assert.deepEqual(applyKnownRoles(suggested, {}), suggested);
+  assert.deepEqual(applyKnownRoles({ 최유진: "skip" }, { 김민수: "me" }), { 최유진: "skip" });
+  assert.deepEqual(applyKnownRoles(null, { 김민수: "me" }), {});
+});
+
+test("이어서 가져오기 안내: 이미 있는 사람, 새로 들어오는 사람", () => {
+  const notes = existingSpeakerNotes(FILE_SPEAKERS, { 박지현: "contact", 김민수: "me", 최유진: "contact" }, STORED);
+  assert.equal(notes.known, "이 대화방에 이미 있는 사람: 박지현(상대), 김민수(나). 저장된 대로 골라 두었어요.");
+  assert.deepEqual(notes.conflicts, []);
+  assert.equal(notes.fresh, "이 대화방에 없던 사람: 최유진. 이 사람의 메시지가 새로 들어와요.");
+  // 제외하거나 아직 정하지 않은 새 사람은 들어오지 않는다
+  assert.equal(existingSpeakerNotes(FILE_SPEAKERS, { 박지현: "contact", 김민수: "me", 최유진: "skip" }, STORED).fresh, null);
+  assert.equal(existingSpeakerNotes(FILE_SPEAKERS, { 박지현: "contact", 김민수: "me", 최유진: null }, STORED).fresh, null);
+});
+
+test("이어서 가져오기 안내: 저장된 것과 다르게 고르면 바뀌지 않는다고 알린다", () => {
+  const notes = existingSpeakerNotes(FILE_SPEAKERS, { 박지현: "me", 김민수: "skip", 최유진: null }, STORED);
+  assert.equal(notes.conflicts.length, 2);
+  assert.equal(notes.known, "이 대화방에 이미 있는 사람: 박지현(상대), 김민수(나).");
+  assert.match(notes.conflicts[0], /^박지현: 이 대화방에 '상대'로 저장돼 있어요\. 여기서 '나'로 골라도 이미 가져온 메시지는 바뀌지 않아요\.$/);
+  assert.match(notes.conflicts[1], /^김민수: 이 대화방에 '나'로 저장돼 있어요\. 여기서 '제외'로 골라도 이미 가져온 메시지는 남아요\.$/);
+});
+
+test("이어서 가져오기 안내: 이름이 저장되지 않은 대화방이면 아무 말도 하지 않는다", () => {
+  const none = { known: null, conflicts: [], fresh: null };
+  const roles = { 박지현: "contact", 김민수: "me", 최유진: "contact" };
+  assert.deepEqual(existingSpeakerNotes(FILE_SPEAKERS, roles, [{ name: null, speaker_role: "me", messages: 9 }]), none);
+  assert.deepEqual(existingSpeakerNotes(FILE_SPEAKERS, roles, []), none);
+  assert.deepEqual(existingSpeakerNotes(FILE_SPEAKERS, roles, null), none);
+  // 저장된 사람이 이번 파일에 한 명도 없으면(다른 채팅방 파일) '이미 있는 사람' 줄은 없다
+  assert.equal(existingSpeakerNotes([{ name: "이서연" }], { 이서연: "contact" }, STORED).known, null);
 });
