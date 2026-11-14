@@ -6,18 +6,22 @@ import { api } from "../api.js";
 import { describeError, isMissingEndpoint, isUnavailable } from "../lib/errors.js";
 import { countCodePoints, formatBytes, formatDateTime, formatNumber, initial, josa } from "../lib/format.js";
 import {
-  METHODS,
-  ROLE_OPTIONS,
   checkRoles,
   checkSize,
   decodeBytes,
   encodingLabel,
   graphPhaseView,
+  isGroupRoom,
+  keepRecentFor,
   keptMessages,
   meName,
+  METHODS,
   previewView,
+  ROLE_OPTIONS,
+  skipUnassigned,
   stylePhaseView,
   trackProgress,
+  unassignedCount,
 } from "../lib/importing.js";
 import { relLabel } from "../lib/model.js";
 import { buildHash } from "../lib/router.js";
@@ -204,8 +208,7 @@ export function mountImport(root, ctx) {
       st.existing.map((conv) => conv.me_name),
     );
     st.roles = { ...st.view.roles };
-    const keep = st.view.keepRecent;
-    st.keepRecent = keep.forced ? keep.options[keep.options.length - 1] : null;
+    st.keepRecent = keepRecentFor(st.view.speakers, st.roles, st.view.maxMessages).value;
     const sameTitle = st.existing.find((conv) => st.view.titleHint && conv.title === st.view.titleHint);
     st.target = sameTitle ? sameTitle.id : st.existing.length === 1 ? st.existing[0].id : NEW_CONVERSATION;
     st.title = st.view.titleHint || `${c.alias}${josa(c.alias, "과/와")}의 대화`;
@@ -563,7 +566,80 @@ export function mountImport(root, ctx) {
       );
     }
 
+    const groupRoom = isGroupRoom(v.speakers);
+    const keepField = h("div", { class: "field", hidden: true });
+    const groupNote = h("div", { class: "note", hidden: !groupRoom });
+
+    function renderKeepField() {
+      // 제외한 사람의 메시지는 서버가 먼저 버린다 — 선택지는 남는 메시지 수로 만든다
+      const { keep, value } = keepRecentFor(v.speakers, st.roles, v.maxMessages, st.keepRecent);
+      st.keepRecent = value;
+      keepField.hidden = !keep.needed;
+      if (!keep.needed) {
+        setChildren(keepField, []);
+        return;
+      }
+      const keepId = uid("keep");
+      setChildren(keepField, [
+        h("label", { for: keepId }, "얼마나 가져올까요?"),
+        h(
+          "select",
+          {
+            id: keepId,
+            class: "input",
+            value: st.keepRecent ? String(st.keepRecent) : "",
+            onChange: (e) => {
+              st.keepRecent = e.target.value ? Number(e.target.value) : null;
+              renderKeepInfo();
+            },
+          },
+          keep.forced ? null : h("option", { value: "" }, "전체"),
+          keep.options.map((n) => h("option", { value: String(n) }, `최근 ${formatNumber(n)}개만`)),
+        ),
+        h(
+          "p",
+          { class: "hint" },
+          keep.forced
+            ? `한 번에 ${formatNumber(keep.max)}개까지 가져올 수 있어서 최근 대화만 가져와요. `
+            : "메시지가 많아요. 최근 대화만 가져와도 말투는 충분히 읽을 수 있어요. ",
+          "지난 약속·사건 정리를 쓰는 서버라면 메시지 하나에 10~15초쯤 걸려요.",
+        ),
+      ]);
+    }
+
+    function renderGroupNote() {
+      if (!groupRoom) return;
+      const left = unassignedCount(st.roles);
+      setChildren(groupNote, [
+        h(
+          "p",
+          null,
+          `단체방이에요(말한 사람 ${formatNumber(v.speakers.length)}명). 이 대화방은 '${c.alias}' 한 사람과의 대화로 저장돼요. `,
+          "나와 그 사람만 고르고 다른 사람은 '제외'로 두세요. 제외한 사람의 메시지는 저장하지 않아요.",
+        ),
+        left > 0
+          ? h(
+              "button",
+              {
+                type: "button",
+                class: "btn",
+                onClick: () => {
+                  st.roles = skipUnassigned(st.roles);
+                  syncRoleInputs();
+                  showError(err, "");
+                  renderSample();
+                  renderKeepInfo();
+                },
+              },
+              `정하지 않은 ${formatNumber(left)}명은 모두 제외`,
+            )
+          : null,
+      ]);
+    }
+
     function renderKeepInfo() {
+      renderKeepField();
+      renderGroupNote();
       const kept = keptMessages(v.speakers, st.roles);
       const limited = st.keepRecent ? Math.min(kept, st.keepRecent) : kept;
       keepInfo.textContent = `가져올 메시지: 약 ${formatNumber(limited)}개 (제외한 사람의 메시지는 빼고 셌어요)`;
@@ -607,37 +683,11 @@ export function mountImport(root, ctx) {
       );
     });
 
-    const keep = v.keepRecent;
-    let keepField = null;
-    if (keep.needed) {
-      const keepId = uid("keep");
-      keepField = h(
-        "div",
-        { class: "field" },
-        h("label", { for: keepId }, "얼마나 가져올까요?"),
-        h(
-          "select",
-          {
-            id: keepId,
-            class: "input",
-            value: st.keepRecent ? String(st.keepRecent) : "",
-            onChange: (e) => {
-              st.keepRecent = e.target.value ? Number(e.target.value) : null;
-              renderKeepInfo();
-            },
-          },
-          keep.forced ? null : h("option", { value: "" }, `전체 (${formatNumber(v.total)}개)`),
-          keep.options.map((n) => h("option", { value: String(n) }, `최근 ${formatNumber(n)}개만`)),
-        ),
-        h(
-          "p",
-          { class: "hint" },
-          keep.forced
-            ? `한 번에 ${formatNumber(keep.max)}개까지 가져올 수 있어서 최근 대화만 가져와요. `
-            : "메시지가 많아요. 최근 대화만 가져와도 말투는 충분히 읽을 수 있어요. ",
-          "지난 약속·사건 정리를 쓰는 서버라면 메시지 하나에 10~15초쯤 걸려요.",
-        ),
-      );
+    function syncRoleInputs() {
+      speakerRows.forEach((row, i) => {
+        const role = st.roles[v.speakers[i].name];
+        for (const input of row.querySelectorAll("input")) input.checked = input.value === role;
+      });
     }
 
     const targetField = st.existing.length
@@ -742,6 +792,7 @@ export function mountImport(root, ctx) {
 
         h("h3", { class: "section-sub" }, "누가 나인가요?"),
         h("p", { class: "hint" }, "내 메시지에서 말투를 읽어요. 단체방이라면 다른 사람은 '제외'로 두세요."),
+        groupNote,
         h("div", { class: "speaker-list" }, speakerRows),
         rolesWarn,
         h(

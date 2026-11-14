@@ -13,12 +13,17 @@ import {
   graphPhaseView,
   graphStatus,
   isPlaceholderName,
+  isGroupRoom,
+  keepRecentFor,
   keepRecentOptions,
   keptMessages,
   meName,
   previewView,
   stylePhaseView,
+  plannedMessages,
+  skipUnassigned,
   suggestRoles,
+  unassignedCount,
   trackProgress,
   utf8Bytes,
 } from "../js/lib/importing.js";
@@ -461,4 +466,57 @@ test("사건 정리 진행이 몇 분째 그대로면 더 읽지 않는다", () 
   const done = graphPhaseView({ ...STATS, graph_ingested: 312, graph_pending: 0 }, JOB, { stalled: true });
   assert.equal(done.status, "completed");
   assert.match(done.title, /완료/);
+});
+
+// ---------- 단체방 (실물 PC 내보내기 2026-11-14: 화자 11명, 약 16,000건) ----------
+
+const GROUP = [
+  { name: "김민수", count: 2800 },
+  { name: "박지현", count: 2500 },
+  { name: "이도윤", count: 2200 },
+  { name: "최유진", count: 8500 },
+];
+
+test("단체방: 화자가 셋 이상이면 단체방이고, 정하지 않은 사람을 한 번에 제외한다", () => {
+  assert.equal(isGroupRoom(GROUP), true);
+  assert.equal(isGroupRoom(GROUP.slice(0, 2)), false);
+  const roles = suggestRoles(GROUP, "박지현", ["김민수"]);
+  assert.deepEqual(roles, { 김민수: "me", 박지현: "contact", 이도윤: null, 최유진: null });
+  assert.equal(unassignedCount(roles), 2);
+  const done = skipUnassigned(roles);
+  assert.deepEqual(done, { 김민수: "me", 박지현: "contact", 이도윤: "skip", 최유진: "skip" });
+  assert.equal(unassignedCount(done), 0);
+  assert.equal(roles.이도윤, null); // 원래 지정표는 바꾸지 않는다
+  assert.equal(checkRoles(done).warning, null);
+});
+
+test("단체방: 상대를 여럿으로 두면 알려 준다", () => {
+  const check = checkRoles({ 김민수: "me", 박지현: "contact", 이도윤: "contact", 최유진: "skip" });
+  assert.equal(check.ok, true);
+  assert.match(check.warning, /2명/);
+});
+
+test("단체방: '최근 N개만'은 제외한 사람을 뺀 수로 정한다", () => {
+  // 아무도 제외하지 않았다: 16,000건 → 한도(5,000)를 넘어 최근 5,000건이 강제다
+  const open = { 김민수: "me", 박지현: null, 이도윤: null, 최유진: null };
+  assert.equal(plannedMessages(GROUP, open), 16000);
+  const before = keepRecentFor(GROUP, open, 5000);
+  assert.equal(before.keep.forced, true);
+  assert.equal(before.value, 5000);
+
+  // 둘을 제외했다: 5,300건 → 여전히 한도를 넘는다. 고른 값은 그대로 둔다
+  const two = { 김민수: "me", 박지현: "contact", 이도윤: "skip", 최유진: "skip" };
+  assert.equal(plannedMessages(GROUP, two), 5300);
+  assert.deepEqual(keepRecentFor(GROUP, two, 5000, 3000).value, 3000);
+
+  // 한도 안으로 들어왔다: 전체를 고를 수 있고, 강제로 고른 값은 풀린다
+  const small = [GROUP[0], { name: "박지현", count: 1900 }, GROUP[2], GROUP[3]];
+  const after = keepRecentFor(small, two, 5000, 5000);
+  assert.equal(after.keep.forced, false);
+  assert.equal(after.value, null);
+  assert.deepEqual(after.keep.options, [500, 1000, 3000]);
+
+  // 적으면 선택지를 내놓지 않는다
+  const tiny = keepRecentFor([{ name: "김민수", count: 300 }, { name: "박지현", count: 200 }], {}, 5000, 1000);
+  assert.deepEqual([tiny.keep.needed, tiny.value], [false, null]);
 });

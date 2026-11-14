@@ -200,8 +200,31 @@ export function checkRoles(roles) {
   if (!values.includes("me")) {
     return { ok: false, error: "'나'를 한 명 이상 골라 주세요. 내 메시지에서 말투를 읽어요.", warning: null };
   }
-  const warning = values.includes("contact") ? null : "'상대'로 지정한 화자가 없어요. 내 메시지만 저장돼요.";
+  const contacts = values.filter((r) => r === "contact").length;
+  let warning = null;
+  if (contacts === 0) warning = "'상대'로 지정한 화자가 없어요. 내 메시지만 저장돼요.";
+  else if (contacts > 1) {
+    // 대화방은 상대 한 사람의 것이다 — 여럿을 상대로 두면 그 사람들의 말이 모두 이 상대의 말로 저장된다
+    warning = `'상대'로 지정한 화자가 ${contacts}명이에요. 모두 이 상대가 한 말로 저장돼요. 다른 사람이라면 '제외'로 바꿔 주세요.`;
+  }
   return { ok: true, error: null, warning };
+}
+
+/** 단체방으로 본다: 말한 사람이 셋 이상. (둘이면 나와 상대다.) */
+export const GROUP_ROOM_SPEAKERS = 3;
+
+export function isGroupRoom(speakers) {
+  return (speakers || []).length >= GROUP_ROOM_SPEAKERS;
+}
+
+/** 아직 정하지 않은 화자를 모두 '제외'로 둔 새 지정표. 이미 정한 것은 건드리지 않는다. */
+export function skipUnassigned(roles) {
+  return Object.fromEntries(Object.entries(roles || {}).map(([name, r]) => [name, r || "skip"]));
+}
+
+/** 아직 정하지 않은 화자 수. */
+export function unassignedCount(roles) {
+  return Object.values(roles || {}).filter((r) => !r).length;
 }
 
 // 내보내기 파일이 나를 가리킬 때 쓰는 자리표시 이름. 진짜 이름이 아니므로 대화방의 "내 이름"으로 쓰지 않는다.
@@ -220,6 +243,28 @@ export function meName(speakers, roles) {
   const mine = (speakers || []).filter((sp) => roles?.[sp.name] === "me" && !isPlaceholderName(sp.name));
   mine.sort((a, b) => (b.count || 0) - (a.count || 0));
   return mine[0]?.name || null;
+}
+
+/**
+ * '제외'로 둔 화자만 뺀 메시지 수 — 아직 정하지 않은 화자는 가져올 것으로 센다.
+ * "최근 N개만" 선택지는 이 수로 만든다: 서버는 제외한 사람의 메시지를 먼저 버리고 그 뒤에 최근 N개를 남기므로,
+ * 단체방에서 여럿을 제외해 한도 안으로 들어오면 자를 필요가 없다.
+ */
+export function plannedMessages(speakers, roles) {
+  return (speakers || [])
+    .filter((sp) => roles?.[sp.name] !== "skip")
+    .reduce((sum, sp) => sum + (sp.count || 0), 0);
+}
+
+/**
+ * 화자 지정이 바뀐 뒤의 "최근 N개만" 상태 → { keep: 선택지, value: 고른 값(null=전체) }.
+ * 전에 고른 값이 아직 선택지에 있으면 그대로 두고, 한도를 넘는데 고른 값이 없으면 가장 큰 선택지를 고른다.
+ */
+export function keepRecentFor(speakers, roles, maxMessages, current = null) {
+  const keep = keepRecentOptions(plannedMessages(speakers, roles), maxMessages);
+  let value = keep.options.includes(current) ? current : null;
+  if (keep.forced && value === null) value = keep.options[keep.options.length - 1] ?? null;
+  return { keep, value };
 }
 
 /** 제외한 화자를 뺀, 실제로 저장될 메시지 수(미리보기 기준). */
