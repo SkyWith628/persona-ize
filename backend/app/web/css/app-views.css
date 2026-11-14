@@ -1034,6 +1034,12 @@
   width: 100%;
 }
 
+/* 확인 창 안(화자별로 고치기)은 좁다 — 이름을 위에, 고르는 칸을 아래에 둔다 */
+.dialog-form .speaker {
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-2);
+}
+
 .consent-box {
   margin: var(--space-4) 0;
   padding: var(--space-4);

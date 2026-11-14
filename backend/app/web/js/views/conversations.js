@@ -3,8 +3,22 @@
 import { api } from "../api.js";
 import { describeError } from "../lib/errors.js";
 import { clip, dayKey, errorCode, formatDateTime, formatDay, formatNumber, formatTime } from "../lib/format.js";
-import { graphPhaseView } from "../lib/importing.js";
-import { ME_NAME_MAX, asksMeName, swapErrorText, swapNotes, swapPreview, swapRequest, swapResultView } from "../lib/roles.js";
+import { ROLE_OPTIONS, graphPhaseView } from "../lib/importing.js";
+import {
+  ME_NAME_MAX,
+  asksMeName,
+  canFixBySpeaker,
+  namedSpeakers,
+  showsSpeakerNames,
+  speakerRolesPlan,
+  speakerRolesResultView,
+  swapErrorText,
+  swapNotes,
+  swapPreview,
+  swapRequest,
+  swapResultView,
+  unnamedMessages,
+} from "../lib/roles.js";
 import { buildHash } from "../lib/router.js";
 import { confirmDialog, openDialog } from "../ui/dialog.js";
 import { h, setChildren, uid } from "../ui/dom.js";
@@ -45,7 +59,7 @@ export async function deleteConversation(conv) {
 
 /**
  * 화자를 거꾸로 지정해 가져온 대화방 고치기: 나와 상대를 맞바꾼다(대화방은 그대로 둔다).
- * 서버에는 역할만 남아 있어 화자별로 따로 고칠 수는 없다 — 방 전체를 맞바꾼다.
+ * 방 전체를 맞바꾼다 — 한 사람만 고치는 것은 `fixBySpeaker`.
  * @param {object|null} stats 대화방 통계(없으면 사건 정리 안내와 이름 칸을 빼고 묻는다)
  * @returns {Promise<boolean>} 서버에 반영됐으면 true
  */
@@ -116,7 +130,115 @@ async function swapRoles(conv, contactAlias, messages, stats) {
   }
 }
 
-function messagesNode(messages, contactAlias) {
+/**
+ * 화자별로 고치기: 화자마다 나/상대/제외를 다시 정한다(원래 화자 이름이 남아 있는 대화방에서만).
+ * 제외는 그 사람의 메시지를 지운다 — 되살리려면 대화를 다시 가져와야 한다.
+ * @param {Array} speakers GET …/speakers 응답
+ * @returns {Promise<boolean>} 서버에 반영됐으면 true
+ */
+async function fixBySpeaker(conv, speakers, stats) {
+  const rows = namedSpeakers(speakers);
+  const chosen = Object.fromEntries(rows.map((sp) => [sp.name, sp.role]));
+  const unnamed = unnamedMessages(speakers);
+  const errEl = h("p", { class: "field-error", role: "alert", hidden: true });
+  const showErr = (text) => {
+    errEl.textContent = text;
+    errEl.hidden = !text;
+  };
+  const answer = await openDialog({
+    title: `'${conv.title}'의 화자를 고칠까요?`,
+    render: ({ close }) =>
+      h(
+        "form",
+        {
+          method: "dialog",
+          class: "dialog-form",
+          onSubmit: (e) => {
+            e.preventDefault();
+            if (rows.some((sp) => !chosen[sp.name])) return showErr("모든 사람의 역할을 골라 주세요.");
+            const plan = speakerRolesPlan(speakers, chosen);
+            if (!plan.body) return showErr("바꾼 것이 없어요. 고칠 사람의 역할을 바꿔 주세요.");
+            if (plan.emptied) return showErr("모두 제외하면 메시지가 남지 않아요. 대화방을 지우려면 '삭제'를 눌러 주세요.");
+            return close(plan);
+          },
+        },
+        h("p", { class: "dialog-message" }, "가져올 때 잘못 고른 사람만 바꿀 수 있어요. 그대로 둘 사람은 건드리지 않아도 돼요."),
+        h(
+          "div",
+          { class: "speaker-list" },
+          rows.map((sp) => {
+          const group = uid("role");
+          return h(
+            "fieldset",
+            { class: "speaker" },
+            h("legend", null, h("strong", null, sp.name), h("span", { class: "muted" }, ` 메시지 ${formatNumber(sp.messages)}개`)),
+            h(
+              "div",
+              { class: "seg seg-3" },
+              ROLE_OPTIONS.map((opt) => {
+                const inputId = uid("r");
+                return [
+                  h("input", {
+                    type: "radio",
+                    class: "seg-input",
+                    id: inputId,
+                    name: group,
+                    value: opt.value,
+                    "aria-label": `${sp.name}: ${opt.label}`,
+                    checked: chosen[sp.name] === opt.value,
+                    onChange: () => {
+                      chosen[sp.name] = opt.value;
+                      showErr("");
+                    },
+                  }),
+                  h("label", { for: inputId, class: "seg-label" }, h("span", { class: "seg-text" }, opt.label)),
+                ];
+              }),
+            ),
+          );
+        }),
+        ),
+        h(
+          "ul",
+          { class: "dialog-bullets" },
+          h("li", null, h("strong", null, "제외"), "를 고르면 그 사람의 메시지를 이 대화방에서 지워요. 되살리려면 대화를 다시 가져와야 해요."),
+          h("li", null, "말투 자료는 내 메시지로 다시 만들어요. 대화가 길면 조금 걸려요."),
+          stats && stats.graph_enabled ? h("li", null, "지난 약속·사건은 바뀐 사람의 메시지만 다시 정리해요.") : null,
+          unnamed > 0
+            ? h("li", null, `이름이 남아 있지 않은 메시지 ${formatNumber(unnamed)}개는 여기서 고칠 수 없어요. 같은 대화 파일을 다시 가져오면 이름이 채워져요.`)
+            : null,
+        ),
+        errEl,
+        h(
+          "div",
+          { class: "dialog-actions" },
+          h("button", { type: "button", class: "btn", "data-autofocus": true, onClick: () => close(null) }, "취소"),
+          h("button", { type: "submit", class: "btn btn-primary" }, "고치기"),
+        ),
+      ),
+  });
+  if (!answer) return false;
+  if (answer.removed > 0) {
+    const ok = await confirmDialog({
+      title: `${answer.removedNames.join(", ")}의 메시지 ${formatNumber(answer.removed)}개를 지울까요?`,
+      message: "제외한 사람의 메시지는 이 대화방에서 지워져요. 되살리려면 대화를 다시 가져와야 해요.",
+      confirmLabel: "지우고 고치기",
+      danger: true,
+    });
+    if (!ok) return false;
+  }
+  try {
+    const result = await api.conversations.setSpeakerRoles(conv.id, answer.body);
+    const view = speakerRolesResultView(result);
+    toast(view.text, { kind: view.kind, timeout: view.kind === "ok" ? 9000 : undefined });
+    return true;
+  } catch (err) {
+    if (err.status !== 401) toast(swapErrorText(err) || describeError(err, "고치지 못했어요."), { kind: "error" });
+    return false;
+  }
+}
+
+function messagesNode(messages, contactAlias, showNames = false) {
   let shown = Math.min(messages.length, PAGE);
   const listEl = h("ol", { class: "chat", "aria-label": "메시지" });
   const moreEl = h("div", { class: "chat-more" });
@@ -136,7 +258,7 @@ function messagesNode(messages, contactAlias) {
         h(
           "li",
           { class: ["chat-row", mine ? "is-me" : "is-them"] },
-          h("span", { class: "chat-who" }, mine ? "나" : contactAlias),
+          h("span", { class: "chat-who" }, mine ? "나" : (showNames && m.speaker_name) || contactAlias),
           h("p", { class: "chat-bubble" }, m.text),
           h("time", { class: "chat-time", datetime: m.sent_at }, formatTime(m.sent_at)),
         ),
@@ -173,11 +295,39 @@ function conversationBody(conv, contactAlias) {
   let latestStats = null; // 맞바꾸기 확인 창이 사건 정리 안내를 넣을지 정하는 데 쓴다
   const reload = loadInto(body, {
     lines: 4,
-    load: () => api.conversations.messages(conv.id),
-    isEmpty: (list) => !list.length,
+    // 화자 목록은 화자별로 고치기에만 쓴다 — 못 받아도(예전 서버) 메시지는 보여 준다
+    load: async () => {
+      const [list, speakers] = await Promise.all([api.conversations.messages(conv.id), api.conversations.speakers(conv.id).catch(() => [])]);
+      return { list, speakers };
+    },
+    isEmpty: ({ list }) => !list.length,
     empty: () => emptyState("이 대화방에는 메시지가 없어요", "대화 가져오기에서 메시지를 올릴 수 있어요."),
-    render: (list) => {
+    render: ({ list, speakers }) => {
       const mine = list.filter((m) => m.speaker_role === "me").length;
+      const afterChange = (changed) => {
+        if (!changed || !body.isConnected) return;
+        reload();
+        loadStats();
+      };
+      const fixBtn = canFixBySpeaker(speakers)
+        ? h(
+            "button",
+            {
+              type: "button",
+              class: "btn",
+              "aria-label": `${conv.title} 화자별로 고치기`,
+              onClick: async () => {
+                if (fixBtn.getAttribute("aria-busy") === "true") return;
+                fixBtn.setAttribute("aria-busy", "true");
+                const stats = latestStats || (await api.conversations.stats(conv.id).catch(() => null));
+                const changed = await fixBySpeaker(conv, speakers, stats);
+                fixBtn.removeAttribute("aria-busy");
+                afterChange(changed);
+              },
+            },
+            "화자별로 고치기",
+          )
+        : null;
       const swapBtn = h(
         "button",
         {
@@ -190,18 +340,22 @@ function conversationBody(conv, contactAlias) {
             const stats = latestStats || (await api.conversations.stats(conv.id).catch(() => null));
             const changed = await swapRoles(conv, contactAlias, list, stats);
             swapBtn.removeAttribute("aria-busy");
-            if (!changed || !body.isConnected) return;
-            reload();
-            loadStats();
+            afterChange(changed);
           },
         },
         "나·상대 맞바꾸기",
       );
       return [
         h("p", { class: "muted" }, `메시지 ${formatNumber(list.length)}개 · 내 메시지 ${formatNumber(mine)}개`),
-        h("div", { class: "conv-roles" }, h("span", { class: "muted" }, "나와 상대가 뒤바뀌어 보이나요? 대화방을 지우지 않고 고칠 수 있어요."), swapBtn),
+        h(
+          "div",
+          { class: "conv-roles" },
+          h("span", { class: "muted" }, fixBtn ? "화자를 잘못 골랐나요? 대화방을 지우지 않고 고칠 수 있어요." : "나와 상대가 뒤바뀌어 보이나요? 대화방을 지우지 않고 고칠 수 있어요."),
+          swapBtn,
+          fixBtn,
+        ),
         statsEl,
-        messagesNode(list, contactAlias),
+        messagesNode(list, contactAlias, showsSpeakerNames(speakers)),
       ];
     },
   });
