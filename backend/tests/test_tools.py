@@ -245,3 +245,54 @@ def test_usage_report_groups_by_kst_day_and_condition_and_formats() -> None:
         "avg_latency_ms": 1100,
         "failed": 1,
     }
+
+
+def _prod_env(**overrides: str) -> dict[str, str]:
+    base = {
+        "SITE_ADDRESS": "persona.example.com",
+        "LLM_PROVIDER": "anthropic",
+        "ANTHROPIC_API_KEY": "test-key",
+        "AUTH_ALLOW_HEADER_STUB": "false",
+        "SESSION_COOKIE_SECURE": "true",
+        "AUTH_ALLOW_REGISTER": "false",
+        "POSTGRES_PASSWORD": "a" * 24,
+        "NEO4J_PASSWORD": "b" * 24,
+        "USAGE_DAILY_REWRITE_LIMIT": "50",
+        "USAGE_DAILY_TOKEN_LIMIT": "150000",
+        "ADMIN_USERNAMES": "boss",
+    }
+    return {**base, **overrides}
+
+
+def test_prod_env_check_passes_safe_settings_and_parses_file_text() -> None:
+    from app.tools.prod_env import find_problems, parse_env
+
+    assert find_problems(_prod_env()) == []
+    parsed = parse_env(
+        "# 주석\n\nSITE_ADDRESS = 'persona.example.com'\nADMIN_USERNAMES=boss, other\n잘못된 줄\n"
+    )
+    assert parsed == {"SITE_ADDRESS": "persona.example.com", "ADMIN_USERNAMES": "boss, other"}
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected"),
+    [
+        ({"AUTH_ALLOW_HEADER_STUB": "true"}, "AUTH_ALLOW_HEADER_STUB"),
+        ({"SESSION_COOKIE_SECURE": "false"}, "SESSION_COOKIE_SECURE"),
+        ({"AUTH_ALLOW_REGISTER": "true"}, "AUTH_ALLOW_REGISTER"),
+        ({"SITE_ADDRESS": "3.35.1.2"}, "SITE_ADDRESS"),
+        ({"SITE_ADDRESS": ""}, "SITE_ADDRESS"),
+        ({"POSTGRES_PASSWORD": "persona-dev-only"}, "POSTGRES_PASSWORD"),
+        ({"NEO4J_PASSWORD": "p@ss/word-with-symbols!!"}, "NEO4J_PASSWORD"),
+        ({"NEO4J_PASSWORD": "a" * 24}, "서로 달라야"),
+        ({"ANTHROPIC_API_KEY": ""}, "ANTHROPIC_API_KEY"),
+        ({"USAGE_DAILY_REWRITE_LIMIT": "0"}, "USAGE_DAILY_REWRITE_LIMIT"),
+        ({"ADMIN_USERNAMES": " , "}, "ADMIN_USERNAMES"),
+    ],
+)
+def test_prod_env_check_flags_each_unsafe_setting(overrides: dict[str, str], expected: str) -> None:
+    from app.tools.prod_env import find_problems
+
+    problems = find_problems(_prod_env(**overrides))
+    assert len(problems) == 1 and expected in problems[0]
+    assert all("p@ss" not in p and "persona-dev-only" not in p for p in problems)  # 값은 출력하지 않는다

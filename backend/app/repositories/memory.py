@@ -11,6 +11,7 @@ from uuid import UUID, uuid4
 
 from app.ai.embeddings import cosine
 from app.core.errors import NotFoundError, VersionConflictError
+from app.domain.admin import RewriteStat
 from app.domain.contact import Contact
 from app.domain.conversation import (
     Conversation,
@@ -163,6 +164,31 @@ class InMemoryRewriteRepo:
         await self.get(user_id, feedback.request_id)
         self._feedback[feedback.request_id] = feedback
         return feedback
+
+    async def stats_since(self, since: datetime, limit: int) -> list[RewriteStat]:
+        recent = sorted(
+            (r for r in self._records.values() if r.created_at >= since),
+            key=lambda r: r.created_at,
+            reverse=True,
+        )
+        out: list[RewriteStat] = []
+        for r in recent[:limit]:
+            fb = self._feedback.get(r.id)
+            out.append(
+                RewriteStat(
+                    user_id=r.user_id,
+                    condition=r.condition,
+                    created_at=r.created_at,
+                    status=r.result.status,
+                    latency_ms=r.result.latency_ms,
+                    input_tokens=int(r.result.token_usage.get("input_tokens", 0)),
+                    output_tokens=int(r.result.token_usage.get("output_tokens", 0)),
+                    violation_checks=tuple(v.check for v in r.result.validation.violations),
+                    feedback_accepted=fb.accepted if fb else None,
+                    feedback_has_reason=bool(fb and fb.reason),
+                )
+            )
+        return out
 
 
 class InMemoryConversationRepo:
@@ -349,6 +375,11 @@ class InMemoryConversationRepo:
         self._jobs = {k: j for k, j in self._jobs.items() if j.conversation_id != conv.id}
         del self._conversations[conv.id]
         return messages, episodes
+
+    async def graph_backlog(self) -> tuple[int, int]:
+        pending = sum(1 for msgs in self._messages.values() for m in msgs if m.graph_ingested_at is None)
+        failed = sum(1 for j in self._jobs.values() if j.graph_status == "failed")
+        return pending, failed
 
     async def users_with_pending_graph(self) -> list[str]:
         users = {

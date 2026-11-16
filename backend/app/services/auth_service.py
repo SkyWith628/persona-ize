@@ -91,13 +91,16 @@ class AuthService:
     async def register(self, username: str, password: str) -> AuthResult:
         if not self._settings.auth_allow_register:
             raise ForbiddenError("회원가입이 닫혀 있습니다.")
+        return await self._open_session(await self.create_account(username, password))
+
+    async def create_account(self, username: str, password: str) -> User:
+        """계정만 만든다 (세션 없음). 가입이 닫힌 배포에서 운영자가 쓴다 — `app.tools.create_user`."""
         username = username.strip()
         if not (3 <= len(username) <= 32) or not username.replace("_", "").replace("-", "").isalnum():
             raise InvalidInputError("이름은 3~32자의 영문·숫자·_·-만 가능합니다.")
         if len(password) < MIN_PASSWORD:
             raise InvalidInputError(f"비밀번호는 {MIN_PASSWORD}자 이상이어야 합니다.")
-        user = await self._repo.create_user(username, hash_password(password))
-        return await self._open_session(user)
+        return await self._repo.create_user(username, hash_password(password))
 
     async def login(self, username: str, password: str, client_ip: str | None = None) -> AuthResult:
         username = username.strip()

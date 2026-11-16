@@ -6,7 +6,7 @@ ifeq (,$(wildcard $(PY)))
 PY := .venv/bin/python
 endif
 
-.PHONY: help setup venv up up-all down logs dev migrate import-synthetic demo-prepare test lint eval blind graph-dry-run usage-report graph-reset housekeeping
+.PHONY: help setup venv up up-all down logs dev migrate import-synthetic demo-prepare test lint eval blind graph-dry-run usage-report graph-reset housekeeping prod-check prod-up prod-logs
 
 help:
 	@echo "make setup     - .env.example → .env (최초 1회)"
@@ -82,3 +82,15 @@ graph-reset:
 
 housekeeping:
 	$(PY) scripts/housekeeping.py
+
+# ---- 배포 (서버에서 실행, docs/deploy.md) ----
+PROD = docker compose --env-file .env.prod -f docker-compose.prod.yml
+
+prod-check:
+	python3 scripts/check_prod_env.py .env.prod
+
+prod-up: prod-check
+	$(PROD) up -d --build
+
+prod-logs:
+	$(PROD) logs -f --tail 100 backend proxy

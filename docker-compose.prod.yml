@@ -1,0 +1,76 @@
+# 서버 한 대(EC2)에 PostgreSQL·Neo4j·백엔드·HTTPS 프록시를 함께 올린다. docs/deploy.md 참고.
+# 값은 .env.prod에서 읽는다: docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --build
+# 밖으로 여는 포트는 프록시의 80·443뿐이다. DB 포트는 서버 안 네트워크에만 있다.
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+      POSTGRES_DB: ${POSTGRES_DB:?}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  neo4j:
+    image: neo4j:5
+    restart: unless-stopped
+    environment:
+      NEO4J_AUTH: ${NEO4J_USERNAME:?}/${NEO4J_PASSWORD:?}
+      NEO4J_PLUGINS: '["apoc"]'
+      # 메모리 4GB 서버 기준. 기본값은 호스트 메모리의 큰 몫을 잡는다.
+      NEO4J_server_memory_heap_initial__size: 384m
+      NEO4J_server_memory_heap_max__size: 768m
+      NEO4J_server_memory_pagecache_size: 256m
+    volumes:
+      - neo4j-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+
+  backend:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    env_file:
+      - .env.prod
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      NEO4J_URI: bolt://neo4j:7687
+    volumes:
+      - hf-cache:/var/cache/huggingface
+    depends_on:
+      postgres:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+
+  proxy:
+    image: caddy:2
+    restart: unless-stopped
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:?}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./docker/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data   # 발급받은 인증서. 지우면 재발급 한도에 걸릴 수 있다
+      - caddy-config:/config
+    depends_on:
+      - backend
+
+volumes:
+  postgres-data:
+  neo4j-data:
+  hf-cache:
+  caddy-data:
+  caddy-config:

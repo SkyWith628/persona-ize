@@ -52,6 +52,9 @@ class Settings(BaseSettings):
     session_cookie_secure: bool = Field(False, description="https에서만 쿠키 전송. 로컬 http 개발은 False")
     auth_allow_header_stub: bool = Field(True, description="X-User-Id 헤더로 인증 대체 허용 (개발용)")
     auth_allow_register: bool = True
+    admin_usernames: str = Field(
+        "", description="운영 대시보드를 볼 수 있는 아이디 (쉼표 구분). 비면 아무도 못 본다"
+    )
     # 로그인 시도 제한: 이름·IP별 실패 횟수가 한도에 닿으면 잠금 시간 동안 429 (프로세스 안 메모리)
     auth_max_failures: int = Field(5, ge=1)
     auth_lockout_minutes: int = Field(15, ge=1)

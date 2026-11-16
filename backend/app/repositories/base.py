@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Protocol
 from uuid import UUID
 
+from app.domain.admin import RewriteStat
 from app.domain.contact import Contact
 from app.domain.conversation import (
     Conversation,
@@ -71,6 +72,10 @@ class RewriteRepo(Protocol):
         ...
 
     async def save_feedback(self, user_id: str, feedback: Feedback) -> Feedback: ...
+
+    async def stats_since(self, since: datetime, limit: int) -> list[RewriteStat]:
+        """since 이후 모든 사용자의 첨삭 요약, 최근 순 (운영 대시보드용, 본문 없음)."""
+        ...
 
     async def delete_by_contact(self, user_id: str, contact_id: UUID) -> int:
         """그 상대의 첨삭 요청·결과·피드백을 지운다 (상대 삭제). 지운 요청 수."""
@@ -152,6 +157,10 @@ class ConversationRepo(Protocol):
 
         (지운 메시지 수, 지운 묶음 수). 없으면 NotFoundError.
         """
+        ...
+
+    async def graph_backlog(self) -> tuple[int, int]:
+        """(그래프에 아직 안 들어간 메시지 수, 그래프 수집이 실패로 남은 가져오기 작업 수). 전체 사용자."""
         ...
 
     async def users_with_pending_graph(self) -> list[str]:

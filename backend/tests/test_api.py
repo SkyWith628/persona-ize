@@ -203,11 +203,13 @@ def test_usage_token_limit_blocks_next_request(user_a: dict[str, str]) -> None:
     assert "토큰" in blocked.json()["message"]
 
 
-def test_web_index_and_static(client: TestClient) -> None:
-    """데모 화면이 서빙된다 (인증 없이 HTML·JS·CSS는 열리고, API는 로그인 뒤)."""
-    r = client.get("/")
-    assert r.status_code == 200 and "Persona_ize" in r.text and "/static/app.js" in r.text
-    assert client.get("/static/app.js").status_code == 200
+def test_web_pages_and_static(client: TestClient) -> None:
+    """화면이 서빙된다 (인증 없이 HTML·JS·CSS는 열리고, API는 로그인 뒤)."""
+    pages = {"/": "/static/mobile.js", "/manage": "/static/app.js", "/admin": "/static/admin.js"}
+    for path, script in pages.items():
+        r = client.get(path)
+        assert r.status_code == 200 and "Persona_ize" in r.text and script in r.text, path
+        assert client.get(script).status_code == 200, script
     assert "text/css" in client.get("/static/app.css").headers["content-type"]
 
 

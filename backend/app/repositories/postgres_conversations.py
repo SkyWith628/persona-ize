@@ -340,6 +340,16 @@ class PostgresConversationRepo:
             await s.delete(conv)
         return messages, episodes
 
+    async def graph_backlog(self) -> tuple[int, int]:
+        async with self._sessions() as s:
+            pending = await s.scalar(
+                select(func.count()).select_from(MessageRow).where(MessageRow.graph_ingested_at.is_(None))
+            )
+            failed = await s.scalar(
+                select(func.count()).select_from(ImportJobRow).where(ImportJobRow.graph_status == "failed")
+            )
+        return int(pending or 0), int(failed or 0)
+
     async def users_with_pending_graph(self) -> list[str]:
         async with self._sessions() as s:
             rows = (

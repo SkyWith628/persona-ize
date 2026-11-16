@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#f4f5f7" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#101317" media="(prefers-color-scheme: dark)">
+  <meta name="referrer" content="no-referrer">
+  <meta name="format-detection" content="telephone=no">
+  <title>Persona_ize</title>
+  <link rel="stylesheet" href="/static/mobile.css">
+  <script type="module" src="/static/mobile.js"></script>
+</head>
+<body>
+  <noscript><p class="boot">이 화면은 자바스크립트가 필요합니다.</p></noscript>
+  <p id="boot" class="boot">불러오는 중</p>
+
+  <!-- 로그인 -->
+  <main id="login" class="column" hidden>
+    <h1 class="brand">Persona_ize</h1>
+    <form id="login-form" class="card" novalidate>
+      <h2 class="card-title">로그인</h2>
+      <div class="field">
+        <label for="login-user">아이디 (영문·숫자 3~32자)</label>
+        <input id="login-user" name="username" type="text" autocomplete="username" autocapitalize="none"
+               autocorrect="off" spellcheck="false" maxlength="32" required>
+      </div>
+      <div class="field">
+        <label for="login-pass">비밀번호</label>
+        <input id="login-pass" name="password" type="password" autocomplete="current-password" maxlength="128" required>
+      </div>
+      <button id="login-go" type="submit" class="btn primary" disabled>로그인</button>
+      <button id="login-register" type="button" class="btn" disabled>새 계정으로 가입</button>
+      <p class="note">비밀번호는 이 브라우저에 저장하지 않습니다. 로그인 상태는 서버 세션 쿠키로만 유지됩니다.</p>
+    </form>
+  </main>
+
+  <!-- 로그인 후 -->
+  <div id="app" hidden>
+    <nav class="tabbar" aria-label="주 메뉴">
+      <button type="button" class="tab" data-tab="compose">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4z"/><path d="M13.5 6.5l4 4"/></svg>
+        <span>작성</span>
+      </button>
+      <button type="button" class="tab" data-tab="contacts">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.6-3.6 3.2-5.5 6.5-5.5s5.9 1.9 6.5 5.5"/><path d="M16 4.8a3.5 3.5 0 0 1 0 6.4M18 14.8c1.9.7 3.1 2.4 3.5 5.2"/></svg>
+        <span>상대</span>
+      </button>
+      <button type="button" class="tab" data-tab="history">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7v5.5l3.5 2"/></svg>
+        <span>이력</span>
+      </button>
+      <button type="button" class="tab" data-tab="account">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c.8-4.2 4-6.5 8-6.5s7.2 2.3 8 6.5"/></svg>
+        <span>계정</span>
+      </button>
+    </nav>
+
+    <header class="topbar">
+      <div class="topbar-inner">
+        <button id="back" type="button" class="icon-btn" aria-label="뒤로" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
+        </button>
+        <h1 id="title" tabindex="-1">작성</h1>
+        <button id="refresh" type="button" class="text-btn" hidden>새로고침</button>
+      </div>
+    </header>
+
+    <main class="column">
+      <fieldset id="screens" class="screens">
+        <!-- 작성 -->
+        <section id="tab-compose" class="screen" hidden>
+          <section class="card" aria-labelledby="c-who-title">
+            <h2 id="c-who-title" class="card-title">누구에게 보내나요?</h2>
+            <p id="c-empty" class="row-text" hidden>상대 탭에서 상대를 먼저 등록하세요.</p>
+            <div id="c-pick" hidden>
+              <div id="c-recents" class="chips" role="group" aria-label="최근 상대"></div>
+              <div class="field inline">
+                <label for="c-contact">상대 바꾸기</label>
+                <select id="c-contact"></select>
+              </div>
+              <p id="c-nopersona" class="row-text muted" hidden>상대 탭에서 이 상대의 페르소나를 저장하면 첨삭할 수 있습니다.</p>
+            </div>
+          </section>
+
+          <section class="card" aria-labelledby="c-draft-title">
+            <h2 id="c-draft-title" class="card-title">초안</h2>
+            <textarea id="c-draft" rows="4" aria-label="합성 메시지 초안" placeholder="보낼 메시지 초안을 적어 주세요"></textarea>
+            <button id="c-go" type="button" class="btn primary" disabled>상대에게 맞게</button>
+            <p class="note">시연에는 합성 대화만 입력하세요. 누르면 서버에서 AI가 초안을 처리합니다.</p>
+          </section>
+
+          <div id="c-result" aria-live="polite"></div>
+
+          <details class="card disclosure">
+            <summary>시연 설정</summary>
+            <div class="field inline">
+              <label for="c-condition">조건</label>
+              <select id="c-condition"></select>
+            </div>
+            <div class="field">
+              <label for="c-situation">상황</label>
+              <input id="c-situation" type="text" placeholder="예: 일정 지연 양해" autocomplete="off">
+            </div>
+          </details>
+        </section>
+
+        <!-- 상대 · 이력 · 계정: mobile.js가 채운다 -->
+        <section id="tab-contacts" class="screen" hidden></section>
+        <section id="tab-history" class="screen" hidden></section>
+        <section id="tab-account" class="screen" hidden></section>
+      </fieldset>
+    </main>
+  </div>
+
+  <!-- 상태 표시: 탭 바 위에 고정 -->
+  <div id="banner" class="banner" role="status" aria-live="polite" hidden>
+    <span id="banner-spin" class="spinner" aria-hidden="true" hidden></span>
+    <span id="banner-text"></span>
+    <button id="banner-close" type="button" class="icon-btn small" aria-label="알림 닫기" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+
+  <!-- 확인 대화상자 -->
+  <dialog id="confirm" aria-labelledby="confirm-title">
+    <form id="confirm-form" method="dialog">
+      <h2 id="confirm-title"></h2>
+      <p id="confirm-message"></p>
+      <div id="confirm-field" class="field" hidden>
+        <label id="confirm-label" for="confirm-input"></label>
+        <input id="confirm-input" type="text" maxlength="500" autocomplete="off">
+      </div>
+      <div class="dialog-actions">
+        <button id="confirm-cancel" type="button" class="btn">취소</button>
+        <button id="confirm-ok" type="submit" class="btn primary"></button>
+      </div>
+    </form>
+  </dialog>
+</body>
+</html>

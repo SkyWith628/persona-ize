@@ -22,12 +22,14 @@ make up                          # PostgreSQL(pgvector)·Neo4j 컨테이너 (Doc
 make migrate                     # DB 스키마 최신으로
 make import-synthetic            # 합성 대화 적재 (user=demo). 그래프까지: scripts/import_synthetic.py --graph
 make test                        # 백엔드 테스트 (Postgres 없으면 통합 테스트는 skip)
-make dev                         # 화면 http://localhost:8000 · Swagger /docs
+make dev                         # http://localhost:8000 (/ 모바일 웹 · /manage 실험용 관리 화면 · /admin 운영 대시보드) · Swagger /docs
 ```
 
 인메모리로만 빠르게 보려면 `.env`의 `DATABASE_URL`을 비운다 (C/D 검색은 가져온 대화를 메모리에 둔다). API 상세: [docs/api.md](docs/api.md).
 
 실제 Claude를 쓰려면 `.env`에 `LLM_PROVIDER=anthropic`, `ANTHROPIC_API_KEY`, `LLM_MODEL`을 채운다. Console에서 사용량 한도를 먼저 건다.
+
+서버에 올리기(EC2 한 대, HTTPS 포함): [docs/deploy.md](docs/deploy.md).
 
 Docker로 전체(PostgreSQL+pgvector, Neo4j, 백엔드): `make up` → http://localhost:8000/docs, Neo4j Browser http://localhost:7474
 

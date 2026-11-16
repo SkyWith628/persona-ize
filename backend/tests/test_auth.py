@@ -267,3 +267,24 @@ async def test_housekeeping_purges_sessions_jobs_and_usage_in_memory() -> None:
     assert set(auth._sessions) == {"active", "expired-recent"}
     assert sorted(j.graph_status for j in convs._jobs.values()) == ["completed", "pending"]
     assert list(usage._rows) == [("u", date(2026, 11, 8))]
+
+
+def test_create_account_works_while_register_is_closed_and_validates() -> None:
+    """가입이 닫힌 배포에서 운영자가 서버에서 계정을 만든다 (`app.tools.create_user`)."""
+    import asyncio
+
+    from app.core.errors import InvalidInputError
+
+    client = _client(auth_allow_header_stub=False, auth_allow_register=False)
+    service = client.app.state.container.auth_service  # type: ignore[attr-defined]
+
+    user = asyncio.run(service.create_account(" operator_1 ", "long-enough-pass"))
+
+    assert user.username == "operator_1"
+    assert client.post("/v1/auth/register", json=CRED).status_code == 403
+    login = client.post("/v1/auth/login", json={"username": "operator_1", "password": "long-enough-pass"})
+    assert login.status_code == 200 and login.json()["username"] == "operator_1"
+    with pytest.raises(InvalidInputError):
+        asyncio.run(service.create_account("ok_name", "short"))
+    with pytest.raises(InvalidInputError):
+        asyncio.run(service.create_account("bad name!", "long-enough-pass"))

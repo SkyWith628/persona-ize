@@ -633,3 +633,54 @@ def test_housekeeping_on_postgres(pg_url: str) -> None:
     r, _, _, _, still = asyncio.run(_run())
     assert (r.sessions, r.usage_rows) == (2, 1) and r.import_jobs >= 0
     assert still == [True, False, False]
+
+
+async def test_admin_stats_feedback_reasons_and_limit_count(repos, pg_url: str) -> None:  # noqa: ANN001
+    """운영 집계용 조회: 본문 없이 상태·사유·피드백 여부만, 다른 사용자 행과 섞여도 시각 순."""
+    from datetime import UTC, date, datetime, timedelta
+
+    from app.domain.rewrite import Violation
+    from app.repositories.postgres_conversations import PostgresConversationRepo
+    from app.repositories.usage import PostgresUsageRepo
+
+    contacts, rewrites = repos
+    user = _user()
+    c = await contacts.create(user, "박지현", "superior")
+    started = datetime.now(UTC) - timedelta(seconds=5)
+    kept = _result().model_copy(
+        update={
+            "status": "fallback_original",
+            "token_usage": {"input_tokens": 70, "output_tokens": 9},
+            "validation": ValidationReport(
+                passed=False, violations=[Violation(check="preserve_missing", detail="'수요일' 누락")]
+            ),
+        }
+    )
+    common = {"user_id": user, "contact_id": c.id, "persona_version_id": None, "draft_version": 1}
+    first = await rewrites.save(**common, input_hash="a" * 64, idempotency_key=None, result=_result())
+    second = await rewrites.save(**common, input_hash="b" * 64, idempotency_key=None, result=kept)
+    await rewrites.save_feedback(user, Feedback(request_id=first.id, accepted=False, reason="딱딱함"))
+
+    mine = [s for s in await rewrites.stats_since(started, 10_000) if s.user_id == user]
+
+    assert [s.status for s in mine] == ["fallback_original", "recommended"]  # 최근 순
+    assert mine[0].violation_checks == ("preserve_missing",)
+    assert (mine[0].input_tokens, mine[0].output_tokens, mine[0].feedback_accepted) == (70, 9, None)
+    assert (mine[1].feedback_accepted, mine[1].feedback_has_reason) == (False, True)
+    assert second.created_at >= first.created_at
+    assert await rewrites.stats_since(datetime.now(UTC) + timedelta(hours=1), 10) == []
+
+    engine = create_engine(pg_url)
+    sessions = create_session_factory(engine)
+    try:
+        usage, day = PostgresUsageRepo(sessions), date(2031, 1, 2)
+        await usage.purge_before(date(2031, 1, 3))
+        heavy, light = _user(), _user()
+        for _ in range(2):
+            await usage.reserve_rewrite(heavy, day, 2)
+        await usage.reserve_rewrite(light, day, 2)
+        assert await usage.count_at_limit(day, 2) == 1
+        pending, failed = await PostgresConversationRepo(sessions).graph_backlog()
+        assert pending >= 0 and failed >= 0
+    finally:
+        await engine.dispose()

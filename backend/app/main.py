@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.deps import build_state
-from app.api.routes import auth, contacts, conversations, health, rewrites
+from app.api.routes import admin, auth, contacts, conversations, health, rewrites
 from app.core.config import Settings, get_settings
 from app.core.errors import DomainError
 
@@ -82,13 +82,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(rewrites.router)
     app.include_router(rewrites.usage_router)
     app.include_router(conversations.router)
+    app.include_router(admin.router)
 
-    # 데모 화면: 빌드 없는 정적 파일 (app/web). React(apps/web)는 뒤로 미뤘다 (decisions 11-09).
+    # 화면: 빌드 없는 정적 파일 (app/web). `/`는 와이어프레임 v2 기준 모바일 웹, `/manage`는 실험용 관리 화면
+    # (조건 선택·근거 id), `/admin`은 운영 대시보드. HTML은 누구나 받지만 API는 로그인·권한이 있어야 열린다.
     app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")
+    pages = {"/": "mobile.html", "/manage": "index.html", "/admin": "admin.html"}
 
-    @app.get("/", include_in_schema=False)
-    async def index() -> FileResponse:
-        return FileResponse(WEB_DIR / "index.html")
+    def _page(name: str):  # noqa: ANN202
+        async def page() -> FileResponse:
+            return FileResponse(WEB_DIR / name)
+
+        return page
+
+    for path, name in pages.items():
+        app.add_api_route(path, _page(name), include_in_schema=False)
 
     return app
 

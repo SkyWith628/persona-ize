@@ -55,6 +55,14 @@ settings: `formality·friendliness·directness`(1~5), `length`(shorter/same/long
 
 결과(`result`): `status`(recommended / fallback_original), `result_text`, `change_reasons[]`, `warnings[]`(모델이 적은 주의점 — 화면에 보여 준다), `evidence_ids[]`(참고한 과거 표현 id), `preserved_items[]`, `validation`, `attempt_log[]`(시도별 위반), `retrieval_version`, `token_usage`, `latency_ms`.
 
+## 운영 (관리자)
+
+| 요청 | 설명 |
+|---|---|
+| `GET /v1/admin/overview?days=7` | 운영 대시보드 집계(1~90일). `ADMIN_USERNAMES`에 있는 아이디의 세션만 — 아니면 403, 로그인 전·헤더 스텁은 401. 추천 성공률, 원문 유지 사유, 응답 시간 p50·p95, 피드백 수락률, 토큰, 조건별 건수, 최근 거절(가린 사용자·사유 입력 여부만), 오늘 한도 도달 사용자, 그래프 대기·실패. 화면은 `/admin` |
+
+화면 경로: `/` 모바일 웹 · `/manage` 실험용 관리 화면 · `/admin` 운영 대시보드. 배포는 `docs/deploy.md`.
+
 ## 오류 모양
 
 `{"code": "...", "message": "..."}` — 401 unauthorized, 403 forbidden(CSRF), 404 not_found(남의 것도 404), 409 conflict, 422 invalid_input, 429 usage_exceeded, 503 model_unavailable.

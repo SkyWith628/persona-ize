@@ -15,6 +15,7 @@ from sqlalchemy.exc import IntegrityError
 from app.core.errors import NotFoundError, VersionConflictError
 from app.db.models import ContactRow, FeedbackRow, PersonaVersionRow, RewriteRequestRow, RewriteResultRow
 from app.db.session import SessionFactory
+from app.domain.admin import RewriteStat
 from app.domain.contact import Contact
 from app.domain.persona import PersonaSettings, PersonaVersion, RelationshipType
 from app.domain.rewrite import Feedback, RewriteRecord, RewriteResult
@@ -237,6 +238,44 @@ class PostgresRewriteRepo:
         async with self._sessions() as s:
             rows = (await s.scalars(stmt)).unique().all()
         return [_record(r) for r in rows if r.result is not None]
+
+    async def stats_since(self, since: datetime, limit: int) -> list[RewriteStat]:
+        payload = RewriteResultRow.payload
+        stmt = (
+            select(
+                RewriteRequestRow.user_id,
+                RewriteRequestRow.condition,
+                RewriteRequestRow.created_at,
+                payload["status"].astext,
+                RewriteResultRow.latency_ms,
+                RewriteResultRow.token_usage,
+                payload["validation"]["violations"],
+                FeedbackRow.accepted,
+                FeedbackRow.reason.is_not(None),
+            )
+            .join(RewriteResultRow, RewriteResultRow.request_id == RewriteRequestRow.id)
+            .outerjoin(FeedbackRow, FeedbackRow.request_id == RewriteRequestRow.id)
+            .where(RewriteRequestRow.created_at >= since)
+            .order_by(RewriteRequestRow.created_at.desc())
+            .limit(limit)
+        )
+        async with self._sessions() as s:
+            rows = (await s.execute(stmt)).all()
+        return [
+            RewriteStat(
+                user_id=r[0],
+                condition=r[1],
+                created_at=r[2],
+                status=r[3] or "pending",
+                latency_ms=r[4],
+                input_tokens=int((r[5] or {}).get("input_tokens", 0)),
+                output_tokens=int((r[5] or {}).get("output_tokens", 0)),
+                violation_checks=tuple(v.get("check", "unknown") for v in (r[6] or [])),
+                feedback_accepted=r[7],
+                feedback_has_reason=bool(r[7] is not None and r[8]),
+            )
+            for r in rows
+        ]
 
     async def save_feedback(self, user_id: str, feedback: Feedback) -> Feedback:
         async with self._sessions.begin() as s:

@@ -1,0 +1,16 @@
+# HTTPS 종단. SITE_ADDRESS가 도메인이면 Caddy가 Let's Encrypt 인증서를 자동으로 받고 갱신한다.
+# 80·443이 인터넷에서 이 서버로 열려 있어야 발급된다.
+{$SITE_ADDRESS} {
+	encode gzip
+	request_body {
+		max_size 3MB
+	}
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+	reverse_proxy backend:8000
+}
