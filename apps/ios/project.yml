@@ -59,15 +59,27 @@ targets:
           NSExtensionAttributes:
             IsASCIICapable: false
             PrimaryLanguage: ko-KR
-            RequestsOpenAccess: false
+            RequestsOpenAccess: true
     entitlements:
       path: Keyboard/Keyboard.entitlements
       properties:
         com.apple.security.application-groups: [$(PERSONA_APP_GROUP)]
+  PersonaIzeTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [Tests]
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: $(PERSONA_BUNDLE_ID).tests
+    dependencies:
+      - target: PersonaIze
 schemes:
   PersonaIze:
     build:
       targets:
         PersonaIze: all
+    test:
+      targets: [PersonaIzeTests]
     archive:
       config: Release
