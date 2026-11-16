@@ -45,6 +45,26 @@ class EpisodeRef:
     valid_at: datetime | None  # 메시지 발화 시각(reference_time)
 
 
+@dataclass(frozen=True)
+class GraphNodeInfo:
+    """화면에 보여 줄 엔티티 노드 하나."""
+
+    uuid: str
+    name: str
+    kind: str  # person | event | other
+    summary: str
+    event_type: str | None = None
+    importance: int | None = None
+
+
+@dataclass(frozen=True)
+class GraphNeighborhood:
+    """한 노드 주변: 그 노드와 그 노드가 관여한 사건에 닿은 사실(엣지)과 양 끝 노드."""
+
+    nodes: list[GraphNodeInfo] = field(default_factory=list)
+    edges: list[GraphEdgeHit] = field(default_factory=list)
+
+
 class GraphStore(Protocol):
     async def prepare(self) -> None:
         """인덱스·제약 생성. 여러 번 불러도 된다."""
@@ -71,6 +91,13 @@ class GraphStore(Protocol):
         ...
 
     async def episode_refs(self, uuids: set[str]) -> dict[str, EpisodeRef]: ...
+
+    async def neighborhood(self, group_id: str, node_uuid: str) -> GraphNeighborhood:
+        """이 노드, 또는 이 노드와 이어진 Event 노드에 닿은 엣지 전부와 그 양 끝 노드.
+
+        검색기(`GraphContextRetriever`)가 상대의 사실로 인정하는 범위와 같다. 무효화된 사실도 포함한다.
+        """
+        ...
 
     async def remove_episodes(self, group_id: str, names: list[str]) -> int:
         """이름(`c1:m03`)으로 에피소드를 찾아 지운다.
@@ -180,6 +207,57 @@ class GraphitiStore:
         nodes = await EpisodicNode.get_by_uuids(self._g.driver, sorted(uuids))
         return {n.uuid: EpisodeRef(uuid=n.uuid, name=n.name, valid_at=n.valid_at) for n in nodes}
 
+    async def neighborhood(self, group_id: str, node_uuid: str) -> GraphNeighborhood:
+        result = await self._g.driver.execute_query(
+            "MATCH (c:Entity {uuid: $uuid, group_id: $group_id}) "
+            "OPTIONAL MATCH (c)-[:RELATES_TO]-(e:Event {group_id: $group_id}) "
+            "WITH c, collect(DISTINCT e) AS events "
+            "UNWIND [c] + events AS s "
+            "MATCH (s)-[r:RELATES_TO]-(:Entity {group_id: $group_id}) "
+            "RETURN DISTINCT r.uuid AS uuid, r.name AS name, r.fact AS fact, r.valid_at AS valid_at, "
+            "r.invalid_at AS invalid_at, r.episodes AS episodes, "
+            "startNode(r).uuid AS source, endNode(r).uuid AS target",
+            uuid=node_uuid,
+            group_id=group_id,
+        )
+        records = result[0] if isinstance(result, tuple) else result.records
+        edges = [
+            GraphEdgeHit(
+                uuid=r["uuid"],
+                name=r["name"] or "",
+                fact=r["fact"] or "",
+                valid_at=_as_datetime(r["valid_at"]),
+                invalid_at=_as_datetime(r["invalid_at"]),
+                episode_uuids=list(r["episodes"] or []),
+                source_node_uuid=r["source"],
+                target_node_uuid=r["target"],
+            )
+            for r in records
+        ]
+        uuids = sorted(
+            {node_uuid} | {e.source_node_uuid for e in edges} | {e.target_node_uuid for e in edges}
+        )
+        result = await self._g.driver.execute_query(
+            "MATCH (n:Entity {group_id: $group_id}) WHERE n.uuid IN $uuids "
+            "RETURN n.uuid AS uuid, n.name AS name, labels(n) AS labels, n.summary AS summary, "
+            "n.event_type AS event_type, n.importance AS importance",
+            group_id=group_id,
+            uuids=uuids,
+        )
+        records = result[0] if isinstance(result, tuple) else result.records
+        nodes = [
+            GraphNodeInfo(
+                uuid=r["uuid"],
+                name=r["name"] or "",
+                kind="person" if "Person" in r["labels"] else "event" if "Event" in r["labels"] else "other",
+                summary=r["summary"] or "",
+                event_type=r["event_type"],
+                importance=int(r["importance"]) if r["importance"] is not None else None,
+            )
+            for r in records
+        ]
+        return GraphNeighborhood(nodes=nodes, edges=edges)
+
     async def remove_episodes(self, group_id: str, names: list[str]) -> int:
         if not names:
             return 0
@@ -209,3 +287,18 @@ class GraphitiStore:
 
     async def close(self) -> None:
         await self._g.close()
+
+
+def _as_datetime(value: object) -> datetime | None:
+    """Neo4j 시간 값(neo4j.time.DateTime)·ISO 문자열·datetime을 시간대 있는 datetime으로."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    elif not isinstance(value, datetime):
+        to_native = getattr(value, "to_native", None)
+        if to_native is None:
+            return None
+        value = to_native()
+    assert isinstance(value, datetime)
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)

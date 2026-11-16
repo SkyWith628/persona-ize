@@ -25,6 +25,7 @@ curl -s -c cookie.txt -X POST localhost:8000/v1/auth/register -H "Content-Type: 
 | `GET /v1/contacts`, `GET /v1/contacts/{id}` | 목록·조회 (`persona_version` 포함) |
 | `PUT /v1/contacts/{id}/persona` `{settings, expected_version}` | 새 페르소나 버전. 현재 버전과 다르면 409 |
 | `GET /v1/contacts/{id}/persona` | 최신 버전 |
+| `GET /v1/contacts/{id}/graph` | 상대 주변 맥락 그래프 `{enabled, center_id, nodes[{id,name,kind,summary,event_type,importance,is_contact}], edges[{id,source,target,relation,fact,valid_at,invalid_at,current}]}`. 상대 노드와 그 상대가 관여한 사건에 닿은 사실만(D 검색 범위와 같음), 유효한 사실 먼저·최근 순. 그래프가 꺼져 있으면 `enabled=false` |
 | `DELETE /v1/contacts/{id}` | **상대 삭제**. 그 상대의 대화방·메시지·묶음·그래프 에피소드·페르소나·첨삭 이력을 모두 지운다. 응답 `{conversations, messages, episodes, graph_episodes, rewrites, graph_errors}` (그래프 삭제가 실패해도 DB는 지우고 사유를 돌려준다) |
 
 settings: `formality·friendliness·directness`(1~5), `length`(shorter/same/longer), `emoji`(none/rare/often), `address_term`, `preferred_phrases[]`, `forbidden_phrases[]`, `notes`.

@@ -17,7 +17,14 @@ from app.ai.retrieval.composite import CompositeRetriever
 from app.ai.retrieval.vector import VectorStyleRetriever
 from app.graph.ingest import GraphIngestService
 from app.graph.retriever import GraphContextRetriever
-from app.graph.store import EpisodeRef, EventInfo, GraphEdgeHit
+from app.graph.store import (
+    EpisodeRef,
+    EventInfo,
+    GraphEdgeHit,
+    GraphNeighborhood,
+    GraphNodeInfo,
+    _as_datetime,
+)
 from app.repositories.memory import InMemoryContactRepo, InMemoryConversationRepo
 from app.services.import_service import ImportMessage, ImportPayload, ImportService
 
@@ -34,6 +41,7 @@ class FakeGraphStore:
     events: dict[str, set[str]] = field(default_factory=dict)  # node uuid → 이웃 Event uuid
     event_meta: dict[str, EventInfo] = field(default_factory=dict)  # Event uuid → 유형·중요도
     searches: list[tuple[str, str, str | None, int]] = field(default_factory=list)
+    nodes: list[GraphNodeInfo] = field(default_factory=list)  # neighborhood가 돌려줄 노드
     fail_on: str | None = None  # 이 이름의 에피소드에서 예외
 
     async def prepare(self) -> None:
@@ -61,6 +69,12 @@ class FakeGraphStore:
 
     async def episode_refs(self, uuids) -> dict[str, EpisodeRef]:  # noqa: ANN001
         return {u: self.refs[u] for u in uuids if u in self.refs}
+
+    async def neighborhood(self, group_id, node_uuid) -> GraphNeighborhood:  # noqa: ANN001
+        scope = {node_uuid} | self.events.get(node_uuid, set())
+        edges = [e for e in self.edges if {e.source_node_uuid, e.target_node_uuid} & scope]
+        ends = {node_uuid} | {e.source_node_uuid for e in edges} | {e.target_node_uuid for e in edges}
+        return GraphNeighborhood(nodes=[n for n in self.nodes if n.uuid in ends], edges=edges)
 
     async def remove_episodes(self, group_id, names) -> int:  # noqa: ANN001
         before = len(self.added)
@@ -495,3 +509,85 @@ async def test_reset_wipes_group_or_one_conversation_then_reingests() -> None:
     assert store.added == [] and store.removed_groups[-1] == "u"
     assert await ingest.ingest_user("u") == 3
     assert await ingest.reset("someone-else") == (0, 0)
+
+
+def _graph_client(store: FakeGraphStore | None):  # noqa: ANN202
+    """fake 프로바이더 앱에 가짜 그래프 저장소를 꽂은 클라이언트와 헤더."""
+    from fastapi.testclient import TestClient
+
+    from app.core.config import Settings
+    from app.main import create_app
+
+    client = TestClient(create_app(Settings(_env_file=None, llm_provider="fake", embedding_provider="fake")))  # type: ignore[call-arg]
+    client.app.state.container.graph_store = store  # type: ignore[attr-defined]
+    return client, {"X-User-Id": "user-a"}
+
+
+def test_contact_graph_returns_contact_scope_current_facts_first() -> None:
+    old, new = datetime(2026, 10, 5, tzinfo=UTC), datetime(2026, 10, 16, tzinfo=UTC)
+    store = FakeGraphStore(
+        entities={"박지현": "n-contact"},
+        events={"n-contact": {"n-event"}},
+        nodes=[
+            GraphNodeInfo("n-me", "김민수", "person", "나"),
+            GraphNodeInfo("n-contact", "박지현", "person", "팀장"),
+            GraphNodeInfo("n-event", "대시보드 개편", "event", "개편 일정", "status", 6),
+            GraphNodeInfo("n-other", "최유진", "person", "다른 상대"),
+        ],
+        edges=[
+            GraphEdgeHit("e-old", "Relationship", "반말을 쓴다", old, new, [], "n-me", "n-contact"),
+            GraphEdgeHit("e-new", "Relationship", "존댓말을 쓴다", new, None, [], "n-me", "n-contact"),
+            GraphEdgeHit("e-event", "Involved", "개편을 맡았다", old, None, [], "n-me", "n-event"),
+            GraphEdgeHit("e-elsewhere", "Relationship", "밥 약속", new, None, [], "n-me", "n-other"),
+        ],
+    )
+    client, headers = _graph_client(store)
+    contact = client.post(
+        "/v1/contacts", json={"alias": "박지현", "relationship_type": "superior"}, headers=headers
+    ).json()
+
+    body = client.get(f"/v1/contacts/{contact['id']}/graph", headers=headers).json()
+
+    assert body["enabled"] is True and body["center_id"] == "n-contact"
+    # 다른 상대와의 사실(e-elsewhere)과 그 노드는 빠지고, 유효한 사실이 최근 순으로 먼저 온다.
+    assert [e["id"] for e in body["edges"]] == ["e-new", "e-event", "e-old"]
+    assert [e["current"] for e in body["edges"]] == [True, True, False]
+    assert [(n["name"], n["is_contact"]) for n in body["nodes"]] == [
+        ("박지현", True),
+        ("대시보드 개편", False),
+        ("김민수", False),
+    ]
+    assert body["nodes"][1]["event_type"] == "status" and body["nodes"][1]["importance"] == 6
+
+
+def test_contact_graph_empty_states_and_ownership() -> None:
+    client, headers = _graph_client(FakeGraphStore())
+    contact = client.post(
+        "/v1/contacts", json={"alias": "박지현", "relationship_type": "superior"}, headers=headers
+    ).json()
+    url = f"/v1/contacts/{contact['id']}/graph"
+
+    # 그래프에 상대 이름의 노드가 아직 없다 (수집 전).
+    assert client.get(url, headers=headers).json() == {
+        "enabled": True,
+        "center_id": None,
+        "nodes": [],
+        "edges": [],
+    }
+    # 남의 상대는 볼 수 없다.
+    assert client.get(url, headers={"X-User-Id": "user-b"}).status_code == 404
+
+    client.app.state.container.graph_store = None  # type: ignore[attr-defined]
+    assert client.get(url, headers=headers).json()["enabled"] is False
+
+
+def test_as_datetime_accepts_neo4j_values_strings_and_naive() -> None:
+    class Neo4jDateTime:
+        def to_native(self) -> datetime:
+            return datetime(2026, 10, 5, 0, 10, tzinfo=UTC)
+
+    assert _as_datetime(None) is None
+    assert _as_datetime(Neo4jDateTime()) == datetime(2026, 10, 5, 0, 10, tzinfo=UTC)
+    assert _as_datetime("2026-10-05T00:10:00Z") == datetime(2026, 10, 5, 0, 10, tzinfo=UTC)
+    assert _as_datetime(datetime(2026, 10, 5)) == datetime(2026, 10, 5, tzinfo=UTC)
+    assert _as_datetime(12345) is None

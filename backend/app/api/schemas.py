@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -59,6 +60,36 @@ class PersonaOut(BaseModel):
     version: int
     settings: PersonaSettings
     created_at: datetime
+
+
+class GraphNodeOut(BaseModel):
+    id: str
+    name: str
+    kind: Literal["person", "event", "other"]
+    summary: str
+    event_type: str | None = None
+    importance: int | None = None
+    is_contact: bool = Field(description="이 상대의 노드 (그림의 중심)")
+
+
+class GraphEdgeOut(BaseModel):
+    id: str
+    source: str
+    target: str
+    relation: str = Field(description="관계 유형 (Relationship·Involved·RELATES_TO)")
+    fact: str
+    valid_at: datetime | None
+    invalid_at: datetime | None
+    current: bool = Field(description="지금도 유효한 사실인지 (무효화되지 않았거나 무효 시각이 아직 안 옴)")
+
+
+class ContactGraphOut(BaseModel):
+    """상대 주변의 맥락 그래프. D 조건 검색이 이 상대의 사실로 보는 범위와 같다."""
+
+    enabled: bool = Field(description="서버가 그래프를 쓰는지 (NEO4J_URI)")
+    center_id: str | None = Field(None, description="상대 별칭과 이름이 같은 노드. 없으면 아직 수집 전")
+    nodes: list[GraphNodeOut] = Field(default_factory=list)
+    edges: list[GraphEdgeOut] = Field(default_factory=list)
 
 
 class RewriteCreate(BaseModel):
