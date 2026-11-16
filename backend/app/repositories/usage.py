@@ -25,6 +25,10 @@ class UsageRepo(Protocol):
 
     async def delete_user(self, user_id: str) -> None: ...
 
+    async def rewrites_by_users(self, day: date, user_ids: list[str]) -> dict[str, int]:
+        """그날 사용자별 첨삭 요청 수 (회원관리 목록). 기록이 없는 사용자는 결과에 없다."""
+        ...
+
     async def count_at_limit(self, day: date, limit: int) -> int:
         """그날 요청 수가 한도에 닿은 사용자 수."""
         ...
@@ -65,6 +69,10 @@ class InMemoryUsageRepo:
     async def delete_user(self, user_id: str) -> None:
         for key in [k for k in self._rows if k[0] == user_id]:
             del self._rows[key]
+
+    async def rewrites_by_users(self, day: date, user_ids: list[str]) -> dict[str, int]:
+        wanted = set(user_ids)
+        return {u: row.rewrites for (u, d), row in self._rows.items() if d == day and u in wanted}
 
     async def purge_before(self, day: date) -> int:
         gone = [k for k in self._rows if k[1] < day]
@@ -175,6 +183,21 @@ class PostgresUsageRepo:
 
         async with self._sessions.begin() as s:
             await s.execute(delete(UsageCounterRow).where(UsageCounterRow.user_id == user_id))
+
+    async def rewrites_by_users(self, day: date, user_ids: list[str]) -> dict[str, int]:
+        from sqlalchemy import select
+
+        from app.db.models import UsageCounterRow
+
+        if not user_ids:
+            return {}
+        async with self._sessions() as s:
+            rows = await s.execute(
+                select(UsageCounterRow.user_id, UsageCounterRow.rewrites).where(
+                    UsageCounterRow.day == day, UsageCounterRow.user_id.in_(user_ids)
+                )
+            )
+            return {user_id: int(n) for user_id, n in rows}
 
     async def purge_before(self, day: date) -> int:
         from sqlalchemy import delete

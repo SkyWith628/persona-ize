@@ -8,9 +8,12 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from app.domain.auth import Role, UserStatus
 from app.domain.conversation import GraphStatus, ImportStatus, SpeakerRole
 from app.domain.persona import PersonaSettings, RelationshipType
 from app.domain.rewrite import Condition, RewriteResult
+
+LoginMethod = Literal["password", "google", "kakao"]
 
 
 class ContactCreate(BaseModel):
@@ -37,7 +40,9 @@ class ContactDeletionOut(BaseModel):
 
 
 class AccountDeleteIn(BaseModel):
-    password: str = Field(min_length=1, max_length=128)
+    password: str = Field(
+        max_length=128, description="비밀번호 재확인. 비밀번호가 없는 소셜 전용 계정은 빈 문자열"
+    )
 
 
 class AccountDeletionOut(BaseModel):
@@ -132,11 +137,34 @@ class Credentials(BaseModel):
     password: str = Field(min_length=1, max_length=128)
 
 
+class LoginIn(BaseModel):
+    username: str = Field(min_length=3, max_length=254, description="아이디 또는 이메일")
+    password: str = Field(min_length=1, max_length=128)
+
+
+class SignupIn(BaseModel):
+    email: str = Field(min_length=3, max_length=254)
+    password: str = Field(min_length=1, max_length=128)
+    display_name: str | None = Field(None, max_length=40)
+
+
+class ProvidersOut(BaseModel):
+    signup_open: bool
+    requires_approval: bool
+    google: bool
+    kakao: bool
+
+
 class AuthOut(BaseModel):
     user_id: str
     username: str
     csrf_token: str = Field(description="쓰기 요청의 X-CSRF-Token 헤더 값")
     expires_at: datetime
+    email: str | None
+    display_name: str | None
+    role: Role
+    status: UserStatus
+    is_admin: bool
 
 
 class PasswordChange(BaseModel):
@@ -152,6 +180,56 @@ class MeOut(BaseModel):
     user_id: str
     username: str
     csrf_token: str
+    email: str | None
+    display_name: str | None
+    role: Role
+    status: UserStatus
+    is_admin: bool
+    providers: list[LoginMethod]
+
+
+class AdminUserOut(BaseModel):
+    """회원관리 목록의 한 줄. 대화 원문·첨삭 문장은 없다 (수치만)."""
+
+    user_id: str
+    username: str
+    email: str | None
+    display_name: str | None
+    role: Role
+    status: UserStatus
+    is_admin: bool
+    providers: list[LoginMethod]
+    created_at: datetime
+    last_login_at: datetime | None
+    rewrites_today: int
+    contacts: int
+
+
+class AdminUserList(BaseModel):
+    total: int
+    items: list[AdminUserOut]
+
+
+class AdminUserPatch(BaseModel):
+    status: Literal["active", "suspended"] | None = None
+    role: Role | None = None
+
+
+class RevokeSessionsOut(BaseModel):
+    revoked: int
+
+
+class AuditOut(BaseModel):
+    id: int
+    at: datetime
+    admin_username: str
+    action: str
+    target_username: str | None
+    detail: str
+
+
+class AuditList(BaseModel):
+    items: list[AuditOut]
 
 
 class ErrorOut(BaseModel):

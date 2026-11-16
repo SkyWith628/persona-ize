@@ -87,6 +87,14 @@ class InMemoryContactRepo:
         versions.append(pv)
         return pv
 
+    async def count_by_users(self, user_ids: list[str]) -> dict[str, int]:
+        wanted = set(user_ids)
+        out: dict[str, int] = {}
+        for c in self._contacts.values():
+            if c.user_id in wanted:
+                out[c.user_id] = out.get(c.user_id, 0) + 1
+        return out
+
     async def delete(self, user_id: str, contact_id: UUID) -> None:
         await self.get(user_id, contact_id)
         del self._contacts[contact_id]

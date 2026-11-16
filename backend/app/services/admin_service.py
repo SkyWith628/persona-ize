@@ -14,7 +14,9 @@ from datetime import UTC, datetime, timedelta
 from pydantic import BaseModel, Field
 
 from app.domain.admin import RewriteStat
+from app.domain.auth import UserCounts
 from app.domain.usage import usage_day
+from app.repositories.auth import AuthRepo
 from app.repositories.base import ConversationRepo, RewriteRepo
 from app.repositories.usage import UsageRepo
 
@@ -64,6 +66,7 @@ class AdminOverview(BaseModel):
     graph_enabled: bool
     graph_pending_messages: int
     graph_failed_jobs: int
+    users: UserCounts = Field(description="회원 수: 전체·승인 대기·정지·기간 안 신규 가입")
 
 
 def percentile(values: list[int], q: float) -> int | None:
@@ -136,19 +139,27 @@ class AdminService:
         *,
         daily_rewrite_limit: int,
         graph_enabled: bool,
+        auth: AuthRepo | None = None,
     ) -> None:
         self._rewrites = rewrites
         self._conversations = conversations
         self._usage = usage
         self._limit = daily_rewrite_limit
         self._graph_enabled = graph_enabled
+        self._auth = auth
 
     async def overview(self, days: int, now: datetime | None = None) -> AdminOverview:
         now = now or datetime.now(UTC)
         stats = await self._rewrites.stats_since(now - timedelta(days=days), MAX_ROWS + 1)
         pending, failed = await self._conversations.graph_backlog()
         at_limit = await self._usage.count_at_limit(usage_day(now), self._limit) if self._limit else 0
+        since = now - timedelta(days=days)
+        if self._auth is not None:
+            users = await self._auth.count_users(since)
+        else:
+            users = UserCounts(total=0, pending=0, suspended=0, new_in_range=0)
         return AdminOverview(
+            users=users,
             days=days,
             generated_at=now,
             truncated=len(stats) > MAX_ROWS,

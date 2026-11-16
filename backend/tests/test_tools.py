@@ -279,7 +279,19 @@ def test_prod_env_check_passes_safe_settings_and_parses_file_text() -> None:
     [
         ({"AUTH_ALLOW_HEADER_STUB": "true"}, "AUTH_ALLOW_HEADER_STUB"),
         ({"SESSION_COOKIE_SECURE": "false"}, "SESSION_COOKIE_SECURE"),
-        ({"AUTH_ALLOW_REGISTER": "true"}, "AUTH_ALLOW_REGISTER"),
+        ({"AUTH_ALLOW_REGISTER": "true"}, "AUTH_SIGNUP_REQUIRES_APPROVAL"),
+        ({"AUTH_ALLOW_REGISTER": "true", "AUTH_SIGNUP_REQUIRES_APPROVAL": "false"}, "API 비용"),
+        ({"AUTH_ALLOW_REGISTER": ""}, "AUTH_ALLOW_REGISTER"),
+        (
+            {"GOOGLE_CLIENT_ID": "id.apps", "PUBLIC_BASE_URL": "https://persona.example.com"},
+            "GOOGLE_CLIENT_SECRET",
+        ),
+        ({"GOOGLE_CLIENT_ID": "id.apps", "GOOGLE_CLIENT_SECRET": "s3cret-value"}, "PUBLIC_BASE_URL"),
+        ({"KAKAO_CLIENT_ID": "rest-key", "PUBLIC_BASE_URL": "http://persona.example.com"}, "PUBLIC_BASE_URL"),
+        (
+            {"KAKAO_CLIENT_ID": "rest-key", "PUBLIC_BASE_URL": "https://persona.example.com/"},
+            "PUBLIC_BASE_URL",
+        ),
         ({"SITE_ADDRESS": "3.35.1.2"}, "SITE_ADDRESS"),
         ({"SITE_ADDRESS": ""}, "SITE_ADDRESS"),
         ({"POSTGRES_PASSWORD": "persona-dev-only"}, "POSTGRES_PASSWORD"),
@@ -295,4 +307,19 @@ def test_prod_env_check_flags_each_unsafe_setting(overrides: dict[str, str], exp
 
     problems = find_problems(_prod_env(**overrides))
     assert len(problems) == 1 and expected in problems[0]
-    assert all("p@ss" not in p and "persona-dev-only" not in p for p in problems)  # 값은 출력하지 않는다
+    # 값은 출력하지 않는다
+    assert all("p@ss" not in p and "persona-dev-only" not in p and "s3cret" not in p for p in problems)
+
+
+def test_prod_env_check_allows_open_signup_with_approval_and_social_login() -> None:
+    from app.tools.prod_env import find_problems
+
+    opened = _prod_env(AUTH_ALLOW_REGISTER="true", AUTH_SIGNUP_REQUIRES_APPROVAL="true")
+    assert find_problems(opened) == []
+    social = _prod_env(
+        PUBLIC_BASE_URL="https://persona.example.com",
+        GOOGLE_CLIENT_ID="id.apps.googleusercontent.com",
+        GOOGLE_CLIENT_SECRET="s3cret-value",
+        KAKAO_CLIENT_ID="rest-key",  # 카카오 시크릿은 선택
+    )
+    assert find_problems(social) == []

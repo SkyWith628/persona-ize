@@ -13,6 +13,8 @@ CRED = {"username": "minsu_kim", "password": "correct horse battery"}
 
 
 def _client(**overrides) -> TestClient:  # noqa: ANN003
+    # 이 파일은 세션·CSRF·비밀번호 흐름을 본다. 승인 대기(기본 true)는 test_members.py에서 따로 본다.
+    overrides.setdefault("auth_signup_requires_approval", False)
     s = Settings(_env_file=None, llm_provider="fake", embedding_provider="fake", **overrides)  # type: ignore[call-arg]
     return TestClient(create_app(s))
 

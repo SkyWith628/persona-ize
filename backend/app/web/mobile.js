@@ -8,17 +8,32 @@ export class ServiceError extends Error {
   /**
    * @param {string} message 사용자에게 보일 문장
    * @param {number} [status] HTTP 상태 (없으면 0)
+   * @param {string} [code] 서버 오류 코드 (없으면 빈 문자열)
    */
-  constructor(message, status = 0) {
+  constructor(message, status = 0, code = "") {
     super(message);
     this.name = "ServiceError";
     this.status = status;
+    this.code = code;
   }
+}
+
+/** 오류 본문에서 `{code, message}`를 꺼낸다. 최상위에 있거나 `error` 아래에 있다. */
+function errorBody(data) {
+  if (!data || typeof data !== "object") return null;
+  return data.error && typeof data.error === "object" ? data.error : data;
+}
+
+/** 서버 오류 코드. 없으면 빈 문자열. */
+export function failureCode(data) {
+  const body = errorBody(data);
+  return body && typeof body.code === "string" ? body.code : "";
 }
 
 /** 도메인 오류는 `{code, message}`, 입력 검증 오류는 FastAPI 기본형 `{detail: [{msg}]}`로 온다. */
 export function failureMessage(data, status) {
-  if (data && typeof data.message === "string" && data.message) return data.message;
+  const body = errorBody(data);
+  if (body && typeof body.message === "string" && body.message) return body.message;
   const first = data && Array.isArray(data.detail) ? data.detail[0] : null;
   if (first && typeof first.msg === "string") return `입력을 확인하세요: ${first.msg}`;
   if (status === 401) return "로그인이 만료되었습니다. 다시 로그인하세요.";
@@ -69,6 +84,70 @@ export const Labels = {
     }
   },
 };
+
+export const SIGNUP_CLOSED_TEXT = "지금은 가입을 받지 않습니다. 운영자에게 계정을 요청하세요.";
+export const SUSPENDED_TEXT = "정지된 계정입니다. 운영자에게 문의하세요.";
+
+/** 소셜 로그인에서 돌아온 `/?auth_error=<code>`를 사용자 말로. 모르는 코드는 일반 문구(주소의 글을 그대로 보이지 않는다). */
+export function authErrorMessage(code) {
+  switch (code) {
+    case "oauth_denied": return "소셜 로그인을 취소했습니다. 계속하려면 다시 시도하세요.";
+    case "oauth_failed": return "소셜 로그인에 실패했습니다. 잠시 뒤 다시 시도하세요.";
+    case "signup_closed": return SIGNUP_CLOSED_TEXT;
+    case "account_suspended": return SUSPENDED_TEXT;
+    default: return "로그인하지 못했습니다. 다시 시도하세요.";
+  }
+}
+
+/**
+ * 로그인·가입·`/v1/auth/me` 응답을 화면이 쓰는 계정 정보로 바꾼다.
+ * 예전 서버는 새 필드가 없다 → status는 active, 가입 방법은 비밀번호로 본다.
+ * @returns {{username: string, email: string, displayName: string, status: "active"|"pending"|"suspended", isAdmin: boolean, providers: string[]}}
+ */
+export function accountOf(data, fallbackName = "") {
+  const text = (value) => (typeof value === "string" ? value : "");
+  const source = data && typeof data === "object" ? data : {};
+  return {
+    username: text(source.username) || fallbackName,
+    email: text(source.email),
+    displayName: text(source.display_name),
+    status: source.status === "pending" || source.status === "suspended" ? source.status : "active",
+    isAdmin: source.is_admin === true,
+    providers: Array.isArray(source.providers)
+      ? source.providers.filter((item) => typeof item === "string")
+      : ["password"],
+  };
+}
+
+/** 가입 방법 이름. */
+export function providerLabel(provider) {
+  switch (provider) {
+    case "password": return "비밀번호";
+    case "google": return "Google";
+    case "kakao": return "카카오";
+    default: return String(provider ?? "");
+  }
+}
+
+/**
+ * 이메일 가입 입력 검사. 문제가 있는 칸만 사유를 담아 돌려준다(없으면 빈 객체).
+ * @param {{email: string, password: string, confirm: string, name: string}} values
+ * @returns {{email?: string, password?: string, confirm?: string, name?: string}}
+ */
+export function signupProblems(values) {
+  const problems = {};
+  const email = String(values.email ?? "").trim();
+  const password = String(values.password ?? "");
+  if (!email) problems.email = "이메일을 입력하세요.";
+  else if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) problems.email = "이메일 주소 형식을 확인하세요.";
+  if (!password) problems.password = "비밀번호를 입력하세요.";
+  else if (password.length < 8) problems.password = "비밀번호는 8자 이상이어야 합니다.";
+  else if (password.length > 128) problems.password = "비밀번호는 128자 이하여야 합니다.";
+  if (!values.confirm) problems.confirm = "비밀번호를 한 번 더 입력하세요.";
+  else if (values.confirm !== password) problems.confirm = "비밀번호가 서로 다릅니다.";
+  if (Array.from(String(values.name ?? "").trim()).length > 40) problems.name = "이름은 40자 이하여야 합니다.";
+  return problems;
+}
 
 /** 최근 상대 기록 (기기에 id만 저장, 최신이 앞). */
 export const Recents = {
@@ -333,9 +412,16 @@ const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 const TABS = { compose: "작성", contacts: "상대", history: "이력", account: "계정" };
 const REQUEST_TIMEOUT_MS = 120_000;
 const MAX_FILE_BYTES = 2_000_000;
+const PROVIDERS_TIMEOUT_MS = 5_000;
+// 요청 처리 중에 잠그는 고정 요소 (로그인·가입·승인 대기 화면과 상단 막대).
+const BUSY_LOCKED = ["login-user", "login-pass", "to-signup", "signup-email", "signup-pass", "signup-pass2",
+  "signup-name", "signup-go", "to-login", "pending-check", "pending-logout", "back", "refresh"];
 
 /** 로그인한 동안의 연결과 상대 목록. epoch는 로그인·로그아웃마다 올라 늦게 온 응답을 버리는 데 쓴다. */
-const session = { user: null, csrf: "", contacts: [], epoch: 0 };
+// user는 accountOf()의 결과. pending은 승인 대기 화면에 머무는 동안 true (탭은 열지 않는다).
+const session = { user: null, pending: false, csrf: "", contacts: [], epoch: 0 };
+/** 로그인 화면. policy는 `GET /v1/auth/providers` 응답(예전 서버·실패면 null), mode는 보이는 양식. */
+const gate = { policy: null, mode: "login" };
 const ui = { busy: false, notice: "", error: false };
 const nav = { tab: "compose", stacks: { compose: [], contacts: [], history: [], account: [] }, roots: {} };
 
@@ -362,7 +448,7 @@ function notify(message, error = false) {
 function setBusy(busy) {
   ui.busy = busy;
   $("screens").disabled = busy;
-  for (const id of ["login-user", "login-pass", "back", "refresh"]) $(id).disabled = busy;
+  for (const id of BUSY_LOCKED) $(id).disabled = busy;
   syncLoginButtons();
   renderBanner();
 }
@@ -389,8 +475,10 @@ function run(action) {
     const lost = !document.activeElement || document.activeElement === document.body;
     if (lost && focused instanceof HTMLElement && focused.isConnected && !focused.disabled && focused.offsetParent !== null) {
       focused.focus({ preventScroll: true });
+    } else if (lost && session.pending) {
+      $("pending-title").focus({ preventScroll: true });
     } else if (lost && !session.user && !$("login").hidden) {
-      $("login-user").focus({ preventScroll: true });
+      $(gate.mode === "signup" ? "signup-email" : "login-user").focus({ preventScroll: true });
     }
   });
 }
@@ -438,7 +526,22 @@ async function api(method, path, options = {}) {
     try { data = JSON.parse(raw); } catch { data = null; }
   }
   if (response.ok) return data;
-  const failure = new ServiceError(failureMessage(data, response.status), response.status);
+  const code = failureCode(data);
+  const failure = new ServiceError(failureMessage(data, response.status), response.status, code);
+  if (response.status === 403 && code === "account_suspended") {
+    // 정지된 계정: 로그인 중이었다면 화면을 닫고, 어느 경우든 로그인 화면에 사유를 남긴다.
+    failure.message = SUSPENDED_TEXT;
+    if (session.user && epoch === session.epoch) {
+      endSession("");
+      showAuthAlert(SUSPENDED_TEXT);
+    }
+    throw failure;
+  }
+  if (response.status === 403 && code === "account_pending" && session.user && !session.pending && epoch === session.epoch) {
+    // 쓰는 도중 승인 대기로 바뀌었다(또는 로그인 응답에 상태가 없었다) → 탭을 닫고 대기 화면으로.
+    enterPending(session.user);
+    throw failure;
+  }
   if (response.status === 401 && session.user && epoch === session.epoch && !options.signIn) {
     // 비밀번호 확인 요청의 401은 '비밀번호가 틀림'일 수 있다. 세션이 살아 있으면 서버 문구를 그대로 보인다.
     if (options.verifiesPassword && await sessionAlive()) throw failure;
@@ -497,7 +600,7 @@ function closeDialog(ok) {
   if (settle) settle({ ok, value: $("confirm-input").value });
 }
 
-// ---------- 세션 ----------
+// ---------- 로그인 화면 ----------
 
 function syncLoginButtons() {
   const incomplete = ui.busy || !$("login-user").value.trim() || !$("login-pass").value;
@@ -505,39 +608,211 @@ function syncLoginButtons() {
   $("login-register").disabled = incomplete;
 }
 
+/** 로그인 화면 위쪽의 안내(소셜 로그인 실패·정지된 계정). 다음 로그인·가입 시도 때 지운다. */
+function showAuthAlert(message) {
+  $("auth-alert").textContent = message;
+  $("auth-alert").hidden = !message;
+}
+
+/** 가입 정책에 맞춰 버튼을 보인다. 정책을 모르면(예전 서버) 아이디·비밀번호 양식과 아이디 가입만 남긴다. */
+function renderGate() {
+  const policy = gate.policy;
+  const google = Boolean(policy?.google);
+  const kakao = Boolean(policy?.kakao);
+  const open = Boolean(policy?.signup_open);
+  if (gate.mode === "signup" && !open) gate.mode = "login";
+  $("auth-google").hidden = !google;
+  $("auth-kakao").hidden = !kakao;
+  $("auth-social").hidden = !google && !kakao;
+  $("login-form").hidden = gate.mode !== "login";
+  $("signup-form").hidden = gate.mode !== "signup";
+  $("login-register").hidden = Boolean(policy);
+  $("to-signup").hidden = !open;
+  $("signup-closed").hidden = !policy || open;
+  $("signup-approval").hidden = !policy?.requires_approval;
+  if (policy?.requires_approval) $("signup-go").setAttribute("aria-describedby", "signup-approval");
+  else $("signup-go").removeAttribute("aria-describedby");
+}
+
+function setGateMode(mode) {
+  if (ui.busy) return;
+  gate.mode = mode;
+  notify("");
+  showAuthAlert("");
+  clearSignupErrors();
+  for (const id of ["login-pass", "signup-pass", "signup-pass2"]) $(id).value = "";
+  syncLoginButtons();
+  renderGate();
+  $(gate.mode === "signup" ? "signup-email" : "login-user").focus();
+}
+
+/**
+ * 가입 정책과 켜진 소셜 로그인을 묻는다. 로그인 전에 부르므로 실패는 조용히 넘긴다
+ * (예전 서버는 이 경로가 없어 404 → null).
+ */
+async function loadPolicy() {
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), PROVIDERS_TIMEOUT_MS);
+  try {
+    const response = await fetch("/v1/auth/providers", {
+      headers: { Accept: "application/json" },
+      credentials: "same-origin",
+      cache: "no-store",
+      redirect: "error",
+      referrerPolicy: "no-referrer",
+      signal: abort.signal,
+    });
+    if (!response.ok) return null;
+    const data = await response.json();
+    return data && typeof data === "object" && !Array.isArray(data) ? data : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** 주소에 붙어 온 소셜 로그인 실패 코드를 안내로 바꾸고 주소에서 지운다. */
+function takeAuthError() {
+  let url;
+  try { url = new URL(window.location.href); } catch { return; }
+  if (!url.searchParams.has("auth_error")) return;
+  const code = url.searchParams.get("auth_error") ?? "";
+  url.searchParams.delete("auth_error");
+  try { window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`); } catch { /* 주소만 남는다 */ }
+  showAuthAlert(authErrorMessage(code));
+}
+
+const SIGNUP_FIELDS = { email: "signup-email", password: "signup-pass", confirm: "signup-pass2", name: "signup-name" };
+
+function setSignupError(name, message) {
+  const input = $(SIGNUP_FIELDS[name]);
+  const note = $(`${SIGNUP_FIELDS[name]}-error`);
+  note.textContent = message;
+  note.hidden = !message;
+  if (message) input.setAttribute("aria-invalid", "true"); else input.removeAttribute("aria-invalid");
+}
+
+function clearSignupErrors() {
+  for (const name of Object.keys(SIGNUP_FIELDS)) setSignupError(name, "");
+}
+
+/** 칸별 사유를 보이고 첫 번째 문제 칸으로 간다. 문제가 없으면 false. */
+function showSignupProblems(problems) {
+  let first = null;
+  for (const name of Object.keys(SIGNUP_FIELDS)) {
+    setSignupError(name, problems[name] ?? "");
+    if (problems[name] && !first) first = $(SIGNUP_FIELDS[name]);
+  }
+  if (first) first.focus();
+  return Boolean(first);
+}
+
+// ---------- 세션 ----------
+
+/** 아이디(또는 이메일)·비밀번호 로그인. register는 예전 서버의 아이디 가입. */
 function sign(register) {
   const username = $("login-user").value.trim();
   const password = $("login-pass").value;
   if (!username || !password) return;
+  showAuthAlert("");
   run(async () => {
-    const auth = await api("POST", register ? "/v1/auth/register" : "/v1/auth/login",
-      { body: { username, password }, signIn: true });
+    let auth;
+    try {
+      auth = await api("POST", register ? "/v1/auth/register" : "/v1/auth/login",
+        { body: { username, password }, signIn: true });
+    } catch (error) {
+      if (!(error instanceof ServiceError) || error.code !== "account_suspended") throw error;
+      $("login-pass").value = "";
+      syncLoginButtons();
+      showAuthAlert(SUSPENDED_TEXT);
+      $("auth-alert").focus();
+      return;
+    }
     $("login-pass").value = "";
-    await startSession({ username: auth.username ?? username, csrf: auth.csrf_token });
+    await enter(auth, username);
   });
 }
 
-/** 상대 목록을 받은 뒤에 화면을 연다. 실패하면 로그인 화면에 사유가 남는다. */
-async function startSession({ username, csrf }) {
-  session.csrf = csrf ?? "";
-  const contacts = await api("GET", "/v1/contacts");
+function signUp() {
+  const values = {
+    email: $("signup-email").value.trim().toLowerCase(),
+    password: $("signup-pass").value,
+    confirm: $("signup-pass2").value,
+    name: $("signup-name").value.trim(),
+  };
+  showAuthAlert("");
+  if (showSignupProblems(signupProblems(values))) return;
+  run(async () => {
+    const body = { email: values.email, password: values.password };
+    if (values.name) body.display_name = values.name;
+    let auth;
+    try {
+      auth = await api("POST", "/v1/auth/signup", { body, signIn: true });
+    } catch (error) {
+      if (error instanceof ServiceError && error.status === 409) {
+        showSignupProblems({ email: "이미 가입된 이메일입니다" });
+        // 처리 중에는 칸이 잠겨 있다. 잠금이 풀린 뒤 이메일 칸으로 간다.
+        setTimeout(() => { if (gate.mode === "signup" && !session.user) $("signup-email").focus(); }, 0);
+        return;
+      }
+      if (error instanceof ServiceError && error.code === "signup_closed") {
+        // 화면을 연 뒤에 가입이 닫혔다. 양식을 접고 사유를 남긴다.
+        gate.policy = { ...(gate.policy ?? {}), signup_open: false };
+        for (const id of ["signup-pass", "signup-pass2"]) $(id).value = "";
+        renderGate();
+        showAuthAlert(SIGNUP_CLOSED_TEXT);
+        $("auth-alert").focus();
+        return;
+      }
+      throw error;
+    }
+    for (const id of Object.values(SIGNUP_FIELDS)) $(id).value = "";
+    await enter(auth, values.email);
+  });
+}
+
+/**
+ * 로그인·가입 응답으로 들어간다. 그 응답에는 가입 방법(providers)이 없으므로 `/v1/auth/me`로 채운다.
+ * 승인 대기 계정은 탭 대신 대기 화면으로 간다.
+ */
+async function enter(auth, fallbackName) {
+  session.csrf = auth?.csrf_token ?? "";
+  let user = accountOf(auth, fallbackName);
+  if (!Array.isArray(auth?.providers)) {
+    try {
+      const me = await api("GET", "/v1/auth/me");
+      user = accountOf({ ...auth, ...me }, fallbackName);
+      if (me?.csrf_token) session.csrf = me.csrf_token;
+    } catch { /* 못 받으면 로그인 응답만으로 연다 (가입 방법은 비밀번호로 본다) */ }
+  }
+  if (user.status === "pending") enterPending(user);
+  else await startSession(user);
+}
+
+/** 상대 목록을 받은 뒤에 화면을 연다. 실패하면 로그인 화면에 사유가 남는다. session.csrf는 먼저 채워 둔다. */
+async function startSession(user) {
+  let contacts;
+  try {
+    contacts = await api("GET", "/v1/contacts");
+  } catch (error) {
+    // 상태 필드가 없던 응답이라도 서버가 승인 대기라고 답하면 대기 화면으로 간다.
+    if (error instanceof ServiceError && error.code === "account_pending") { enterPending(user); return; }
+    throw error;
+  }
   session.epoch += 1;
-  session.user = { username };
+  session.user = user;
+  session.pending = false;
   session.contacts = Array.isArray(contacts) ? contacts : [];
-  $("login-pass").value = "";
-  $("login-user").value = "";
+  for (const id of ["login-user", "login-pass"]) $(id).value = "";
   syncLoginButtons();
+  showAuthAlert("");
+  $("pending").hidden = true;
   mountApp();
 }
 
-/** 화면을 로그인으로 돌리고 이 브라우저에 남긴 상대 기록·입력을 지운다. 서버 세션 정리는 호출한 쪽이 먼저 한다. */
-function endSession(message = "", error = false) {
-  session.epoch += 1;
-  session.user = null;
-  session.csrf = "";
-  session.contacts = [];
-  store.remove("lastContact");
-  store.remove("recentContacts");
+/** 탭 화면을 비우고 숨긴다 (로그아웃·승인 대기 전환 공통). */
+function clearApp() {
   closeDialog(false);
   for (const tab of Object.keys(nav.stacks)) {
     for (const view of nav.stacks[tab]) view.dispose?.();
@@ -548,8 +823,65 @@ function endSession(message = "", error = false) {
   compose.reset();
   document.body.classList.remove("signed-in");
   $("app").hidden = true;
+}
+
+/** 승인 대기 화면. 세션은 살아 있지만 `/v1/auth/*`만 쓸 수 있으므로 탭은 열지 않는다. */
+function enterPending(user) {
+  clearApp();
+  session.epoch += 1;
+  session.user = { ...user, status: "pending" };
+  session.pending = true;
+  session.contacts = [];
+  const names = [user.displayName, user.email || user.username].filter(Boolean);
+  $("pending-who").textContent = names.join(" · ") || "알 수 없음";
+  for (const id of ["login-user", "login-pass"]) $(id).value = "";
+  syncLoginButtons();
+  showAuthAlert("");
+  notify("");
+  $("login").hidden = true;
+  $("pending").hidden = false;
+  window.scrollTo(0, 0);
+  $("pending-title").focus({ preventScroll: true });
+}
+
+function recheckPending() {
+  run(async () => {
+    const me = await api("GET", "/v1/auth/me");
+    if (me?.csrf_token) session.csrf = me.csrf_token;
+    const user = accountOf(me, session.user?.username ?? "");
+    if (user.status === "pending") {
+      notify(`아직 승인 대기 중입니다. (${Labels.date(new Date().toISOString())} 확인)`);
+      return;
+    }
+    await startSession(user);
+    if (session.user && !session.pending) notify("승인되었습니다. 이제 사용할 수 있어요.");
+  });
+}
+
+function logout() {
+  run(async () => {
+    await api("POST", "/v1/auth/logout");
+    endSession("");
+  });
+}
+
+/** 화면을 로그인으로 돌리고 이 브라우저에 남긴 상대 기록·입력을 지운다. 서버 세션 정리는 호출한 쪽이 먼저 한다. */
+function endSession(message = "", error = false) {
+  session.epoch += 1;
+  session.user = null;
+  session.pending = false;
+  session.csrf = "";
+  session.contacts = [];
+  store.remove("lastContact");
+  store.remove("recentContacts");
+  clearApp();
+  gate.mode = "login";
+  clearSignupErrors();
+  for (const id of ["login-pass", "signup-pass", "signup-pass2"]) $(id).value = "";
+  showAuthAlert("");
+  renderGate();
+  $("pending").hidden = true;
   $("login").hidden = false;
-  $("login-pass").value = "";
   syncLoginButtons();
   notify(message, error);
   $("login-user").focus();
@@ -579,15 +911,21 @@ async function reloadContacts() {
 async function boot() {
   let me = null;
   let problem = "";
+  const policy = loadPolicy();
   try {
     me = await api("GET", "/v1/auth/me");
   } catch (error) {
     if (!(error instanceof ServiceError) || error.status !== 401) problem = error.message;
   }
+  gate.policy = await policy;
+  renderGate();
   $("boot").hidden = true;
   if (me) {
     try {
-      await startSession({ username: me.username, csrf: me.csrf_token });
+      session.csrf = me.csrf_token ?? "";
+      const user = accountOf(me);
+      if (user.status === "pending") enterPending(user);
+      else await startSession(user);
       return;
     } catch (error) {
       session.csrf = "";
@@ -1541,16 +1879,20 @@ function rewriteDetail(rewrite, alias) {
 
 /** 오늘 사용량, 비밀번호 변경, 로그아웃, 계정 삭제. */
 function accountRoot() {
-  const username = session.user.username;
+  const account = session.user;
+  const username = account.username;
+  const hasPassword = account.providers.includes("password");
+  const label = account.email || username;
   const usage = h("p", { class: "muted", hidden: true });
   const current = h("input", { type: "password", autocomplete: "current-password", maxlength: "128" });
   const next = h("input", { type: "password", autocomplete: "new-password", maxlength: "128" });
   const change = h("button", { type: "submit", class: "btn", text: "비밀번호 변경", disabled: true });
   const deleting = h("input", { type: "password", autocomplete: "current-password", maxlength: "128" });
-  const remove = h("button", { type: "submit", class: "btn danger", text: "계정 삭제", disabled: true });
+  // 소셜 전용 계정은 확인할 비밀번호가 없다 → 확인 대화상자만 거친다.
+  const remove = h("button", { type: "submit", class: "btn danger", text: "계정 삭제", disabled: hasPassword });
   const syncButtons = () => {
     change.disabled = !current.value || !next.value;
-    remove.disabled = !deleting.value;
+    remove.disabled = hasPassword && !deleting.value;
   };
   for (const input of [current, next, deleting]) input.addEventListener("input", syncButtons);
 
@@ -1564,10 +1906,7 @@ function accountRoot() {
     } catch { /* 표시용 */ }
   };
 
-  const logout = () => run(async () => {
-    await api("POST", "/v1/auth/logout");
-    endSession("");
-  });
+  const fact = (name, value) => h("div", null, h("dt", { text: name }), h("dd", { class: "selectable", text: value }));
 
   const passwordForm = h("form", { class: "card", novalidate: true, onsubmit: (event) => {
     event.preventDefault();
@@ -1591,32 +1930,41 @@ function accountRoot() {
 
   const deleteForm = h("form", { class: "card", novalidate: true, onsubmit: async (event) => {
     event.preventDefault();
-    if (!deleting.value) return;
+    if (hasPassword && !deleting.value) return;
     const answer = await ask({
       title: "계정 삭제",
-      message: `${username} 계정과 모든 데이터를 지웁니다. 되돌릴 수 없습니다.`,
+      message: `${label} 계정과 모든 데이터를 지웁니다. 되돌릴 수 없습니다.`,
       confirm: "계정 삭제",
       danger: true,
     });
-    if (!answer.ok || !deleting.value) return;
+    if (!answer.ok || (hasPassword && !deleting.value)) return;
     run(async () => {
-      await api("DELETE", "/v1/auth/me", { body: { password: deleting.value }, verifiesPassword: true });
+      await api("DELETE", "/v1/auth/me",
+        { body: { password: hasPassword ? deleting.value : "" }, verifiesPassword: hasPassword });
       deleting.value = "";
       endSession("계정을 삭제했습니다.");
     });
   } },
   h("h2", { class: "card-title", text: "계정 삭제" }),
-  field("비밀번호 확인", deleting),
+  hasPassword ? field("비밀번호 확인", deleting) : null,
   remove,
-  h("p", { class: "note", text: "상대·대화·첨삭 이력·맥락 그래프를 모두 지웁니다. 되돌릴 수 없습니다." }));
+  h("p", { class: "note", text: hasPassword
+    ? "상대·대화·첨삭 이력·맥락 그래프를 모두 지웁니다. 되돌릴 수 없습니다."
+    : "소셜 로그인 계정이라 비밀번호 없이 삭제합니다. 상대·대화·첨삭 이력·맥락 그래프를 모두 지웁니다. 되돌릴 수 없습니다." }));
 
   return {
     el: h("div", { class: "view" },
       card("계정",
-        h("p", { class: "strong", text: username }),
+        h("p", { class: "strong", text: account.displayName || username }),
+        h("dl", { class: "facts" },
+          hasPassword && account.displayName ? fact("아이디", username) : null,
+          fact("이메일", account.email || "등록 안 됨"),
+          fact("이름", account.displayName || "등록 안 됨"),
+          fact("가입 방법", account.providers.map(providerLabel).join(", ") || "알 수 없음")),
         usage,
+        account.isAdmin ? h("a", { class: "btn", href: "/admin", text: "관리자 화면 열기" }) : null,
         h("button", { type: "button", class: "btn", text: "로그아웃", onclick: logout })),
-      passwordForm,
+      hasPassword ? passwordForm : null,
       deleteForm),
     appear: loadUsage,
   };
@@ -1629,6 +1977,18 @@ function init() {
   $("login-register").addEventListener("click", () => sign(true));
   $("login-user").addEventListener("input", syncLoginButtons);
   $("login-pass").addEventListener("input", syncLoginButtons);
+  $("to-signup").addEventListener("click", () => setGateMode("signup"));
+  $("to-login").addEventListener("click", () => setGateMode("login"));
+  $("signup-form").addEventListener("submit", (event) => { event.preventDefault(); signUp(); });
+  for (const [name, id] of Object.entries(SIGNUP_FIELDS)) {
+    // 고치기 시작하면 그 칸의 사유를 지운다. 비밀번호를 고치면 확인 칸의 '서로 다름'도 함께.
+    $(id).addEventListener("input", () => {
+      setSignupError(name, "");
+      if (name === "password") setSignupError("confirm", "");
+    });
+  }
+  $("pending-check").addEventListener("click", recheckPending);
+  $("pending-logout").addEventListener("click", logout);
 
   for (const button of document.querySelectorAll(".tab")) {
     button.addEventListener("click", () => showTab(button.dataset.tab));
@@ -1643,7 +2003,7 @@ function init() {
   // 기기의 뒤로 가기: 탭 안에서 들어간 화면을 하나 닫는다.
   window.addEventListener("popstate", () => {
     if ($("confirm").open) { closeDialog(false); return; }
-    if (!ui.busy && session.user) popView();
+    if (!ui.busy && session.user && !session.pending) popView();
   });
   // 뒤로-앞으로 캐시에서 되살아난 화면은 세션을 다시 확인한다.
   window.addEventListener("pageshow", (event) => {
@@ -1651,6 +2011,7 @@ function init() {
   });
 
   compose.wire();
+  takeAuthError();
   boot();
 }
 

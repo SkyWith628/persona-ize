@@ -29,8 +29,24 @@ def find_problems(env: dict[str, str]) -> list[str]:
 
     flag("AUTH_ALLOW_HEADER_STUB", "false", "켜 두면 X-User-Id 헤더만으로 누구의 데이터든 읽습니다")
     flag("SESSION_COOKIE_SECURE", "true", "HTTPS에서만 세션 쿠키를 보내야 합니다")
-    if env.get("AUTH_ALLOW_REGISTER", "").lower() != "false":
-        problems.append("AUTH_ALLOW_REGISTER가 false가 아닙니다 — 누구나 가입해 API 비용을 쓸 수 있습니다")
+    register = env.get("AUTH_ALLOW_REGISTER", "").lower()
+    if register not in ("true", "false"):
+        problems.append("AUTH_ALLOW_REGISTER는 true 또는 false로 적으세요 (비우면 가입이 열립니다)")
+    elif register == "true" and env.get("AUTH_SIGNUP_REQUIRES_APPROVAL", "").lower() != "true":
+        problems.append(
+            "AUTH_ALLOW_REGISTER=true면 AUTH_SIGNUP_REQUIRES_APPROVAL은 true여야 합니다"
+            " — 승인 없이 누구나 가입해 API 비용을 쓸 수 있습니다"
+        )
+
+    # 소셜 로그인: 제공자 ID를 넣었으면 콜백 주소를 만들 공개 주소(https)가 있어야 한다.
+    google_id, kakao_id = env.get("GOOGLE_CLIENT_ID", ""), env.get("KAKAO_CLIENT_ID", "")
+    if google_id and not env.get("GOOGLE_CLIENT_SECRET"):
+        problems.append("GOOGLE_CLIENT_ID가 있는데 GOOGLE_CLIENT_SECRET이 비어 있습니다")
+    if (google_id or kakao_id) and not re.fullmatch(r"https://[^/\s]+", env.get("PUBLIC_BASE_URL", "")):
+        problems.append(
+            "소셜 로그인을 켰으면 PUBLIC_BASE_URL에 https://도메인 을 넣으세요 (끝에 / 없이)"
+            " — 제공자 콘솔에 등록한 Redirect URI와 같아야 합니다"
+        )
 
     site = env.get("SITE_ADDRESS", "")
     if not site or site.startswith(("http://", "localhost", "127.")) or re.fullmatch(r"[\d.:]+", site):

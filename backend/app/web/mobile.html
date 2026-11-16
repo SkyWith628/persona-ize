@@ -16,24 +16,95 @@
   <noscript><p class="boot">이 화면은 자바스크립트가 필요합니다.</p></noscript>
   <p id="boot" class="boot">불러오는 중</p>
 
-  <!-- 로그인 -->
+  <!-- 로그인 · 가입 -->
   <main id="login" class="column" hidden>
     <h1 class="brand">Persona_ize</h1>
+    <p id="auth-alert" class="alert" role="alert" tabindex="-1" hidden></p>
+
+    <div id="auth-social" class="social-list" hidden>
+      <a id="auth-google" class="btn social google" href="/v1/auth/oauth/google/start?next=/" hidden>
+        <svg viewBox="0 0 48 48" aria-hidden="true" focusable="false">
+          <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
+          <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
+          <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
+          <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
+        </svg>
+        <span>Google로 계속하기</span>
+      </a>
+      <a id="auth-kakao" class="btn social kakao" href="/v1/auth/oauth/kakao/start?next=/" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <path fill="currentColor" d="M12 3.2c-5.25 0-9.5 3.33-9.5 7.44 0 2.66 1.78 4.99 4.45 6.3l-.92 3.37c-.1.36.3.65.62.44l4-2.65c.44.05.89.07 1.35.07 5.25 0 9.5-3.33 9.5-7.53S17.25 3.2 12 3.2z"/>
+        </svg>
+        <span>카카오로 계속하기</span>
+      </a>
+      <p class="divider" aria-hidden="true">또는</p>
+    </div>
+
     <form id="login-form" class="card" novalidate>
       <h2 class="card-title">로그인</h2>
       <div class="field">
-        <label for="login-user">아이디 (영문·숫자 3~32자)</label>
+        <label for="login-user">아이디 또는 이메일</label>
         <input id="login-user" name="username" type="text" autocomplete="username" autocapitalize="none"
-               autocorrect="off" spellcheck="false" maxlength="32" required>
+               autocorrect="off" spellcheck="false" maxlength="254" required>
       </div>
       <div class="field">
         <label for="login-pass">비밀번호</label>
         <input id="login-pass" name="password" type="password" autocomplete="current-password" maxlength="128" required>
       </div>
       <button id="login-go" type="submit" class="btn primary" disabled>로그인</button>
-      <button id="login-register" type="button" class="btn" disabled>새 계정으로 가입</button>
+      <!-- 가입 정책을 알려 주지 않는 예전 서버에서만 보인다 (아이디 가입). -->
+      <button id="login-register" type="button" class="btn" disabled hidden>새 계정으로 가입</button>
+      <button id="to-signup" type="button" class="btn" hidden>이메일로 가입</button>
+      <p id="signup-closed" class="note" hidden>지금은 가입을 받지 않습니다. 운영자에게 계정을 요청하세요.</p>
       <p class="note">비밀번호는 이 브라우저에 저장하지 않습니다. 로그인 상태는 서버 세션 쿠키로만 유지됩니다.</p>
     </form>
+
+    <form id="signup-form" class="card" novalidate hidden>
+      <h2 id="signup-title" class="card-title" tabindex="-1">이메일로 가입</h2>
+      <div class="field">
+        <label for="signup-email">이메일</label>
+        <input id="signup-email" name="email" type="email" inputmode="email" autocomplete="email" autocapitalize="none"
+               autocorrect="off" spellcheck="false" maxlength="254" required aria-describedby="signup-email-error">
+        <p id="signup-email-error" class="field-error" hidden></p>
+      </div>
+      <div class="field">
+        <label for="signup-pass">비밀번호</label>
+        <input id="signup-pass" name="password" type="password" autocomplete="new-password" minlength="8" maxlength="128"
+               required aria-describedby="signup-pass-hint signup-pass-error">
+        <p id="signup-pass-hint" class="note">8자 이상</p>
+        <p id="signup-pass-error" class="field-error" hidden></p>
+      </div>
+      <div class="field">
+        <label for="signup-pass2">비밀번호 확인</label>
+        <input id="signup-pass2" name="password_confirm" type="password" autocomplete="new-password" maxlength="128"
+               required aria-describedby="signup-pass2-error">
+        <p id="signup-pass2-error" class="field-error" hidden></p>
+      </div>
+      <div class="field">
+        <label for="signup-name">이름 (선택)</label>
+        <input id="signup-name" name="display_name" type="text" autocomplete="name" maxlength="40"
+               aria-describedby="signup-name-error">
+        <p id="signup-name-error" class="field-error" hidden></p>
+      </div>
+      <button id="signup-go" type="submit" class="btn primary">가입하기</button>
+      <p id="signup-approval" class="note" hidden>가입 후 운영자 승인이 끝나면 사용할 수 있어요</p>
+      <button id="to-login" type="button" class="btn">로그인으로 돌아가기</button>
+    </form>
+  </main>
+
+  <!-- 승인 대기 -->
+  <main id="pending" class="column" hidden>
+    <h1 class="brand">Persona_ize</h1>
+    <section class="card" aria-labelledby="pending-title">
+      <h2 id="pending-title" class="headline" tabindex="-1">승인 대기 중</h2>
+      <p class="row-text">가입은 끝났어요. 운영자가 계정을 승인하면 바로 사용할 수 있습니다. 승인 전에는 첨삭·상대·이력 기능을 쓸 수 없어요.</p>
+      <dl class="facts">
+        <div><dt>로그인한 계정</dt><dd id="pending-who" class="selectable"></dd></div>
+      </dl>
+      <button id="pending-check" type="button" class="btn primary">상태 다시 확인</button>
+      <button id="pending-logout" type="button" class="btn">로그아웃</button>
+      <p class="note">승인이 끝났다면 ‘상태 다시 확인’을 눌러 주세요. 이 화면을 닫아도 신청은 유지됩니다.</p>
+    </section>
   </main>
 
   <!-- 로그인 후 -->

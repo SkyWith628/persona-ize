@@ -1,5 +1,7 @@
 """의존성 주입과 인증.
 
+회원 상태: 승인 대기(pending) 계정은 `/v1/auth/*`만 쓸 수 있다 — `current_user_id`가 403 `account_pending`.
+
 인증 순서: ① 세션 쿠키 `pi_session`(HttpOnly) → 유효하면 그 사용자. 쓰기 요청(POST/PUT/PATCH/DELETE)은
 `X-CSRF-Token` 헤더가 세션의 토큰과 같아야 한다(403). ② 쿠키가 없고 `AUTH_ALLOW_HEADER_STUB`이면
 `X-User-Id` 헤더를 그대로 사용자 id로 쓴다 — 개발·테스트·평가 스크립트용이며 배포에서는 끈다.
@@ -12,7 +14,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Annotated, Any, Literal
 
 from fastapi import Depends, Header, HTTPException, Request
@@ -24,6 +26,7 @@ from app.ai.retrieval.composite import CompositeRetriever
 from app.ai.retrieval.vector import VectorStyleRetriever
 from app.ai.workflow import RewriteWorkflow
 from app.core.config import Settings, get_settings
+from app.core.errors import AccountPendingError, AccountSuspendedError
 from app.domain.auth import Session
 from app.repositories.auth import AuthRepo, InMemoryAuthRepo
 from app.repositories.base import ContactRepo, ConversationRepo, RewriteRepo
@@ -32,6 +35,7 @@ from app.repositories.usage import InMemoryUsageRepo, UsageRepo
 from app.services.auth_service import AuthService, ForbiddenError, UnauthorizedError
 from app.services.deletion_service import DeletionService
 from app.services.import_service import ImportService
+from app.services.oauth import OAuthProvider, build_oauth_providers
 from app.services.rewrite_service import RewriteService
 
 SESSION_COOKIE = "pi_session"
@@ -59,6 +63,8 @@ class AppState:
     engine: Any = None  # sqlalchemy AsyncEngine | None — db extra 없이도 import되게 느슨히 둔다
     graph_store: Any = None  # app.graph.store.GraphStore | None — NEO4J_URI가 있을 때만
     graph_ingest: Any = None  # app.graph.ingest.GraphIngestService | None
+    # 설정된 소셜 로그인 제공자 (google·kakao). 테스트는 여기에 가짜 제공자를 끼운다.
+    oauth_providers: dict[str, OAuthProvider] = field(default_factory=dict)
 
     @property
     def graph_enabled(self) -> bool:
@@ -172,6 +178,7 @@ def build_state(settings: Settings) -> AppState:
         engine=engine,
         graph_store=graph_store,
         graph_ingest=graph_ingest,
+        oauth_providers=build_oauth_providers(settings),
     )
 
 
@@ -187,10 +194,20 @@ async def current_session(request: Request, state: AppState) -> Session:
     return session
 
 
+def require_csrf(request: Request, state: AppState, session: Session) -> None:
+    """쿠키 세션의 쓰기 요청은 `X-CSRF-Token`이 세션의 토큰과 같아야 한다 (403)."""
+    if not state.auth_service.csrf_ok(session, request.headers.get(CSRF_HEADER)):
+        raise ForbiddenError("CSRF 토큰이 없거나 맞지 않습니다 (X-CSRF-Token).")
+
+
 async def current_user_id(
     request: Request, state: State, x_user_id: Annotated[str | None, Header()] = None
 ) -> str:
-    """세션 쿠키(+CSRF) 우선, 없으면 개발용 헤더 스텁 (설정으로 끌 수 있다)."""
+    """세션 쿠키(+CSRF) 우선, 없으면 개발용 헤더 스텁 (설정으로 끌 수 있다).
+
+    `/v1/auth/*` 밖의 모든 라우트가 이 의존성을 거친다 — 승인 대기(pending) 계정은 여기서 403
+    `account_pending`으로 막는다. 헤더 스텁 사용자는 계정이 없으므로 상태 검사가 없다.
+    """
     token = request.cookies.get(SESSION_COOKIE)
     if token:
         session = await state.auth_service.resolve(token)
@@ -200,6 +217,11 @@ async def current_user_id(
             session, request.headers.get(CSRF_HEADER)
         ):
             raise ForbiddenError("CSRF 토큰이 없거나 맞지 않습니다 (X-CSRF-Token).")
+        user = await state.auth_service.me(session)
+        if user.status == "pending":
+            raise AccountPendingError("관리자 승인을 기다리는 계정입니다.")
+        if user.status == "suspended":  # 정지 때 세션을 폐기하지만 한 번 더 막는다
+            raise AccountSuspendedError("정지된 계정입니다. 관리자에게 문의하세요.")
         return str(session.user_id)
     if state.settings.auth_allow_header_stub and x_user_id and x_user_id.strip():
         return x_user_id.strip()

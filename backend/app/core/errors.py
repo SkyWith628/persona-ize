@@ -60,3 +60,31 @@ class TooManyAttemptsError(DomainError):
 
     status_code = 429
     code = "too_many_attempts"
+
+
+class BadRequestError(DomainError):
+    """요청 자체가 규칙에 어긋난다 (자기 자신 정지·삭제 등). 422(본문 검증)와 달리 400으로 나간다."""
+
+    status_code = 400
+    code = "invalid_input"
+
+
+class SignupClosedError(DomainError):
+    """가입이 닫혀 있다 (`AUTH_ALLOW_REGISTER=false`). 기존 계정 로그인은 된다."""
+
+    status_code = 403
+    code = "signup_closed"
+
+
+class AccountPendingError(DomainError):
+    """승인 대기 계정. 로그인은 되지만 `/v1/auth/*` 밖의 API는 쓸 수 없다."""
+
+    status_code = 403
+    code = "account_pending"
+
+
+class AccountSuspendedError(DomainError):
+    """정지된 계정. 로그인할 수 없다."""
+
+    status_code = 403
+    code = "account_suspended"

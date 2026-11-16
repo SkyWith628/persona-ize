@@ -52,6 +52,17 @@ class Settings(BaseSettings):
     session_cookie_secure: bool = Field(False, description="https에서만 쿠키 전송. 로컬 http 개발은 False")
     auth_allow_header_stub: bool = Field(True, description="X-User-Id 헤더로 인증 대체 허용 (개발용)")
     auth_allow_register: bool = True
+    # 새 계정(아이디·이메일·소셜 가입)을 승인 대기(pending)로 만든다. 관리자가 승인해야 API를 쓸 수 있다.
+    auth_signup_requires_approval: bool = True
+    # 소셜 로그인 (인가 코드 방식). ID가 비면 그 제공자는 꺼진다. 카카오 시크릿은 콘솔에서 켰을 때만 넣는다.
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    kakao_client_id: str = Field("", description="카카오 REST API 키")
+    kakao_client_secret: str = ""
+    public_base_url: str = Field(
+        "",
+        description="밖에서 보이는 주소(https://도메인). 소셜 로그인 redirect_uri를 만든다. 비면 요청 주소",
+    )
     admin_usernames: str = Field(
         "", description="운영 대시보드를 볼 수 있는 아이디 (쉼표 구분). 비면 아무도 못 본다"
     )

@@ -382,7 +382,13 @@ def test_import_and_vector_search_on_postgres(pg_url: str) -> None:
 
 def test_auth_register_login_on_postgres(pg_url: str) -> None:
     """users·sessions 테이블 왕복: 가입 → 쿠키 → me, 로그아웃 뒤 401, 재로그인."""
-    settings = Settings(_env_file=None, llm_provider="fake", database_url=pg_url, embedding_provider="fake")  # type: ignore[call-arg]
+    settings = Settings(
+        _env_file=None,
+        llm_provider="fake",
+        database_url=pg_url,
+        embedding_provider="fake",
+        auth_signup_requires_approval=False,
+    )  # type: ignore[call-arg]
     name = f"pg_{_user().replace('-', '_')}"
     with TestClient(create_app(settings)) as client:
         r = client.post("/v1/auth/register", json={"username": name, "password": "long-enough-pw"})
@@ -412,7 +418,13 @@ def test_deep_healthz_on_postgres(pg_url: str) -> None:
 
 def test_delete_contact_and_account_cascade_on_postgres(pg_url: str) -> None:
     """FK CASCADE 확인: 상대 삭제 → 대화방·메시지·묶음·페르소나·첨삭 이력, 계정 삭제 → 사용자·세션·사용량."""
-    settings = Settings(_env_file=None, llm_provider="fake", database_url=pg_url, embedding_provider="fake")  # type: ignore[call-arg]
+    settings = Settings(
+        _env_file=None,
+        llm_provider="fake",
+        database_url=pg_url,
+        embedding_provider="fake",
+        auth_signup_requires_approval=False,
+    )  # type: ignore[call-arg]
     name = f"pg_{_user().replace('-', '_')}"
     with TestClient(create_app(settings)) as client:
         reg = client.post("/v1/auth/register", json={"username": name, "password": "long-enough-pw"})
@@ -684,3 +696,191 @@ async def test_admin_stats_feedback_reasons_and_limit_count(repos, pg_url: str) 
         assert pending >= 0 and failed >= 0
     finally:
         await engine.dispose()
+
+
+async def test_member_repo_methods_on_postgres(pg_url: str) -> None:
+    """0008: 이메일·역할·상태·마지막 로그인, 소셜 연결, 목록·검색·집계, 세션 일괄 폐기, 관리자 기록."""
+    from datetime import UTC, datetime, timedelta
+
+    from app.domain.auth import AuditEntry, Session
+    from app.repositories.auth import EMAIL_TAKEN, USERNAME_TAKEN, PostgresAuthRepo
+    from app.repositories.usage import PostgresUsageRepo
+
+    engine = create_engine(pg_url)
+    sessions = create_session_factory(engine)
+    tag = uuid.uuid4().hex[:8]
+    try:
+        auth = PostgresAuthRepo(sessions)
+        started = datetime.now(UTC) - timedelta(seconds=5)
+        before = await auth.count_users(started)
+
+        plain = await auth.create_user(f"m_{tag}_a", "hash")
+        assert (plain.role, plain.status, plain.email, plain.has_password) == ("user", "active", None, True)
+        social = await auth.create_user(
+            f"m_{tag}_b", None, email=f"{tag}@example.com", display_name="민수 100%", status="pending"
+        )
+        assert (social.status, social.has_password, social.last_login_at) == ("pending", False, None)
+        # 이메일 없는 계정은 여러 개 가능(NULL은 유일 제약에 안 걸린다), 같은 이메일·이름은 409.
+        await auth.create_user(f"m_{tag}_c", None)
+        with pytest.raises(VersionConflictError) as dup_email:
+            await auth.create_user(f"m_{tag}_d", "hash", email=f"{tag}@example.com")
+        assert dup_email.value.message == EMAIL_TAKEN
+        with pytest.raises(VersionConflictError) as dup_name:
+            await auth.create_user(f"m_{tag}_a", "hash")
+        assert dup_name.value.message == USERNAME_TAKEN
+
+        found = await auth.find_user_by_email(f"{tag}@example.com")
+        assert found is not None and found[0].id == social.id and found[1] is None
+        assert await auth.find_user_by_email(f"nobody-{tag}@example.com") is None
+        by_name = await auth.find_user_by_username(f"m_{tag}_a")
+        assert by_name is not None and by_name[1] == "hash"
+
+        # 소셜 연결: (provider, subject) 유일, 사용자별 제공자 목록
+        ident = await auth.add_identity(social.id, "google", f"sub-{tag}", f"{tag}@example.com")
+        assert (ident.provider, ident.user_id) == ("google", social.id)
+        await auth.add_identity(social.id, "kakao", f"k-{tag}", None)
+        with pytest.raises(VersionConflictError):
+            await auth.add_identity(plain.id, "google", f"sub-{tag}", None)
+        linked = await auth.find_identity("google", f"sub-{tag}")
+        assert linked is not None and linked.user_id == social.id
+        assert await auth.find_identity("kakao", f"sub-{tag}") is None
+        assert await auth.list_providers([social.id, plain.id]) == {social.id: ["google", "kakao"]}
+        assert await auth.list_providers([]) == {}
+
+        # 마지막 로그인·상태·역할
+        now = datetime.now(UTC)
+        await auth.touch_login(social.id, now)
+        approved = await auth.update_user(social.id, status="active")
+        assert approved.status == "active" and approved.role == "user" and approved.last_login_at is not None
+        assert (await auth.update_user(social.id, role="admin")).role == "admin"
+        assert (await auth.get_user(social.id)).status == "active"
+        with pytest.raises(NotFoundError):
+            await auth.update_user(uuid.uuid4(), status="suspended")
+
+        # 목록: 부분 일치(아이디·이메일·표시 이름), %와 _는 글자 그대로, 최신 가입순, 쪽 나눔
+        total, items = await auth.list_users(query=f"m_{tag}")
+        assert total == 3 and [u.username for u in items] == [f"m_{tag}_c", f"m_{tag}_b", f"m_{tag}_a"]
+        assert (await auth.list_users(query=f"{tag}@EXAMPLE"))[0] == 1
+        assert (await auth.list_users(query="100%"))[1][0].id == social.id
+        assert (await auth.list_users(query=f"m%{tag}"))[0] == 0  # %는 와일드카드가 아니다
+        assert (await auth.list_users(query=f"m_{tag}", role="admin"))[0] == 1
+        assert (await auth.list_users(query=f"m_{tag}", status="suspended"))[0] == 0
+        page_total, page = await auth.list_users(query=f"m_{tag}", limit=1, offset=1)
+        assert page_total == 3 and [u.username for u in page] == [f"m_{tag}_b"]
+
+        await auth.update_user(plain.id, status="suspended")
+        after = await auth.count_users(started)
+        assert after.total - before.total == 3 and after.new_in_range - before.new_in_range == 3
+        assert after.suspended - before.suspended == 1 and after.pending == before.pending
+
+        # 세션 일괄 폐기
+        def mk(key: str) -> Session:
+            return Session(
+                token_hash=f"{key}-{tag}",
+                user_id=plain.id,
+                csrf_token="c",
+                created_at=now,
+                expires_at=now + timedelta(days=1),
+            )
+
+        await auth.create_session(mk("s1"))
+        await auth.create_session(mk("s2"))
+        assert await auth.revoke_user_sessions(plain.id, now) == 2
+        assert await auth.revoke_user_sessions(plain.id, now) == 0
+        revoked = await auth.get_session(f"s1-{tag}")
+        assert revoked is not None and not revoked.is_active(now)
+
+        # 관리자 기록: id가 매겨지고 최근 순, 대상이 지워져도 남는다
+        first = await auth.add_audit(
+            AuditEntry(
+                at=now - timedelta(seconds=1),
+                admin_user_id=social.id,
+                admin_username=social.username,
+                action="user.suspend",
+                target_user_id=plain.id,
+                target_username=plain.username,
+                detail=f"tag={tag}",
+            )
+        )
+        second = await auth.add_audit(AuditEntry(at=now, admin_username=social.username, action="users.view"))
+        assert first.id > 0 and second.id > first.id
+        await auth.delete_user(plain.id)
+        recent = await auth.list_audit(2)
+        assert [e.id for e in recent] == [second.id, first.id]
+        assert recent[1].target_username == plain.username and recent[1].detail == f"tag={tag}"
+        assert recent[0].target_user_id is None and recent[0].detail == ""
+
+        # 사용자 삭제 → 소셜 연결 CASCADE
+        await auth.delete_user(social.id)
+        assert await auth.find_identity("google", f"sub-{tag}") is None
+
+        # 회원 목록에 붙이는 수치: 사용자별 상대 수·오늘 첨삭 수
+        contacts = PostgresContactRepo(sessions)
+        usage = PostgresUsageRepo(sessions)
+        u1, u2 = _user(), _user()
+        await contacts.create(u1, "박지현", "superior")
+        await contacts.create(u1, "이서연", "friend")
+        assert await contacts.count_by_users([u1, u2]) == {u1: 2}
+        assert await contacts.count_by_users([]) == {}
+        day = datetime.now(UTC).date()
+        await usage.reserve_rewrite(u1, day, 10)
+        await usage.reserve_rewrite(u1, day, 10)
+        assert await usage.rewrites_by_users(day, [u1, u2]) == {u1: 2}
+        assert await usage.rewrites_by_users(day, []) == {}
+    finally:
+        await engine.dispose()
+
+
+def test_members_api_on_postgres(pg_url: str) -> None:
+    """이메일 가입(승인 대기) → 관리자 승인 → 사용 → 정지 → 삭제가 Postgres에서 끝까지 돈다."""
+    tag = uuid.uuid4().hex[:8]
+    settings = Settings(
+        _env_file=None,
+        llm_provider="fake",
+        database_url=pg_url,
+        embedding_provider="fake",
+        admin_usernames=f"boss_{tag}",
+    )  # type: ignore[call-arg]
+    email, pw = f"Member.{tag}@Example.com", "long-enough-pw"
+    # 엔진이 TestClient의 이벤트 루프에 묶이므로 클라이언트는 하나만 쓰고 쿠키 통만 바꿔 두 사람을 흉내 낸다.
+    with TestClient(create_app(settings)) as client:
+        jars: dict[str, list[tuple[str, str, str, str]]] = {"admin": [], "member": []}
+        current = ["admin"]
+
+        def as_(who: str) -> TestClient:
+            jars[current[0]] = [(c.name, c.value or "", c.domain, c.path) for c in client.cookies.jar]
+            client.cookies.clear()
+            for name, value, domain, path in jars[who]:
+                client.cookies.set(name, value, domain=domain, path=path)
+            current[0] = who
+            return client
+
+        service = client.app.state.container.auth_service  # type: ignore[attr-defined]
+        client.portal.call(service.create_account, f"boss_{tag}", pw)  # type: ignore[union-attr]
+        login = as_("admin").post("/v1/auth/login", json={"username": f"boss_{tag}", "password": pw})
+        csrf = {"X-CSRF-Token": login.json()["csrf_token"]}
+
+        signed = as_("member").post("/v1/auth/signup", json={"email": email, "password": pw})
+        assert signed.status_code == 201, signed.text
+        assert (signed.json()["status"], signed.json()["email"]) == ("pending", email.lower())
+        assert client.get("/v1/contacts").json()["code"] == "account_pending"
+        assert client.get("/v1/auth/me").json()["providers"] == ["password"]
+
+        listed = as_("admin").get("/v1/admin/users", params={"query": tag, "status": "pending"}).json()
+        assert listed["total"] == 1 and listed["items"][0]["providers"] == ["password"]
+        uid = listed["items"][0]["user_id"]
+        ok = client.patch(f"/v1/admin/users/{uid}", json={"status": "active"}, headers=csrf)
+        assert ok.status_code == 200 and ok.json()["status"] == "active"
+        assert as_("member").get("/v1/contacts").status_code == 200
+        assert client.post("/v1/auth/login", json={"username": email, "password": pw}).status_code == 200
+
+        as_("admin").patch(f"/v1/admin/users/{uid}", json={"status": "suspended"}, headers=csrf)
+        assert as_("member").get("/v1/auth/me").status_code == 401
+        denied = client.post("/v1/auth/login", json={"username": email, "password": pw})
+        assert (denied.status_code, denied.json()["code"]) == (403, "account_suspended")
+
+        assert as_("admin").delete(f"/v1/admin/users/{uid}", headers=csrf).status_code == 200
+        actions = [e["action"] for e in client.get("/v1/admin/audit", params={"limit": 4}).json()["items"]]
+        assert actions == ["user.delete", "user.suspend", "user.approve", "users.view"]
+        overview = client.get("/v1/admin/overview").json()["users"]
+        assert overview["total"] >= 1 and overview["new_in_range"] >= 1

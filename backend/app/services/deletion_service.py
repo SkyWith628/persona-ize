@@ -2,8 +2,8 @@
 
 - 상대 삭제: 그 상대의 대화방을 하나씩 지운다(각 대화방의 그래프 에피소드 → DB CASCADE). 그 뒤 상대 행을
   지우면 페르소나 버전·첨삭 요청·결과·피드백이 FK CASCADE로 따라간다. 다른 상대의 그래프 사실은 남는다.
-- 계정 삭제: 비밀번호 확인 → 상대 전부 삭제 → 그래프 group(user_id) 통째로 삭제(남은 노드 정리) → 사용량·
-  세션·사용자 행 삭제. 되돌릴 수 없다.
+- 계정 삭제: 비밀번호 확인(소셜 전용 계정과 관리자 삭제는 생략) → 상대 전부 삭제 → 그래프 group(user_id)
+  통째로 삭제(남은 노드 정리) → 사용량·세션·사용자 행 삭제. 되돌릴 수 없다.
 - 그래프 삭제가 실패해도 DB 삭제는 진행하고 사유를 돌려준다(원문 삭제가 우선).
 """
 
@@ -15,7 +15,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 from app.core.security import verify_password
-from app.domain.auth import Session
+from app.domain.auth import Session, User
 from app.repositories.auth import AuthRepo
 from app.repositories.base import ContactRepo, ConversationRepo, RewriteRepo
 from app.repositories.usage import UsageRepo
@@ -81,10 +81,20 @@ class DeletionService:
         return result
 
     async def delete_account(self, session: Session, password: str) -> AccountDeletion:
+        """본인 삭제. 비밀번호가 있으면 재확인하고, 소셜 전용 계정(비밀번호 없음)은 세션·CSRF만으로 지운다."""
         user = await self._auth.get_user(session.user_id)
         found = await self._auth.find_user_by_username(user.username)
-        if found is None or not verify_password(password, found[1]):
+        if found is None:
             raise UnauthorizedError("비밀번호가 맞지 않습니다.")
+        if found[1] is not None and not verify_password(password, found[1]):
+            raise UnauthorizedError("비밀번호가 맞지 않습니다.")
+        return await self._wipe(user)
+
+    async def delete_account_as_admin(self, user_id: UUID) -> AccountDeletion:
+        """관리자가 지운다 (비밀번호 없이). 권한·기록은 호출하는 쪽(`UserAdminService`)이 맡는다."""
+        return await self._wipe(await self._auth.get_user(user_id))
+
+    async def _wipe(self, user: User) -> AccountDeletion:
         user_id = str(user.id)
         result = AccountDeletion(user_id=user_id, contacts=0, conversations=0, messages=0)
         for contact in await self._contacts.list(user_id):
@@ -99,5 +109,5 @@ class DeletionService:
                 log.warning("graph group removal failed user=%s: %s", user_id, exc)
                 result.graph_error = str(exc)[:300]
         await self._usage.delete_user(user_id)
-        await self._auth.delete_user(user.id)  # 세션은 CASCADE
+        await self._auth.delete_user(user.id)  # 세션·소셜 연결은 CASCADE
         return result

@@ -229,3 +229,11 @@
 - 검증: 이 맥에서 운영 구성을 별도 프로젝트로 띄워 확인 — app 사용자로 실행, e5 모델 내려받기, `/healthz?deep=true` ok, 보안 헤더, http→https 308, 헤더 인증 401, 가입 403, DB·8000 포트 닫힘, 계정 생성, Secure·HttpOnly 쿠키, 관리자 200/비관리자 403.
 - 실제 배포(11-16): 서울 리전 c7i-flex.large(4GB) + 고정 IP + sslip.io 주소. 계정이 AWS 무료 플랜이라 t3.medium은 거부됐다(4GB 이상은 c7i-flex.large·m7i-flex.large만). 코드는 미커밋 상태라 rsync로 올렸다. Let's Encrypt 발급, deep healthz, 401/403/308, 포트 닫힘 확인. 기동 직후 메모리 사용 2.2GB·여유 1.6GB(백엔드 0.9GB, Neo4j 0.7GB).
 - 확인 못 한 것: 실제 Anthropic 호출이 섞인 운영 흐름, 첨삭·그래프 수집 부하에서의 메모리.
+
+## 2026-11-16 회원관리·소셜 로그인 — 승인제 가입, Google·Kakao, 관리자 회원관리·기록
+- 결정: 이메일 가입과 Google·Kakao 로그인(인가 코드 방식, 서버에서 `httpx`로 교환, state는 10분짜리 HttpOnly 쿠키 + Google은 PKCE)을 넣고, 새 계정은 기본 승인 대기(`AUTH_SIGNUP_REQUIRES_APPROVAL=true`)로 둔다. 가입을 그냥 여는 대안은 누구나 API 비용을 쓰게 돼 뺐다 — `check_prod_env.py`가 "가입 열림 + 승인 없음"을 막는다.
+- 스키마(0008): `users`에 email(소문자·유일)·display_name·role·status·last_login_at, password_hash는 NULL 허용(소셜 전용), `user_identities`(provider+subject 유일), `admin_audit_log`(FK 없음 — 지운 계정의 기록도 남긴다).
+- 규칙: 소셜 계정은 제공자가 **확인한** 이메일이 같을 때만 기존 계정에 연결한다. pending은 `current_user_id`에서 한 번에 403 `account_pending`. 정지는 세션 폐기 + 로그인 403. `ADMIN_USERNAMES`의 이름은 공개 가입으로 못 만든다(선점 방지). 관리자는 role=admin 또는 그 목록.
+- 위험: 가입 때 이메일 소유를 확인하지 않으므로, 남의 주소로 먼저 가입해 둔 계정에 주인이 나중에 소셜 로그인하면 그 계정에 연결된다(승인제가 완화). 메일 인증을 넣기 전까지 승인 때 이메일을 확인한다.
+- 확인 못 한 것: 실제 Google·Kakao 왕복(테스트는 가짜 제공자·모의 HTTP). 주소·파라미터는 11-16 공식 문서로 대조했다.
+

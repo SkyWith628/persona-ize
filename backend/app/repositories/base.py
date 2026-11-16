@@ -42,6 +42,10 @@ class ContactRepo(Protocol):
         """새 버전을 추가한다. expected_version이 현재 최신과 다르면 VersionConflictError."""
         ...
 
+    async def count_by_users(self, user_ids: list[str]) -> dict[str, int]:
+        """사용자별 상대 수 (회원관리 목록). 상대가 없는 사용자는 결과에 없다."""
+        ...
+
     async def delete(self, user_id: str, contact_id: UUID) -> None:
         """상대·페르소나 버전·첨삭 이력을 지운다 (대화방은 먼저 지워야 한다). 없으면 NotFoundError."""
         ...

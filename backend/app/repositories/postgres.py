@@ -145,6 +145,17 @@ class PostgresContactRepo:
             raise VersionConflictError("페르소나 버전 충돌: 동시에 저장되었습니다. 다시 시도하세요.") from exc
         return _persona(row)
 
+    async def count_by_users(self, user_ids: list[str]) -> dict[str, int]:
+        if not user_ids:
+            return {}
+        stmt = (
+            select(ContactRow.user_id, func.count())
+            .where(ContactRow.user_id.in_(user_ids))
+            .group_by(ContactRow.user_id)
+        )
+        async with self._sessions() as s:
+            return {user_id: int(n) for user_id, n in await s.execute(stmt)}
+
     async def delete(self, user_id: str, contact_id: UUID) -> None:
         async with self._sessions.begin() as s:
             row = await self._owned_contact(s, user_id, contact_id)

@@ -12,7 +12,19 @@ from datetime import date, datetime
 from typing import Any
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    Date,
+    DateTime,
+    ForeignKey,
+    Identity,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -245,8 +257,56 @@ class UserRow(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
     username: Mapped[str] = mapped_column(String(32), nullable=False, unique=True)
-    password_hash: Mapped[str] = mapped_column(String(256), nullable=False)
+    # 소셜 전용 계정은 비밀번호가 없다 (0008).
+    password_hash: Mapped[str | None] = mapped_column(String(256), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    email: Mapped[str | None] = mapped_column(String(254), nullable=True)  # 소문자로 저장
+    display_name: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    role: Mapped[str] = mapped_column(String(16), nullable=False, default="user", server_default="user")
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="active", server_default="active")
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("email", name="uq_users_email"),
+        Index("ix_users_created", "created_at"),
+    )
+
+
+class UserIdentityRow(Base):
+    """소셜 계정 연결 (google·kakao). 같은 제공자의 같은 subject는 한 사용자에게만 묶인다."""
+
+    __tablename__ = "user_identities"
+
+    id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    provider: Mapped[str] = mapped_column(String(16), nullable=False)
+    subject: Mapped[str] = mapped_column(String(128), nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    email: Mapped[str | None] = mapped_column(String(254), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("provider", "subject", name="uq_user_identities_provider_subject"),
+        Index("ix_user_identities_user", "user_id"),
+    )
+
+
+class AdminAuditRow(Base):
+    """관리자 작업 기록. 사용자 행에 FK를 걸지 않는다 — 계정을 지운 기록도 남아야 한다."""
+
+    __tablename__ = "admin_audit_log"
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    admin_user_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
+    admin_username: Mapped[str] = mapped_column(String(32), nullable=False)
+    action: Mapped[str] = mapped_column(String(32), nullable=False)
+    target_user_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
+    target_username: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    detail: Mapped[str] = mapped_column(String(300), nullable=False, default="")
+
+    __table_args__ = (Index("ix_admin_audit_log_at", "at"),)
 
 
 class SessionRow(Base):
