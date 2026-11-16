@@ -120,6 +120,9 @@ class RewriteInput(BaseModel):
     as_of: datetime | None = None
     adjust: Adjust | None = None
     channel: Channel = "web"
+    # 내 과거 메시지에서 관찰한 말투 상태 블록 (graph-redesign 5.3). 서비스가 채우고 프롬프트가 그대로 넣는다.
+    # 저장된 페르소나가 없는 요청에만 채운다 — 설정이 있으면 설정이 이긴다. 요청 본문에서 받지 않는다.
+    register_block: str | None = None
 
 
 class RewriteResult(BaseModel):
@@ -138,6 +141,8 @@ class RewriteResult(BaseModel):
     retrieval_version: str
     token_usage: dict[str, int] = Field(default_factory=dict)
     latency_ms: int
+    # 보존 항목 추출·검증 규칙의 버전 (app.domain.titles.VALIDATOR_VERSION). 규칙이 바뀐 앞뒤 결과를 구분한다.
+    validator_version: str = ""
     adjust: Adjust | None = Field(None, description="이번 요청에만 적용한 조정 (없으면 None)")
     # 근거 id → 출처 메시지 참조(`대화방키:메시지키`). 원문 사본은 두지 않는다 — 근거 조회 때 남아 있는
     # 메시지를 다시 읽으므로 대화를 지우면 근거도 사라진다 (`GET /v1/rewrites/{id}/evidence`).

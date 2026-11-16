@@ -47,6 +47,8 @@ def _input_hash(inp: RewriteInput) -> str:
         payload.pop("adjust", None)
     if payload.get("channel") == "web":
         payload.pop("channel", None)
+    # 서버가 내 과거 메시지에서 만들어 붙이는 값이다 — 요청 본문이 아니므로 해시에 넣지 않는다
+    payload.pop("register_block", None)
     return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
