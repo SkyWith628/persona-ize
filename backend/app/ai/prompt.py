@@ -115,6 +115,15 @@ def _persona_block(
     return "\n".join(lines)
 
 
+def _register_block(block: str | None) -> str:
+    """[관계 상태] 블록 (rewrite-v4부터). 서비스가 만들어 준 글자 그대로 넣고, 없으면 '(없음)'.
+
+    블록의 내용(확정된 말투 단계와 건수, 위계 힌트)은 `app.ai.register_block`이 정한다.
+    여기서는 끼워 넣기만 한다.
+    """
+    return block.strip() if block and block.strip() else "(없음)"
+
+
 def _preserved_block(items: list[PreservedItem]) -> str:
     if not items:
         return "(추출된 항목 없음 — 그래도 원문의 모든 사실을 유지한다)"
@@ -167,6 +176,7 @@ def build_prompt(
     today: date | None = None,
     adjust: str | None = None,
     contact_known: bool = False,
+    register_block: str | None = None,
 ) -> PromptBundle:
     """첫 생성용 프롬프트.
 
@@ -174,6 +184,8 @@ def build_prompt(
     v1·v2의 user.md에는 그 자리가 없어 본문이 달라지지 않는다.
     `adjust`(이번 요청만의 조정)와 `contact_known`(설정이 없어도 상대를 밝힘)은 [설정] 블록 안에서만 쓰이고,
     기본값이면 블록이 예전과 같다.
+    `register_block`(내 과거 메시지에서 관찰한 말투 상태, `RewriteInput.register_block`)은 v4부터 있는
+    `{register_block}` 자리를 채운다. v3까지의 user.md에는 그 자리가 없어 값을 줘도 본문이 달라지지 않는다.
     """
     user = _load(version, "user").format(
         today=_today_line(today or today_kst()),
@@ -184,6 +196,7 @@ def build_prompt(
         draft_text=draft_text,
         style_block=_examples_block(retrieved, "style"),
         context_block=_examples_block(retrieved, "context"),
+        register_block=_register_block(register_block),
     )
     return PromptBundle(system=_load(version, "system"), user=user, version=version)
 

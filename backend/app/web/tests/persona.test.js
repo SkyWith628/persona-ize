@@ -6,14 +6,19 @@ import {
   SCALES,
   addPhrases,
   applySignals,
+  cardSignals,
+  cardView,
   cleanPhrases,
   describeSettings,
+  evidenceText,
+  isFewMessages,
   normalizeSettings,
   settingsEqual,
   signalMatches,
   signalView,
   suggestionState,
   stepLabel,
+  visibleSignals,
 } from "../js/lib/persona.js";
 
 // 계약 §4.3: GET /v1/contacts/{id}/persona/suggestion
@@ -151,6 +156,110 @@ test("제안: 표본이 적으면 보여 주지 않는다", () => {
   assert.equal(suggestionState({ based_on_messages: 5, settings: {}, signals: SUGGESTION.signals }), "ok");
   assert.equal(suggestionState({ based_on_messages: 30, settings: {}, signals: [] }), "same");
   assert.equal(suggestionState({ based_on_messages: 30, settings: {}, signals: [{ field: "mood", value: 3 }] }), "same");
+});
+
+// 설계 5.1의 제안 카드 예 (이서연, c3)
+const CARD = {
+  contact_alias: "이서연",
+  speech_previous: { level: "hae", count: 3, message_ids: ["c3:m02", "c3:m04", "c3:m06"] },
+  speech_current: { level: "hapsyo", count: 2, message_ids: ["c3:m08", "c3:m10"], since: "2026-10-21" },
+  two_valued: null,
+  address: { term: "서연 파트장님", count: 1, since: "2026-10-21", status: "candidate", message_ids: ["c3:m08"] },
+  trigger: { event: "파트장 발령", at: "2026-10-17", message_ids: ["c3:m05"] },
+  scope_hints: [
+    { text: "회사에선 존댓말 써야겠네", message_ids: ["c3:m06"] },
+    { text: "사적으로는 편하게 하자", message_ids: ["c3:m07"] },
+  ],
+  ask: true,
+  ask_reason: "공식 자리에서만 쓰는 말투일 수 있습니다.",
+  proposed: { formality: 4, address_term: "서연 파트장님" },
+};
+
+test("제안: 카드나 말투 변화·그래프 신호는 표본이 적어도 보여 준다", () => {
+  const register = { field: "formality", value: 4, reason: "최근 2건이 합쇼체", source: "register", since: "2026-10-21" };
+  const graph = { field: "address_term", value: "파트장님", reason: "관계 사실", source: "graph", since: "2026-10-21" };
+  // 내 메시지가 다섯 개에 못 미쳐도, 서버가 settings: null을 줘도 가리지 않는다
+  assert.equal(suggestionState({ based_on_messages: 4, settings: null, signals: [register] }), "ok");
+  assert.equal(suggestionState({ based_on_messages: 4, settings: {}, signals: [graph] }), "ok");
+  assert.equal(suggestionState({ based_on_messages: 2, settings: null, signals: [], card: CARD }), "ok");
+  // 표본이 적을 때 "내 메시지 전체" 신호는 여전히 믿지 않는다 — 섞여 와도 그것만 뺀다
+  const few = { based_on_messages: 4, settings: {}, signals: [...SUGGESTION.signals, register, graph] };
+  assert.deepEqual(visibleSignals(few), [register, graph]);
+  assert.ok(isFewMessages(few));
+  // 표본이 충분하면 전부 보여 준다. 쓸 수 없는 신호는 어느 쪽이든 뺀다
+  const enough = { based_on_messages: 30, settings: {}, signals: [...SUGGESTION.signals, register, { field: "mood", value: 3, source: "graph" }] };
+  assert.equal(visibleSignals(enough).length, 4);
+  assert.ok(!isFewMessages(enough));
+  // 내용이 없는 카드는 카드로 치지 않는다
+  assert.equal(suggestionState({ based_on_messages: 4, settings: null, signals: [], card: { ask: true, proposed: {} } }), "few");
+  assert.equal(suggestionState({ based_on_messages: 30, settings: {}, signals: [], card: null }), "same");
+});
+
+test("제안 신호의 출처와 시작일", () => {
+  assert.equal(signalView(SUGGESTION.signals[0]).sourceLabel, "내 메시지 전체", "source가 없으면 예전 응답으로 본다");
+  assert.equal(signalView({ field: "formality", value: 4, source: "register", since: "2026-10-21" }).sourceLabel, "말투 변화");
+  const g = signalView({ field: "formality", value: 4, source: "graph", since: "2026-10-17" });
+  assert.equal(g.sourceLabel, "그래프");
+  assert.equal(g.since, "2026-10-17");
+  assert.equal(signalView({ field: "formality", value: 4, source: "toString" }).source, "messages");
+  for (const bad of [null, undefined, "", "어제", 20261021]) {
+    assert.equal(signalView({ field: "formality", value: 4, since: bad }).since, "", String(bad));
+  }
+});
+
+test("제안 카드를 화면용으로 바꾼다", () => {
+  const v = cardView(CARD);
+  assert.equal(v.title, "이서연 님에게 쓰는 말투가 바뀐 것으로 보여요.");
+  assert.deepEqual(v.rows, [
+    { key: "speech", label: "말투", text: "반말 (3건: c3:m02, c3:m04, c3:m06) → 합쇼체 (최근 2건: c3:m08, c3:m10, 2026-10-21부터)" },
+    { key: "address", label: "호칭", text: "'서연 파트장님' (1회 관찰: c3:m08, 2026-10-21부터)" },
+    { key: "trigger", label: "계기(그래프)", text: "파트장 발령 (2026-10-17, c3:m05)" },
+    { key: "scope", label: "범위 단서(그래프)", text: '"회사에선 존댓말 써야겠네" (c3:m06) / "사적으로는 편하게 하자" (c3:m07)' },
+  ]);
+  assert.equal(v.ask, true);
+  assert.equal(v.askReason, "공식 자리에서만 쓰는 말투일 수 있습니다.");
+  assert.equal(v.applyLabel, "격식 4 + 호칭 추가");
+});
+
+test("제안 카드: 빠진 조각·두 가지 말투·확정된 호칭", () => {
+  assert.equal(cardView(null), null);
+  assert.equal(cardView({}), null);
+  assert.equal(cardView({ speech_current: { level: "???", count: 2 }, ask: true }), null, "모르는 말투 단계는 그리지 않는다");
+  // 이전 구간 없이 현재만
+  const only = cardView({ speech_current: { level: "haeyo", count: 5, message_ids: [] }, proposed: { formality: 3 } }, "김유진");
+  assert.equal(only.title, "김유진 님에게 보낸 내 메시지에서 읽은 말투예요.");
+  assert.deepEqual(only.rows, [{ key: "speech", label: "말투", text: "해요체 (최근 5건)" }]);
+  assert.equal(only.ask, false);
+  assert.equal(only.applyLabel, "격식 3 적용");
+  // 두 가지 말투가 섞이면 값을 정해 주지 않는다
+  const two = cardView({ contact_alias: "이서연", two_valued: { hapsyo: 4, hae: 2 }, ask: true, ask_reason: "최근 말투가 섞여 있습니다.", proposed: { formality: null, address_term: null } });
+  assert.equal(two.title, "이서연 님에게 두 가지 말투를 섞어 쓰고 있어요.");
+  assert.deepEqual(two.rows, [{ key: "two_valued", label: "최근 말투", text: "합쇼체 4건 / 반말 2건이 섞여 있어요" }]);
+  assert.equal(two.applyLabel, "");
+  // 두 번 넘게 본 호칭은 "관찰"을 붙이지 않는다. 계기에 날짜가 없어도 된다
+  const confirmed = cardView({ address: { term: "팀장님", count: 3, status: "confirmed", message_ids: ["c1:m01"] }, trigger: { event: "팀 이동", at: null, message_ids: [] }, proposed: { address_term: "팀장님" } });
+  assert.deepEqual(confirmed.rows.map((r) => r.text), ["'팀장님' (3회: c1:m01)", "팀 이동"]);
+  assert.equal(confirmed.applyLabel, "호칭 추가");
+  // 근거 id가 많으면 앞의 몇 개만
+  assert.equal(evidenceText(["a", "b", "c", "d", "e", "f"]), "a, b, c, d 외 2건");
+  assert.equal(evidenceText(null), "");
+});
+
+test("제안 카드 적용은 격식과 호칭만 채운다", () => {
+  const mine = { ...DEFAULT_SETTINGS, friendliness: 5, notes: "결론부터" };
+  const { settings, applied } = applySignals(mine, cardSignals(CARD));
+  assert.equal(settings.formality, 4);
+  assert.equal(settings.address_term, "서연 파트장님");
+  assert.equal(settings.friendliness, 5);
+  assert.equal(settings.notes, "결론부터");
+  assert.deepEqual(applied, ["formality", "address_term"]);
+  // 계기·범위 단서는 근거일 뿐 설정으로 들어가지 않는다
+  assert.ok(!JSON.stringify(settings).includes("발령") && !JSON.stringify(settings).includes("존댓말"));
+  // 정해 준 값이 없거나 범위 밖이면 적용할 것이 없다
+  assert.deepEqual(cardSignals({ proposed: { formality: null, address_term: null } }), []);
+  assert.deepEqual(cardSignals({ proposed: { formality: 9, address_term: "  " } }), []);
+  assert.deepEqual(cardSignals({}), []);
+  assert.ok(cardSignals(CARD).every((sig) => signalMatches(settings, sig)));
 });
 
 test("제안 값은 숫자와 글자가 섞여 온다", () => {

@@ -308,6 +308,8 @@ def test_graph_is_built_once_and_stays_out_of_repr_and_eq() -> None:
         "provider",
         "retrievers",
         "prompt_version",
+        "register_warnings",
+        "register_post_check",
     ]
 
 

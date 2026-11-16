@@ -758,6 +758,62 @@
   color: var(--accent-strong);
 }
 
+.signal-source {
+  background: var(--surface-2);
+}
+
+.signal-since {
+  font-size: var(--text-s);
+  color: var(--ink-2);
+}
+
+/* 제안 카드: 말투가 바뀐 시점과 그 근거. 신호 목록 위에 둔다 */
+.suggestion-card {
+  margin: var(--space-3) 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--accent-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.suggestion-card-title {
+  font-weight: 700;
+}
+
+.suggestion-card-rows {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--space-1) var(--space-3);
+  margin: var(--space-2) 0;
+}
+
+.suggestion-card-rows dt {
+  font-size: var(--text-s);
+  font-weight: 700;
+  color: var(--ink-2);
+}
+
+.suggestion-card-rows dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.suggestion-card-ask {
+  margin: var(--space-2) 0;
+  font-weight: 600;
+}
+
+.suggestion-card .form-actions {
+  margin-top: var(--space-2);
+}
+
+@media (max-width: 560px) {
+  .suggestion-card-rows {
+    grid-template-columns: 1fr;
+  }
+}
+
 .version-list {
   display: flex;
   flex-direction: column;

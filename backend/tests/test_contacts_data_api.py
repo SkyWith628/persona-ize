@@ -173,8 +173,13 @@ def test_persona_suggestion_from_my_past_messages(
     friend = _new_contact(client, user_a, "최유진", "friend")
     conv_id = _import(client, user_a, friend["id"], CASUAL_HISTORY, "c2")
     few = client.get(f"/v1/contacts/{friend['id']}/persona/suggestion", headers=user_a).json()
-    # 내 메시지 4건: 표본이 작아 추정하지 않는다 (본 메시지 수만 알려 준다)
-    assert few == {"based_on_messages": 4, "settings": None, "signals": []}
+    # 내 메시지 4건: 표본이 작아 겉모습 추정(messages)은 하지 않는다. 말투 프로필(register)은 건수 문턱이
+    # 없다 — 두 번 쓴 호칭을 횟수와 함께 제안한다 (graph-redesign 3.2, 2026-11-16).
+    assert few["based_on_messages"] == 4
+    assert [(s["field"], s["value"], s["source"]) for s in few["signals"]] == [
+        ("address_term", "유진아", "register")
+    ]
+    assert "2회" in few["signals"][0]["reason"]
     more = "2026-10-07 20:07 | me | 유진아 7시 괜찮아?ㅎㅎ"
     added = client.post(f"/v1/conversations/{conv_id}/imports/raw", json={"text": more}, headers=user_a)
     assert added.status_code == 202, added.text

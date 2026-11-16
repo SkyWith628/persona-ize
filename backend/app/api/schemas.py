@@ -6,7 +6,7 @@ from datetime import date, datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, SerializerFunctionWrapHandler, model_serializer, model_validator
 
 from app.domain.conversation import SPEAKER_NAME_MAX, GraphStatus, ImportStatus, SpeakerRole
 from app.domain.persona import Adjust, PersonaSettings, RelationshipType
@@ -429,16 +429,86 @@ class PersonaSignalOut(BaseModel):
     field: str
     value: Any
     reason: str
-    source: Literal["messages", "graph"] = Field(
-        "messages", description="근거의 출처: 내 메시지의 겉모습 / 그래프의 관계 사실(말투·호칭이 바뀐 시점)"
+    source: Literal["messages", "register", "graph"] = Field(
+        "messages",
+        description=(
+            "근거의 출처: 내 메시지의 겉모습 / 말투 프로필(문장 단위 분류로 본 말투·호칭의 변화 시점) / "
+            "그래프의 관계 사실(말투·호칭이 바뀐 시점)"
+        ),
     )
-    since: date | None = Field(None, description="그래프 근거일 때 이 값이 처음 확인된 날 (한국 시간)")
+    since: date | None = Field(
+        None, description="말투 프로필·그래프 근거일 때 이 값이 처음 확인된 날 (한국 시간)"
+    )
+
+
+class CardSpeechOut(BaseModel):
+    level: Literal["hapsyo", "haeyo", "hae"] = Field(description="합쇼체 / 해요체 / 반말")
+    count: int = Field(description="이 구간의 내 메시지 수")
+    message_ids: list[str] = Field(description="근거 메시지 (`c3:m08` — 대화방 키:메시지 키)")
+
+
+class CardCurrentSpeechOut(CardSpeechOut):
+    since: date = Field(description="이 말투가 시작된 날 (한국 시간)")
+
+
+class CardAddressOut(BaseModel):
+    term: str = Field(description="메시지에 나온 호칭 그대로")
+    count: int
+    since: date
+    status: Literal["confirmed", "candidate"] = Field(description="2회 이상이면 confirmed, 1회면 candidate")
+    message_ids: list[str]
+
+
+class CardTriggerOut(BaseModel):
+    event: str = Field(description="그래프의 사건 이름 (예: 파트장 발령)")
+    at: date | None = Field(description="그 사건을 말한 메시지의 날짜 (한국 시간)")
+    message_ids: list[str]
+
+
+class CardScopeHintOut(BaseModel):
+    text: str = Field(description="변화 시점 앞뒤의 관계 사실 문장 (그래프)")
+    message_ids: list[str]
+
+
+class CardProposedOut(BaseModel):
+    formality: int | None = Field(None, description="카드를 승인하면 넣을 격식. 제안이 없으면 null")
+    address_term: str | None = Field(None, description="카드를 승인하면 넣을 호칭. 제안이 없으면 null")
+
+
+class SuggestionCardOut(BaseModel):
+    """제안 카드 — 말투가 바뀐 것으로 보일 때 근거와 함께 보여 준다. 저장하지 않는다."""
+
+    contact_alias: str
+    speech_previous: CardSpeechOut | None
+    speech_current: CardCurrentSpeechOut | None
+    two_valued: dict[str, int] | None = Field(
+        description="최근 메시지에 두 말투가 섞여 있으면 단계별 건수. 이때는 값을 정해 주지 않는다"
+    )
+    address: CardAddressOut | None
+    trigger: CardTriggerOut | None = Field(description="그래프에서 찾은 계기 사건. 그래프가 없으면 null")
+    scope_hints: list[CardScopeHintOut]
+    ask: bool = Field(description="참이면 값을 정해 주지 않고 사용자에게 묻는다")
+    ask_reason: str | None
+    proposed: CardProposedOut
 
 
 class PersonaSuggestionOut(BaseModel):
     based_on_messages: int
     settings: PersonaSettings | None
     signals: list[PersonaSignalOut]
+    card: SuggestionCardOut | None = Field(
+        None, description="제안 카드. 보여 줄 것이 없으면 응답에 이 항목이 없다 (null과 같다)"
+    )
+
+    # 반환 주석을 달지 않는다: 달면 pydantic이 그 타입(dict)으로 직렬화 스키마를 만들어 OpenAPI의 응답
+    # 스키마가 빈 object가 된다.
+    @model_serializer(mode="wrap")
+    def _omit_empty_card(self, handler: SerializerFunctionWrapHandler):
+        # 카드가 없으면 예전 응답과 글자까지 같게 항목을 뺀다 (예전 클라이언트·테스트가 응답 전체를 비교한다)
+        data = handler(self)
+        if data.get("card") is None:
+            data.pop("card", None)
+        return data
 
 
 class EvidenceMessageOut(BaseModel):

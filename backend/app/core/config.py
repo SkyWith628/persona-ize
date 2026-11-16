@@ -71,6 +71,31 @@ class Settings(BaseSettings):
     neo4j_password: str = ""
     graph_llm_model: str = "claude-haiku-4-5"  # 5.5 계열은 graphiti 강제 tool_choice에 400 (decisions 11-04)
     graph_search_top_k: int = Field(4, ge=1, le=20)
+    # ---- 말투 프로필 (docs/graph-redesign-2026-11-16.md). 기본값은 지금 동작을 바꾸지 않는다 ----
+    register_suggestions: bool = Field(
+        True,
+        description="페르소나 제안에 규칙 기반 말투 프로필(구간·바뀐 시점)을 붙인다 (제안일 뿐, 저장 안 함)",
+    )
+    register_warnings: bool = Field(
+        False,
+        description="첨삭 결과에 '관찰된 호칭이 설정에 없음'·'설정과 최근 말투 불일치' 경고를 코드로 붙인다",
+    )
+    register_state_block: bool = Field(
+        False, description="저장된 페르소나가 없는 요청에 관찰된 말투 상태 블록을 프롬프트에 넣는다"
+    )
+    register_post_check: bool = Field(
+        False, description="첨삭 결과의 반말/존댓말 경계가 격식 설정과 어긋나면 한 번 다시 만든다"
+    )
+    style_example_gating: bool = Field(
+        False, description="문체 예시(C)를 현재 말투 구간의 발화로 제한한다 (2개 미만이면 제한 없이)"
+    )
+    graph_invalidation_mode: Literal["trust", "artifacts", "ignore"] = Field(
+        "trust",
+        description=(
+            "질의 검색에서 무효화된 사실 처리: trust=버린다(지금 동작) / "
+            "artifacts=부산물로 보이는 무효화만 무시 / ignore=무효화 표시를 보지 않는다"
+        ),
+    )
     graph_episode_max_attempts: int = Field(
         3,
         ge=0,

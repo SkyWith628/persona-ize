@@ -165,22 +165,184 @@ function signalValue(field, value) {
 /** 내 메시지가 이보다 적으면 말투를 읽기에 표본이 모자란다고 보고 제안을 보여 주지 않는다. */
 export const MIN_SUGGESTION_MESSAGES = 5;
 
+// 신호의 출처. 서버가 source를 주지 않으면 예전 응답이므로 "messages"로 본다.
+//  messages: 내 메시지 전체를 한 덩어리로 본 문체 / register: 말투·호칭이 바뀐 시점(규칙 계산) / graph: 그래프의 관계 사실
+export const SOURCE_LABEL = { messages: "내 메시지 전체", register: "말투 변화", graph: "그래프" };
+
+// 말투 단계 이름 (backend/app/ai/register.py의 LEVEL_KO와 같다)
+export const LEVEL_LABEL = { hapsyo: "합쇼체", haeyo: "해요체", hae: "반말", mixed: "혼용", unknown: "알 수 없음" };
+
+function signalSource(signal) {
+  const source = String(signal?.source ?? "messages");
+  return Object.hasOwn(SOURCE_LABEL, source) ? source : "messages";
+}
+
+/** 서버가 준 날짜("2026-10-21" 또는 그걸로 시작하는 시각)에서 날짜만. 그 모양이 아니면 빈 글자. */
+function dayText(value) {
+  const m = /^(\d{4}-\d{2}-\d{2})(?:$|[T ])/.exec(String(value ?? ""));
+  return m ? m[1] : "";
+}
+
+/** 내 메시지가 적어 "전체 문체"를 읽지 않는 경우인가. 서버가 표본이 적다고 settings: null을 주는 경우도 같다. */
+export function isFewMessages(data) {
+  const count = Number(data?.based_on_messages) || 0;
+  return data?.settings === null || count < MIN_SUGGESTION_MESSAGES;
+}
+
+/**
+ * 화면에 보여 줄 신호. 쓸 수 없는 것(모르는 항목·범위 밖 값)은 뺀다.
+ * 표본이 적을 때는 "내 메시지 전체" 신호만 뺀다 — 우연한 말버릇을 말투로 읽기 쉽기 때문이다.
+ * 말투 변화·그래프 신호는 근거 메시지가 따로 있으므로 표본이 적어도 보여 준다.
+ */
+export function visibleSignals(data) {
+  const few = isFewMessages(data);
+  return (Array.isArray(data?.signals) ? data.signals : []).filter(
+    (s) => signalView(s).usable && !(few && signalSource(s) === "messages"),
+  );
+}
+
 /**
  * 제안 응답을 어떻게 보여 줄지: "none"(내 메시지 없음) · "few"(표본이 적음) · "same"(바꿀 것 없음) · "ok".
- * 서버가 표본이 적다고 settings: null을 주는 경우도 "few"다.
+ * 제안 카드나 보여 줄 신호가 하나라도 있으면 표본이 적어도 "ok"다(빈 상태로 가리지 않는다).
  */
 export function suggestionState(data) {
+  if (cardView(data?.card) || visibleSignals(data).length) return "ok";
   const count = Number(data?.based_on_messages) || 0;
   if (count <= 0) return "none";
-  if (data?.settings === null || count < MIN_SUGGESTION_MESSAGES) return "few";
-  const usable = (Array.isArray(data?.signals) ? data.signals : []).some((s) => signalView(s).usable);
-  return usable ? "ok" : "same";
+  return isFewMessages(data) ? "few" : "same";
+}
+
+function cleanCount(value) {
+  const n = Math.round(Number(value));
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+function cleanIds(value) {
+  return (Array.isArray(value) ? value : []).map((v) => String(v ?? "").trim()).filter(Boolean);
+}
+
+/** 근거 메시지 id를 한 줄로. 많으면 앞의 몇 개만 적고 나머지는 건수로 줄인다. */
+export function evidenceText(ids, max = 4) {
+  const list = cleanIds(ids);
+  if (list.length <= max) return list.join(", ");
+  return `${list.slice(0, max).join(", ")} 외 ${list.length - max}건`;
+}
+
+function levelLabel(level) {
+  const key = String(level ?? "");
+  return Object.hasOwn(LEVEL_LABEL, key) ? LEVEL_LABEL[key] : "";
+}
+
+/** "(3건: c3:m02, c3:m04)"처럼 괄호 안에 넣을 조각들을 잇는다. 빈 조각은 뺀다. */
+function paren(parts) {
+  const kept = parts.filter(Boolean);
+  return kept.length ? ` (${kept.join(", ")})` : "";
+}
+
+function speechPart(segment, countPrefix) {
+  const label = levelLabel(segment?.level);
+  if (!label) return null;
+  const count = cleanCount(segment?.count);
+  const head = count ? `${countPrefix}${count}건` : "";
+  const ids = evidenceText(segment?.message_ids);
+  const since = dayText(segment?.since);
+  return { label, text: `${label}${paren([[head, ids].filter(Boolean).join(": "), since ? `${since}부터` : ""])}` };
+}
+
+/**
+ * 카드가 정해 준 값(proposed)을 신호 모양으로 바꾼다 — 적용은 신호와 같은 길(applySignals)로 간다.
+ * 격식과 호칭만 받는다. 범위 밖 값은 버린다.
+ */
+export function cardSignals(card) {
+  const proposed = card?.proposed && typeof card.proposed === "object" ? card.proposed : {};
+  return [
+    { field: "formality", value: proposed.formality, reason: "", source: "register" },
+    { field: "address_term", value: proposed.address_term, reason: "", source: "register" },
+  ].filter((s) => signalView(s).usable);
+}
+
+/** 카드의 적용 버튼 글자: "격식 4 + 호칭 추가" · "격식 4 적용" · "호칭 추가". 정해 준 값이 없으면 빈 글자. */
+export function cardApplyLabel(card) {
+  const views = cardSignals(card).map(signalView);
+  const formality = views.find((v) => v.field === "formality");
+  const address = views.some((v) => v.field === "address_term");
+  if (formality && address) return `격식 ${formality.value} + 호칭 추가`;
+  if (formality) return `격식 ${formality.value} 적용`;
+  return address ? "호칭 추가" : "";
+}
+
+/**
+ * 제안 카드(말투가 바뀐 시점과 그 근거)를 화면 표시용으로. 보여 줄 것이 없으면 null.
+ * rows: [{ key, label, text }] — 말투 · 최근 말투(두 가지가 섞임) · 호칭 · 계기(그래프) · 범위 단서(그래프).
+ * 근거 메시지 id는 글자로만 보여 준다. 계기와 범위 단서는 제안의 근거일 뿐, 설정에 들어가는 값이 아니다.
+ */
+export function cardView(card, fallbackAlias = "") {
+  if (!card || typeof card !== "object") return null;
+  const rows = [];
+
+  const previous = speechPart(card.speech_previous, "");
+  const current = speechPart(card.speech_current, "최근 ");
+  if (previous && current) rows.push({ key: "speech", label: "말투", text: `${previous.text} → ${current.text}` });
+  else if (current) rows.push({ key: "speech", label: "말투", text: current.text });
+
+  const mixed =
+    card.two_valued && typeof card.two_valued === "object"
+      ? Object.entries(card.two_valued)
+          .map(([level, n]) => ({ label: levelLabel(level), count: cleanCount(n) }))
+          .filter((x) => x.label && x.count)
+      : [];
+  const twoValued = mixed.length >= 2;
+  if (twoValued) {
+    rows.push({ key: "two_valued", label: "최근 말투", text: `${mixed.map((x) => `${x.label} ${x.count}건`).join(" / ")}이 섞여 있어요` });
+  }
+
+  const term = cleanText(card.address?.term, LIMITS.address_term);
+  if (term) {
+    const count = cleanCount(card.address.count);
+    // 한 번만 본 호칭은 "후보"다 — 얼마나 얇은 근거인지 그대로 적는다
+    const candidate = card.address.status === "candidate" || count === 1;
+    const head = count ? (candidate ? `${count}회 관찰` : `${count}회`) : "";
+    const ids = evidenceText(card.address.message_ids);
+    const since = dayText(card.address.since);
+    rows.push({ key: "address", label: "호칭", text: `'${term}'${paren([[head, ids].filter(Boolean).join(": "), since ? `${since}부터` : ""])}` });
+  }
+
+  const event = String(card.trigger?.event ?? "").trim();
+  if (event) {
+    rows.push({
+      key: "trigger",
+      label: "계기(그래프)",
+      text: `${event}${paren([dayText(card.trigger.at), evidenceText(card.trigger.message_ids)])}`,
+    });
+  }
+
+  const hints = (Array.isArray(card.scope_hints) ? card.scope_hints : [])
+    .map((hint) => ({ text: String(hint?.text ?? "").trim(), ids: evidenceText(hint?.message_ids) }))
+    .filter((hint) => hint.text);
+  if (hints.length) {
+    rows.push({ key: "scope", label: "범위 단서(그래프)", text: hints.map((x) => `"${x.text}"${paren([x.ids])}`).join(" / ") });
+  }
+
+  if (!rows.length) return null;
+  const alias = String(card.contact_alias ?? "").trim() || String(fallbackAlias ?? "").trim();
+  const who = alias ? `${alias} 님에게 ` : "";
+  let title = `${who}보낸 내 메시지에서 읽은 말투예요.`;
+  if (previous && current) title = `${who}쓰는 말투가 바뀐 것으로 보여요.`;
+  else if (twoValued) title = `${who}두 가지 말투를 섞어 쓰고 있어요.`;
+  return {
+    title,
+    rows,
+    ask: card.ask === true,
+    askReason: String(card.ask_reason ?? "").trim(),
+    applyLabel: cardApplyLabel(card),
+  };
 }
 
 /** 제안 신호 한 건을 화면 표시용으로. 모르는 항목·범위 밖 값이면 usable=false. */
 export function signalView(signal) {
   const field = String(signal?.field ?? "");
   const value = signalValue(field, signal?.value);
+  const source = signalSource(signal);
   let valueLabel = "";
   if (value !== null) {
     if (SCALE_FIELDS.includes(field)) valueLabel = `${value}단계 · ${stepLabel(field, value)}`;
@@ -195,6 +357,9 @@ export function signalView(signal) {
     value,
     valueLabel,
     reason: String(signal?.reason ?? ""),
+    source,
+    sourceLabel: SOURCE_LABEL[source],
+    since: dayText(signal?.since), // 이 값이 처음 확인된 날. 없으면 빈 글자
     usable: value !== null,
   };
 }

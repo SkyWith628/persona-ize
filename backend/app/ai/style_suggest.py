@@ -68,8 +68,10 @@ class Signal:
     field: str
     value: Any
     reason: str
-    source: str = "messages"  # messages: 내 메시지의 겉모습 / graph: 그래프의 관계 사실 (persona_signals)
-    since: date | None = None  # 그래프 근거일 때: 이 값이 처음 확인된 날 (한국 시간)
+    # messages: 내 메시지의 겉모습 / register: 말투 프로필 (register_suggest) /
+    # graph: 그래프의 관계 사실 (persona_signals)
+    source: str = "messages"
+    since: date | None = None  # 말투 프로필·그래프 근거일 때: 이 값이 처음 확인된 날 (한국 시간)
 
 
 def _ending(text: str) -> str | None:

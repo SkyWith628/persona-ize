@@ -17,6 +17,13 @@ LangGraph `StateGraph`로 짠 상태 그래프다. 단계는 상태에서 필요
 상태에는 초안·검색된 대화·모델 출력이 들어 있다. 그래서 체크포인터·저장소·캐시 없이 컴파일하고
 (실행이 끝나면 상태는 사라진다) LangSmith 추적도 실행 구간에서 꺼 둔다 — 환경변수로 켜져 있어도
 상태가 밖으로 나가지 않는다.
+
+선택 기능 둘 (graph-redesign 5.5, 기본은 꺼짐 — 꺼져 있으면 위 설명 그대로다):
+- `register_warnings`: 추천 결과에 초안에도 설정에도 없는 호칭이 있으면 경고 한 줄을 붙인다. 검증 결과와
+  재생성에는 관여하지 않는다.
+- `register_post_check`: 사실 검증을 통과한 출력의 반말/존댓말이 설정의 격식과 다르면 한 번 다시 쓴다.
+  그래프 모양은 그대로다(validate → generate 길을 같이 쓴다). 통과한 1차는 상태에 보관해 두고, 2차를
+  쓸 수 없으면(사실 검증 실패·거절·장애) fallback 단계가 원문 대신 1차를 경고와 함께 추천한다.
 """
 
 from __future__ import annotations
@@ -35,7 +42,7 @@ from app.ai.preserve import extract_preserved_items
 from app.ai.prompt import PromptBundle, build_prompt, build_regenerate_suffix, fit_examples, today_kst
 from app.ai.providers.base import LLMProvider
 from app.ai.retrieval.base import Retriever
-from app.ai.validation import validate_output
+from app.ai.validation import address_leaks, validate_output
 from app.core.errors import ModelRefusalError, ModelUnavailableError
 from app.domain.contact import Contact
 from app.domain.conversation import exception_kind
@@ -52,6 +59,7 @@ from app.domain.rewrite import (
     ValidationReport,
     Violation,
 )
+from app.domain.titles import VALIDATOR_VERSION
 from app.domain.usage import estimate_tokens
 
 log = logging.getLogger(__name__)
@@ -71,6 +79,22 @@ GENERATE = "generate"
 VALIDATE = "validate"
 RECOMMEND = "recommend"
 FALLBACK = "fallback"
+
+# 말투 사후 점검의 재생성 꼬리말. 사실 검증 실패용 꼬리말(prompts/<version>/regenerate.md)은 "검증에
+# 실패했다, 위반 항목을 고쳐라"라는 글이라 맞지 않는다 — 이 경우 사실은 맞고 말투만 다르다.
+_REGISTER_KO = {True: "존댓말(해요체 또는 합쇼체)", False: "반말(해체)"}
+_REGISTER_SUFFIX = (
+    "이전 결과는 사실은 맞지만 말투가 설정과 다르다. 설정은 {wanted}인데 이전 결과는 {actual}이다.\n"
+    "날짜·수량·사람·약속 같은 사실은 이전 결과 그대로 두고, 문장 끝의 말투만 {wanted}로 고쳐 다시 작성한다. "
+    "새 사실이나 호칭을 더하지 않는다.\n\n"
+    "[이전 결과]\n{previous_text}"
+)
+_WARN_REGISTER_HELD = (
+    "말투를 맞춰 다시 쓴 결과를 쓸 수 없어 첫 결과를 추천합니다. "
+    "말투(반말/존댓말)가 설정과 다르니 보내기 전에 확인하세요."
+)
+_WARN_REGISTER_OFF = "결과의 말투(반말/존댓말)가 설정한 격식과 다릅니다. 보내기 전에 확인하세요."
+_WARN_ADDRESS_LEAK = "설정과 원문에 없는 호칭 {terms}이(가) 결과에 들어 있습니다. 보내기 전에 확인하세요."
 
 
 class WorkflowState(TypedDict, total=False):
@@ -99,6 +123,10 @@ class WorkflowState(TypedDict, total=False):
     usage: dict[str, int]
     report: ValidationReport
     attempt_log: list[AttemptRecord]
+    # 말투 사후 점검 (register_post_check가 켜져 있을 때만 채운다)
+    register_retry: bool  # 방금 검증한 출력이 사실은 통과했고 말투만 달라 한 번 더 생성하러 간다
+    held: ModelOutput | None  # 그때의 출력 (사실 검증 통과). 2차를 쓸 수 없으면 이것을 추천한다
+    held_report: ValidationReport  # 보관한 출력의 검증 결과
     # recommend / fallback
     result: RewriteResult
 
@@ -117,7 +145,13 @@ def _after_generate(state: WorkflowState) -> str:
 
 
 def _after_validate(state: WorkflowState) -> str:
-    """통과면 추천, 실패이고 기회가 남았으면 재생성, 아니면 원문 유지."""
+    """통과면 추천, 실패이고 기회가 남았으면 재생성, 아니면 원문 유지.
+
+    말투 사후 점검이 재생성을 정했으면(`register_retry`) 통과했어도 생성으로 돌아간다. 판단은 validate
+    단계가 끝냈고 여기서는 상태만 본다. 점검이 꺼져 있으면 이 키는 상태에 없다.
+    """
+    if state.get("register_retry"):
+        return GENERATE
     if state["report"].passed:
         return RECOMMEND
     if _attempts_left(state):
@@ -125,11 +159,33 @@ def _after_validate(state: WorkflowState) -> str:
     return FALLBACK
 
 
+def _register_mismatch(persona: PersonaSettings | None, text: str) -> bool | None:
+    """출력의 반말/존댓말이 설정의 격식과 다르면 설정이 바라는 쪽(True=존댓말)을, 아니면 None.
+
+    보는 것은 반말/존댓말 경계뿐이다. 합쇼체와 해요체는 가르지 않는다 — 자연스러운 공손한 한국어는
+    둘을 섞어 쓴다. 설정이 없거나(A 조건 포함) 출력의 말투가 섞였거나 알 수 없으면 판단하지 않는다.
+    기준은 이번 요청에 실제로 쓴 설정(조정 반영 뒤)의 격식이다.
+    """
+    if persona is None:
+        return None
+    # 점검이 꺼져 있으면 말투 분류기를 올리지 않는다 (규칙 계산이라 모델 호출은 없다).
+    from app.ai.register import level_of_formality, message_label, polite
+
+    wanted = polite(level_of_formality(persona.formality))
+    actual = polite(message_label(text))
+    if wanted is None or actual is None or wanted == actual:
+        return None
+    return wanted
+
+
 @dataclass
 class RewriteWorkflow:
     provider: LLMProvider
     retrievers: dict[Condition, Retriever]
     prompt_version: str
+    # 둘 다 기본은 꺼짐이고, 꺼져 있으면 결과가 예전과 글자까지 같다 (모듈 머리말).
+    register_warnings: bool = False
+    register_post_check: bool = False
     # 컴파일된 그래프. 인스턴스마다 한 번 만들고 요청끼리 공유한다(요청 상태는 들어 있지 않다).
     # 단계는 실행 때 self.provider·self.retrievers를 읽으므로 만든 뒤에 바꿔 끼워도 반영된다.
     _graph: Any = field(init=False, repr=False, compare=False)
@@ -202,6 +258,7 @@ class RewriteWorkflow:
             today=today_kst(inp.as_of),  # 검색 기준 시각과 같은 날을 '오늘'로 준다
             adjust=inp.adjust,
             contact_known=inp.condition != "A",  # 설정이 없어도(B~D) 누구에게 쓰는지는 밝힌다
+            register_block=inp.register_block,  # v4부터 자리가 있다. 없으면(None) 본문이 그대로다
         )
         return {
             "prompt": prompt,
@@ -287,23 +344,49 @@ class RewriteWorkflow:
                 + "\n\n"
                 + build_regenerate_suffix(self.prompt_version, output.rewritten_text, report.violations)
             )
+        if self.register_post_check:
+            # 말투 때문에 다시 쓰는 것은 한 번뿐이다: 사실 검증을 통과했고, 아직 보관한 출력이 없고,
+            # 기회가 남았을 때. 그 밖에는 표시를 내려 예전 갈림길 그대로 간다.
+            wanted = None
+            if report.passed and state.get("held") is None and _attempts_left(state):
+                wanted = _register_mismatch(state.get("persona_used"), output.rewritten_text)
+            update["register_retry"] = wanted is not None
+            if wanted is not None:
+                # 이 출력은 사실이 맞다. 2차가 더 나빠질 수 있으니 버리지 않고 들고 간다.
+                update["held"] = output
+                update["held_report"] = report
+                update["user_prompt"] = (
+                    state["prompt"].user
+                    + "\n\n"
+                    + _REGISTER_SUFFIX.format(
+                        wanted=_REGISTER_KO[wanted],
+                        actual=_REGISTER_KO[not wanted],
+                        previous_text=output.rewritten_text,
+                    )
+                )
         return update
 
     async def _recommend(self, state: WorkflowState) -> WorkflowState:
-        inp = state["inp"]
         output = state["output"]
         assert output is not None  # validate를 통과했을 때만 온다
+        return {"result": self._recommended(state, output, state["report"], held=False)}
+
+    def _recommended(
+        self, state: WorkflowState, output: ModelOutput, report: ValidationReport, *, held: bool
+    ) -> RewriteResult:
+        """추천 결과를 만든다. `held`는 보관해 둔 1차 출력을 추천하는 경우다 (말투 사후 점검)."""
+        inp = state["inp"]
         latency_ms = int((time.perf_counter() - state["started"]) * 1000)
         cited = set(output.evidence_ids)
-        result = RewriteResult(
+        return RewriteResult(
             status="recommended",
             result_text=output.rewritten_text.strip(),
             change_reasons=output.change_reasons,
-            warnings=output.warnings,
+            warnings=output.warnings + self._register_notes(state, output, held=held),
             evidence_ids=output.evidence_ids,
             intent=state["intent"],
             preserved_items=state["preserved"],
-            validation=state["report"],
+            validation=report,
             attempts=state["attempts"],
             attempt_log=state["attempt_log"],
             model_version=state["model_version"],
@@ -311,14 +394,43 @@ class RewriteWorkflow:
             retrieval_version=state["retriever"].version,
             token_usage=state["usage"],
             latency_ms=latency_ms,
+            validator_version=VALIDATOR_VERSION,
             adjust=inp.adjust,
             # 근거의 출처 메시지 참조만 남긴다. 원문 사본은 두지 않는다 —
             # 근거 조회 때 남아 있는 메시지를 다시 읽는다.
             evidence_refs={e.id: list(e.source_message_ids) for e in state["retrieved"] if e.id in cited},
         )
-        return {"result": result}
+
+    def _register_notes(self, state: WorkflowState, output: ModelOutput, *, held: bool) -> list[str]:
+        """추천 결과에 붙일 말투·호칭 경고. 두 기능이 다 꺼져 있으면 빈 목록이다.
+
+        경고일 뿐이다 — 검증 결과를 바꾸지 않고 재생성도 부르지 않는다.
+        """
+        notes: list[str] = []
+        if self.register_post_check:
+            if held:
+                notes.append(_WARN_REGISTER_HELD)
+            elif _register_mismatch(state.get("persona_used"), output.rewritten_text) is not None:
+                # 다시 쓸 기회가 없었거나(1차가 사실 검증 실패) 다시 써도 말투가 그대로인 경우
+                notes.append(_WARN_REGISTER_OFF)
+        if self.register_warnings:
+            leaks = address_leaks(
+                state["inp"].draft_text,
+                output.rewritten_text,
+                state.get("persona_used"),
+                state["contact"].alias,
+            )
+            if leaks:
+                notes.append(_WARN_ADDRESS_LEAK.format(terms=", ".join(f"'{t}'" for t in leaks)))
+        return notes
 
     async def _fallback(self, state: WorkflowState) -> WorkflowState:
+        held = state.get("held")
+        if held is not None:
+            # 말투 사후 점검으로 다시 썼는데 2차를 쓸 수 없다(사실 검증 실패·거절·장애). 1차는 사실 검증을
+            # 통과한 출력이므로 원문으로 돌아가지 않고 1차를 추천한다 — 점검을 켰다고 멀쩡한 결과를
+            # 잃으면 안 된다. 시도 기록에는 2차의 실패가 그대로 남는다.
+            return {"result": self._recommended(state, held, state["held_report"], held=True)}
         # 재생성까지 실패 또는 모델 장애: 원문 유지, 자동 전송 없음.
         inp = state["inp"]
         report = state["report"]
@@ -339,6 +451,7 @@ class RewriteWorkflow:
             retrieval_version=state["retriever"].version,
             token_usage=state["usage"],
             latency_ms=latency_ms,
+            validator_version=VALIDATOR_VERSION,
             adjust=inp.adjust,
         )
         return {"result": result}

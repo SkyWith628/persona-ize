@@ -25,6 +25,19 @@
     뺐다). 최근 순으로 넣으면 실제로 바뀐 경우에도 새 사실이 함께 들어가고, 프롬프트에 날짜가 찍힌다.
   - 질의 검색 쪽의 무효화 필터(위)는 그대로다 — 바꾸려면 평가로 따로 확인한다.
   - `as_of` 이후 출처는 여기서도 버린다. `state_slots=False`면 v2와 같다.
+- 질의 검색의 무효화 처리 방식(`invalidation_mode`, 11-16 재설계 4.4): 위 필터를 통째로 없애면 바뀐 회의
+  날짜처럼 실제로 대체된 사실이 돌아와 거짓 경고를 낼 수 있고, 그대로 두면 추출 부산물 때문에 지금도 참인
+  사실이 빠진다. 어느 쪽이 나은지는 평가로 정해야 해서 세 방식을 고를 수 있게만 했다. **기본은 `trust`로
+  지금까지와 똑같다.** 관계 상태 슬롯은 이 값과 무관하다(원래 무효화를 보지 않는다).
+  - `trust`: 무효화된(invalid_at ≤ as_of) 사실을 버린다.
+  - `ignore`: invalid_at을 보지 않는다.
+  - `artifacts`: 추출 부산물로 보이는 무효화만 무시한다(그 사실을 남긴다). 부산물로 보는 경우는 둘이다.
+    (1) invalid_at이 유효 시각에서 `ARTIFACT_WINDOW`(1시간) 안이다. (2) 무효화한 메시지가 이 사실의 출처와
+    같은 대화이고 같은 날(KST)이다. 엣지에는 '누가 무효화했는지'가 없어서, (2)는 상대 주변 사실들의 출처
+    에피소드 가운데 **발화 시각이 invalid_at과 정확히 같은 것**을 무효화한 메시지로 본다(Graphiti는 새
+    사실의 유효 시각을 옛 사실의 invalid_at으로 쓴다). 그런 에피소드를 못 찾으면 부산물인지 알 수 없으므로
+    무효화를 믿는다 — 며칠 뒤에 대체된 사실은 어느 경우에도 계속 걸러진다.
+  - `trust`가 아니면 버전 문자열에 `+inv-artifacts`/`+inv-ignore`가 붙어 실행 기록에서 구분된다.
 """
 
 from __future__ import annotations
@@ -32,13 +45,14 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
+from typing import Literal, get_args
 from uuid import UUID
 
 from app.ai.embeddings import Embedder, cosine
 from app.domain.conversation import exception_kind
 from app.domain.rewrite import RetrievedExample
-from app.graph.store import EventInfo, GraphEdgeHit, GraphStore
+from app.graph.store import EpisodeRef, EventInfo, GraphEdgeHit, GraphStore
 from app.repositories.base import ContactRepo
 
 SIMILARITY_WEIGHT = 0.75
@@ -61,6 +75,11 @@ EVENT_TYPE_WEIGHT = {
 DEFAULT_IMPORTANCE = 5  # 모델이 importance를 안 채운 사건
 STATE_EDGE_NAME = "Relationship"  # schema.EDGE_TYPES — 사람↔사람 관계·말투·호칭 사실
 STATE_RECENT = 3  # 가장 최근 관계 사실 몇 건을 질의와 무관하게 넣는가
+# 질의 검색에서 invalid_at을 어떻게 다룰지 (모듈 설명 참고). 기본 trust = 지금까지의 동작
+InvalidationMode = Literal["trust", "artifacts", "ignore"]
+ARTIFACT_WINDOW = timedelta(hours=1)  # 유효해진 뒤 이 시간 안의 무효화는 추출 부산물로 본다
+KST = timezone(timedelta(hours=9))  # '같은 날'은 사용자의 달력(한국 시간) 기준이다
+BASE_VERSION = "graph-context-v3"
 
 log = logging.getLogger(__name__)
 
@@ -77,7 +96,9 @@ class _Candidate:
 
 class GraphContextRetriever:
     # v1: Graphiti 순위 그대로 / v2: 유사도+최근성 재정렬 / v3: 관계 상태 슬롯을 앞에 둔다
-    version = "graph-context-v3"
+    # 무효화 처리 방식이 trust가 아니면 인스턴스에서 `+inv-<방식>`을 붙인다 (실행 기록에서 구분하려고).
+    # 합성 검색기 버전(문체 버전 + 이 문자열)이 DB 열 200자를 넘지 않는지 확인했다(가장 긴 경우 30자).
+    version = BASE_VERSION
 
     def __init__(
         self,
@@ -87,13 +108,20 @@ class GraphContextRetriever:
         oversample: int = 4,
         embedder: Embedder | None = None,
         state_slots: bool = True,
+        invalidation_mode: InvalidationMode = "trust",
     ) -> None:
+        if invalidation_mode not in get_args(InvalidationMode):
+            # 오타가 조용히 trust나 ignore로 동작하면 평가 비교가 틀어진다
+            raise ValueError(f"unknown invalidation_mode: {invalidation_mode!r}")
         self._store = store
         self._contacts = contacts
         self._top_k = top_k
         self._oversample = oversample
         self._embedder = embedder  # None이면 재정렬 없이 Graphiti 순위를 쓴다 (v1 동작)
         self._state_slots = state_slots  # False면 질의 검색만 (v2 동작)
+        self._invalidation_mode: InvalidationMode = invalidation_mode
+        if invalidation_mode != "trust":
+            self.version = f"{BASE_VERSION}+inv-{invalidation_mode}"
 
     async def retrieve(
         self,
@@ -123,6 +151,8 @@ class GraphContextRetriever:
         refs = await self._store.episode_refs({u for h in hits for u in h.episode_uuids})
 
         candidates: list[_Candidate] = []
+        # artifacts 방식에서만, 처음 필요해질 때 한 번 읽는다 (발화 시각 → 그 시각의 에피소드 이름들)
+        spoken_at: dict[datetime, set[str]] | None = None
         state_ids = {s.id for s in state}
         # 관계 상태로 이미 넣은 메시지에서 나온 사실은 질의 검색에서 다시 넣지 않는다
         seen_sources: set[frozenset[str]] = {frozenset(s.source_message_ids) for s in state} - {frozenset()}
@@ -141,7 +171,13 @@ class GraphContextRetriever:
             if any(t >= cutoff for t in times):
                 continue
             if h.invalid_at is not None and h.invalid_at <= cutoff:
-                continue
+                if self._invalidation_mode == "trust":
+                    continue
+                if self._invalidation_mode == "artifacts" and not _within_artifact_window(h, eps):
+                    if spoken_at is None:
+                        spoken_at = await self._episode_names_by_time(user_id, center, refs)
+                    if not _same_day_same_conversation(h, eps, spoken_at.get(h.invalid_at, set())):
+                        continue  # 부산물로 볼 근거가 없다 — 실제로 대체된 사실로 보고 버린다
             when = h.valid_at or (max(times) if times else None)
             candidates.append(_Candidate(hit=h, when=when, source_ids=sorted(e.name for e in eps), rank=rank))
 
@@ -165,6 +201,29 @@ class GraphContextRetriever:
             )
             for c in chosen
         ]
+
+    async def _episode_names_by_time(
+        self, user_id: str, center: str, known: dict[str, EpisodeRef]
+    ) -> dict[datetime, set[str]]:
+        """발화 시각 → 그 시각에 말한 에피소드 이름(`c3:m08`)들. 무효화한 메시지를 찾는 데 쓴다.
+
+        엣지에는 무효화한 에피소드가 적혀 있지 않다. 대신 invalid_at이 무효화한 메시지의 발화 시각과 같으므로
+        시각으로 거꾸로 찾는다. 범위는 상대 주변 사실들의 출처 에피소드다(검색 결과의 출처 + 이웃 조회) —
+        어떤 사실의 출처로도 남지 않은 메시지는 찾지 못한다. 이웃 조회가 실패하면 검색 결과의 출처만 쓴다
+        (찾지 못한 무효화는 믿으므로, 실패해도 더 많이 걸러질 뿐 틀린 사실이 돌아오지는 않는다).
+        """
+        refs = dict(known)
+        try:
+            hood = await self._store.neighborhood(user_id, center)
+            missing = {u for e in hood.edges for u in e.episode_uuids} - refs.keys()
+            refs.update(await self._store.episode_refs(missing))
+        except Exception as exc:  # noqa: BLE001 - 부분 장애는 축소 동작
+            log.warning("episode lookup for invalidation check failed: %s", exception_kind(exc))
+        out: dict[datetime, set[str]] = {}
+        for ref in refs.values():
+            if ref.valid_at is not None:
+                out.setdefault(ref.valid_at, set()).add(ref.name)
+        return out
 
     async def _relationship_state(
         self, user_id: str, center: str, cutoff: datetime
@@ -257,3 +316,41 @@ def _event_weight(event: EventInfo | None) -> float:
     importance = event.importance if event.importance is not None else DEFAULT_IMPORTANCE
     importance_w = 0.7 + 0.35 * (max(1, min(importance, 10)) / 10)
     return type_w * importance_w
+
+
+def _fact_start(hit: GraphEdgeHit, eps: list[EpisodeRef]) -> datetime | None:
+    """사실이 유효해진 시각. 엣지에 없으면 가장 이른 출처 메시지의 발화 시각으로 대신한다."""
+    if hit.valid_at is not None:
+        return hit.valid_at
+    times = [e.valid_at for e in eps if e.valid_at is not None]
+    return min(times) if times else None
+
+
+def _conversation_of(episode_name: str) -> str:
+    """에피소드 이름 `c3:m08`에서 대화 부분 `c3`. 대화 키에 `:`가 있어도 마지막 것이 메시지 구분이다."""
+    return episode_name.rsplit(":", 1)[0]
+
+
+def _within_artifact_window(hit: GraphEdgeHit, eps: list[EpisodeRef]) -> bool:
+    """유효해진 지 `ARTIFACT_WINDOW` 안에 무효화됐는가 — 같은 대화의 다음 메시지가 덮어쓴 추출 부산물.
+
+    시작 시각을 모르거나 invalid_at이 그보다 이르면(시간이 거꾸로) 판단하지 않는다.
+    """
+    start = _fact_start(hit, eps)
+    if start is None or hit.invalid_at is None:
+        return False
+    return timedelta(0) <= hit.invalid_at - start <= ARTIFACT_WINDOW
+
+
+def _same_day_same_conversation(hit: GraphEdgeHit, eps: list[EpisodeRef], invalidators: set[str]) -> bool:
+    """무효화한 메시지(`invalidators`, 에피소드 이름)가 이 사실의 출처와 같은 대화·같은 날(KST)인가.
+
+    무효화한 메시지를 못 찾았으면(빈 집합) 알 수 없으므로 False — 무효화를 믿는다.
+    """
+    start = _fact_start(hit, eps)
+    if start is None or hit.invalid_at is None or not invalidators:
+        return False
+    if hit.invalid_at < start or start.astimezone(KST).date() != hit.invalid_at.astimezone(KST).date():
+        return False
+    own = {_conversation_of(e.name) for e in eps}
+    return bool(own & {_conversation_of(name) for name in invalidators})
