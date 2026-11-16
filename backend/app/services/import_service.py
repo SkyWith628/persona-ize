@@ -233,6 +233,15 @@ class ImportService:
         self._index_progress: dict[UUID, tuple[int, int]] = {}
         self._conv_locks = KeyedLocks()  # 대화방 id → 저장·묶음 재생성·삭제를 한 번에 하나씩
 
+    @property
+    def index_wait(self) -> float | None:
+        """가져오기가 묶음 생성을 기다리는 초. None이면 끝날 때까지 기다린다."""
+        return self._index_wait
+
+    @index_wait.setter
+    def index_wait(self, value: float | None) -> None:
+        self._index_wait = value
+
     async def create_conversation(
         self,
         user_id: str,
