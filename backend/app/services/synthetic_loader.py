@@ -103,14 +103,40 @@ async def load_synthetic(
     """graph=True면 적재 뒤 미수집 메시지를 전체 시각 순으로 그래프에 넣는다 (NEO4J_URI 필요, haiku 호출).
 
     가져오기 중에는 백그라운드 그래프 수집을 끈다 — 스크립트가 끝나면 태스크가 죽고, 순서도 대화방별로 섞인다.
+    묶음 생성도 끝날 때까지 기다린다 — `build_state`는 API용 대기 시간(`IMPORT_INDEX_WAIT_SECONDS`, 기본 2초)
+    을 넣는데, 임베딩 모델을 처음 올리는 실행에서는 그 안에 끝나지 않아 `processing` 작업이 실패로 보고되고
+    스크립트가 닫히면서 묶음 생성까지 취소됐다 (2026-11-16).
     """
     data = load_dataset(dataset_path)
     rel_types = load_relationship_types(characters_csv)
     report = LoadReport(user_id=user_id)
     me_name = str((data.get("user") or {}).get("name") or "").strip() or None
     previous_mode = state.import_service.graph_mode
+    previous_wait = state.import_service.index_wait
     state.import_service.graph_mode = "off"
+    state.import_service.index_wait = None
+    try:
+        await _import_conversations(state, data, dataset_path, user_id, rel_types, me_name, report)
+    finally:
+        state.import_service.graph_mode = previous_mode
+        state.import_service.index_wait = previous_wait
 
+    if graph:
+        if state.graph_ingest is None:
+            raise RuntimeError("그래프 수집에는 NEO4J_URI가 필요합니다 (.env).")
+        report.graph_episodes = await state.graph_ingest.ingest_pending(user_id)
+    return report
+
+
+async def _import_conversations(
+    state: AppState,
+    data: dict[str, Any],
+    dataset_path: Path,
+    user_id: str,
+    rel_types: dict[str, str],
+    me_name: str | None,
+    report: LoadReport,
+) -> None:
     by_alias = {c.alias: c for c in await state.contacts.list(user_id)}
     by_key = {c.source_key: c for c in await state.conversations.list(user_id)}
 
@@ -148,11 +174,4 @@ async def load_synthetic(
         report.duplicates += job.duplicates
         report.episodes += job.episodes
         if job.status != "completed":
-            report.failed.append(f"{key}: {job.error_code} {job.error_message}")
-    state.import_service.graph_mode = previous_mode
-
-    if graph:
-        if state.graph_ingest is None:
-            raise RuntimeError("그래프 수집에는 NEO4J_URI가 필요합니다 (.env).")
-        report.graph_episodes = await state.graph_ingest.ingest_pending(user_id)
-    return report
+            report.failed.append(f"{key}: {job.status} {job.error_code} {job.error_message}")
