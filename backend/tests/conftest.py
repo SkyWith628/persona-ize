@@ -28,6 +28,14 @@ def user_b() -> dict[str, str]:
     return {"X-User-Id": "user-b"}
 
 
+@pytest.fixture(scope="session")
+def pg_url() -> str:
+    """PostgreSQL 통합 테스트용 DB URL. 세션당 한 번 스키마를 비우고 최신으로 올린다. 없으면 건너뛴다."""
+    from tests.pg_support import prepare_test_db
+
+    return prepare_test_db()
+
+
 @pytest.fixture
 def anyio_backend() -> str:
     # 비동기 테스트(pytest.mark.anyio)는 asyncio로만 돈다 (trio 미설치).

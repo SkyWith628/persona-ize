@@ -2,20 +2,42 @@
 
 삭제는 요청 안에서 끝내고 결과를 바로 돌려준다 (설계의 deletion-jobs는 데이터가 커지면). 그래프 삭제가
 실패해도 DB는 지워지고 `graph_error`에 사유가 남는다.
+
+가져오기 경로는 둘이다. 둘 다 `IMPORT_MASK_PII`면 본문의 개인정보 패턴을 가려서 저장한다.
+- `POST /v1/conversations/{id}/imports` — 메시지 배열(JSON). 검증 실패가 하나라도 있으면 저장하지 않고 422.
+- `POST /v1/conversations/{id}/imports/raw` — 내보내기 원문(카카오톡·텔레그램·붙여넣기)을 서버가 읽는다.
+  미리보기는 `POST /v1/imports/parse`(routes/data.py).
+
+사용자별 보관 한도(`MAX_CONVERSATIONS_PER_USER`, `MAX_MESSAGES_PER_USER`)를 넘는 요청은 아무것도 저장하지
+않고 422 `quota_exceeded`다. 한도는 이 API 경로에서만 건다 (합성 적재·평가 스크립트는 서비스를 직접 부른다).
 """
 
 from __future__ import annotations
 
+import asyncio
 from uuid import UUID
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Query, status
 
 from app.api.deps import State, UserId
-from app.api.schemas import ConversationCreate, ConversationOut, DeletionOut, ImportJobOut, MessageOut
+from app.api.schemas import (
+    ConversationCreate,
+    ConversationOut,
+    ConversationStatsOut,
+    DeletionOut,
+    ImportJobOut,
+    ImportRawIn,
+    MessageOut,
+    SpeakerOut,
+    SpeakerRolesIn,
+    SpeakerRolesOut,
+)
 from app.domain.conversation import Conversation, ImportJob
+from app.importers import parse_import
 from app.services.import_service import ImportPayload
 
 router = APIRouter(tags=["conversations"])
+MESSAGES_LIMIT_MAX = 5000  # 메시지 목록의 limit 상한 (한 번에 가져올 수 있는 수와 같은 수준)
 
 
 def _conv_out(c: Conversation) -> ConversationOut:
@@ -30,7 +52,9 @@ def _conv_out(c: Conversation) -> ConversationOut:
     )
 
 
-def _job_out(j: ImportJob) -> ImportJobOut:
+def _job_out(j: ImportJob, progress: tuple[int, int] | None = None) -> ImportJobOut:
+    """`progress`: 묶음 생성 진행(`ImportService.index_progress`). 작업이 `processing`일 때만 싣는다."""
+    done, total = progress if progress is not None and j.status == "processing" else (None, None)
     return ImportJobOut(
         id=j.id,
         conversation_id=j.conversation_id,
@@ -44,13 +68,21 @@ def _job_out(j: ImportJob) -> ImportJobOut:
         graph_episodes=j.graph_episodes,
         graph_error=j.graph_error,
         created_at=j.created_at,
+        index_done=done,
+        index_total=total,
     )
 
 
 @router.post("/v1/conversations", response_model=ConversationOut, status_code=status.HTTP_201_CREATED)
 async def create_conversation(body: ConversationCreate, user_id: UserId, state: State) -> ConversationOut:
     conv = await state.import_service.create_conversation(
-        user_id, body.contact_id, body.title, body.source, body.source_key, body.me_name
+        user_id,
+        body.contact_id,
+        body.title,
+        body.source,
+        body.source_key,
+        body.me_name,
+        max_per_user=state.settings.max_conversations_per_user,
     )
     return _conv_out(conv)
 
@@ -68,13 +100,71 @@ async def get_conversation(conversation_id: UUID, user_id: UserId, state: State)
 
 
 @router.get("/v1/conversations/{conversation_id}/messages", response_model=list[MessageOut])
-async def list_messages(conversation_id: UUID, user_id: UserId, state: State) -> list[MessageOut]:
+async def list_messages(
+    conversation_id: UUID,
+    user_id: UserId,
+    state: State,
+    limit: int | None = Query(
+        None, ge=1, le=MESSAGES_LIMIT_MAX, description="가장 최근 N건만 (시각 순). 생략하면 전부"
+    ),
+) -> list[MessageOut]:
+    """시각 순 메시지. `limit`을 주면 가장 최근 N건만 돌려준다 (생략하면 예전처럼 전부)."""
     return [
         MessageOut(
-            id=m.id, source_key=m.source_key, speaker_role=m.speaker_role, sent_at=m.sent_at, text=m.text
+            id=m.id,
+            source_key=m.source_key,
+            speaker_role=m.speaker_role,
+            speaker_name=m.speaker_name,
+            sent_at=m.sent_at,
+            text=m.text,
         )
-        for m in await state.conversations.list_messages(user_id, conversation_id)
+        for m in await state.conversations.list_messages(user_id, conversation_id, limit)
     ]
+
+
+@router.get("/v1/conversations/{conversation_id}/speakers", response_model=list[SpeakerOut])
+async def list_speakers(conversation_id: UUID, user_id: UserId, state: State) -> list[SpeakerOut]:
+    """이 대화방의 화자(이름 × 역할)와 메시지 수 — 화자별로 역할을 고칠 때 쓴다.
+
+    `name`이 null인 줄은 이름 없이 저장된 메시지다(이 기능 전에 가져왔거나 역할로만 올린 것). 같은
+    내보내기를 다시 올리면 이름이 채워진다.
+    """
+    return [
+        SpeakerOut(name=sp.name, speaker_role=sp.speaker_role, messages=sp.messages)
+        for sp in await state.conversations.speakers(user_id, conversation_id)
+    ]
+
+
+@router.get("/v1/conversations/{conversation_id}/stats", response_model=ConversationStatsOut)
+async def conversation_stats(conversation_id: UUID, user_id: UserId, state: State) -> ConversationStatsOut:
+    """가져오기 2단계 진행 표시용. 말투(묶음)는 가져오는 즉시, 사건 정리는 `graph_ingested / messages`.
+
+    `graph_held`: 거듭 실패해 보류된 메시지. `graph_pending`(앞으로 넣을 것)에는 들어가지 않는다.
+
+    `graph_limited`: 그래프 수집 상한에 닿아 남은 메시지가 지금은 들어가지 않는다 (문체 검색은 그대로 된다).
+    """
+    stats = await state.conversations.conversation_stats(user_id, conversation_id)
+    job = await state.conversations.latest_job(user_id, conversation_id)
+    pending = stats.graph_pending if state.graph_enabled else 0
+    limited = False
+    if state.graph_enabled and pending > 0:
+        limited = (job is not None and job.graph_status == "limited") or (
+            state.graph_ingest is not None and await state.graph_ingest.is_limited(user_id)
+        )
+    return ConversationStatsOut(
+        conversation_id=stats.conversation_id,
+        messages=stats.messages,
+        my_messages=stats.my_messages,
+        episodes=stats.episodes,
+        graph_enabled=state.graph_enabled,
+        graph_ingested=stats.graph_ingested,
+        graph_pending=pending,
+        graph_held=stats.graph_held if state.graph_enabled else 0,
+        graph_limited=limited,
+        first_message_at=stats.first_message_at,
+        last_message_at=stats.last_message_at,
+        latest_job=_job_out(job, state.import_service.index_progress(job.id)) if job is not None else None,
+    )
 
 
 @router.post(
@@ -85,13 +175,90 @@ async def list_messages(conversation_id: UUID, user_id: UserId, state: State) ->
 async def import_messages(
     conversation_id: UUID, body: ImportPayload, user_id: UserId, state: State
 ) -> ImportJobOut:
-    """지금은 요청 안에서 처리를 끝내고 완료된 작업을 돌려준다 (202는 설계의 비동기 전환을 위해 유지)."""
-    return _job_out(await state.import_service.import_messages(user_id, conversation_id, body))
+    """메시지를 저장하고 작업을 돌려준다. 묶음 생성이 `IMPORT_INDEX_WAIT_SECONDS` 안에 끝나면 `completed`,
+    아니면 `processing` — 나머지는 뒤에서 끝나고 `GET /v1/imports/{id}`로 확인한다."""
+    job = await state.import_service.import_messages(
+        user_id,
+        conversation_id,
+        body,
+        mask_pii=state.settings.import_mask_pii,
+        max_user_messages=state.settings.max_messages_per_user,
+    )
+    return _job_out(job, state.import_service.index_progress(job.id))
+
+
+@router.post(
+    "/v1/conversations/{conversation_id}/imports/raw",
+    response_model=ImportJobOut,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def import_raw(conversation_id: UUID, body: ImportRawIn, user_id: UserId, state: State) -> ImportJobOut:
+    """내보내기 원문을 읽어 화자 지정대로 저장한다 (미리보기와 같은 파서, 같은 메시지 id).
+
+    `speaker_map`에 없는 화자가 있으면 422(이름 나열). `skip`은 그 화자의 메시지를 버리고, `keep_recent`는
+    최근 N건만 남긴다. 결과가 0건이거나 `MAX_IMPORT_MESSAGES`를 넘으면 422. 아무것도 저장하지 않는다.
+    """
+    await state.conversations.get(user_id, conversation_id)  # 소유권: 큰 본문을 읽기 전에 404부터
+    settings = state.settings
+    parsed = await asyncio.to_thread(
+        parse_import,
+        body.text,
+        body.format,
+        body.tz_offset_minutes,
+        chat_id=str(body.chat_id) if body.chat_id is not None else None,
+        mask=settings.import_mask_pii,
+        max_chars=settings.max_import_chars,
+    )
+    job = await state.import_service.import_parsed(
+        user_id,
+        conversation_id,
+        parsed,
+        body.speaker_map,
+        keep_recent=body.keep_recent,
+        max_user_messages=settings.max_messages_per_user,
+    )
+    return _job_out(job, state.import_service.index_progress(job.id))
+
+
+@router.put("/v1/conversations/{conversation_id}/speaker-roles", response_model=SpeakerRolesOut)
+async def set_speaker_roles(
+    conversation_id: UUID, body: SpeakerRolesIn, user_id: UserId, state: State
+) -> SpeakerRolesOut:
+    """화자(나/상대)를 잘못 지정한 가져오기를 대화방을 지우지 않고 고친다.
+
+    - `message_id` + `speaker_role`: 방 전체의 나↔상대 맞바꾸기.
+    - `speakers`: 화자 이름별로 나/상대/제외(`skip` — 그 화자의 메시지를 지운다). 이름이 저장된 메시지만.
+
+    이미 맞는 상태면 `changed=false`로 끝난다(멱등). 바뀌면 묶음을 뒤에서 다시 만들고(`job`), 그래프가
+    켜져 있으면 바뀐 메시지의 에피소드를 지우고 다시 수집한다(상한은 그대로 따른다).
+    그래프 수집이 제때 비키지 않으면 409, 그래프에 닿지 못하면 아무것도 바꾸지 않고 503.
+    """
+    if body.speakers is not None:
+        r = await state.import_service.set_speaker_roles(
+            user_id, conversation_id, body.speakers, body.me_name
+        )
+    else:
+        assert body.message_id is not None and body.speaker_role is not None  # 스키마가 보장한다
+        r = await state.import_service.set_speaker_role(
+            user_id, conversation_id, body.message_id, body.speaker_role, body.me_name
+        )
+    return SpeakerRolesOut(
+        conversation_id=r.conversation_id,
+        changed=r.changed,
+        messages=r.messages,
+        messages_removed=r.messages_removed,
+        my_messages=r.my_messages,
+        me_name=r.me_name,
+        graph_episodes_removed=r.graph_removed,
+        graph_requeued=r.graph_requeued,
+        job=_job_out(r.job) if r.job is not None else None,
+    )
 
 
 @router.get("/v1/imports/{job_id}", response_model=ImportJobOut)
 async def get_import(job_id: UUID, user_id: UserId, state: State) -> ImportJobOut:
-    return _job_out(await state.conversations.get_job(user_id, job_id))
+    job = await state.conversations.get_job(user_id, job_id)
+    return _job_out(job, state.import_service.index_progress(job.id))
 
 
 @router.delete("/v1/conversations/{conversation_id}", response_model=DeletionOut)

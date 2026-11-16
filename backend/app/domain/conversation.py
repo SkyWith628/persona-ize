@@ -6,15 +6,72 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+import re
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+KST = timezone(timedelta(hours=9))
+_SAFE_CODE = re.compile(r"^[A-Za-z0-9_.\-]{1,80}$")
+
+
+def exception_kind(exc: BaseException) -> str:
+    """예외의 **종류만**: 클래스 이름과, 있으면 형태가 정해진 코드(HTTP 상태, SQLSTATE, Neo4j 코드).
+
+    예외 문구(`str(exc)`)는 쓰지 않는다. DB·그래프·모델 클라이언트의 문구에는 SQL 매개변수나 프롬프트
+    조각 — 사용자의 대화 원문 — 이 들어 있을 수 있다. 작업 기록(`import_jobs.error_message`·
+    `graph_error`), 삭제 응답의 `graph_error`, 로그 줄에는 이것만 남긴다 (2026-11-11 검토).
+    """
+    name = type(exc).__name__
+    for source in (exc, getattr(exc, "orig", None)):
+        for attr in ("status_code", "sqlstate", "pgcode", "code"):
+            value = getattr(source, attr, None)
+            if isinstance(value, bool):
+                continue
+            if isinstance(value, int) or (isinstance(value, str) and _SAFE_CODE.match(value)):
+                return f"{name}({value})"
+    return name
+
+
+def local_time(moment: datetime) -> datetime:
+    """메시지 시각을 **날짜·요일·시:분으로 읽을 때** 쓰는 현지 시각(한국 시간).
+
+    저장소마다 돌려주는 시간대가 다르다 — 인메모리는 가져온 그대로(+09:00), PostgreSQL(timestamptz)은 UTC.
+    그 datetime의 자기 시간대로 날짜를 읽으면 화요일 08:01(KST)이 월요일 23:01이 된다. 날짜·요일을 글자로
+    만드는 곳(그래프 에피소드 본문, 상대 날짜 풀이, 프롬프트 예시의 날짜)은 반드시 이것을 거친다.
+    시간대가 없는 값은 UTC로 본다 (`ai.prompt.today_kst`와 같은 기준).
+    """
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=UTC)
+    return moment.astimezone(KST)
+
+
+GRAPH_UNIT_CHARS = 1000
+
+
+def graph_units(text: str) -> int:
+    """그래프 수집 상한에서 메시지 한 건을 세는 양: 기본 1, 1,000자마다 1씩 더한다.
+
+    에피소드 하나의 모델 비용은 본문 길이에 따라 는다 — 4,000자 메시지를 1건으로 세면 상한이 헐거워진다.
+    """
+    return 1 + len(text) // GRAPH_UNIT_CHARS
+
+
 SpeakerRole = Literal["me", "contact"]
-ImportStatus = Literal["completed", "failed"]
-GraphStatus = Literal["skipped", "pending", "running", "completed", "failed"]
+SPEAKER_NAME_MAX = 64  # messages.speaker_name 열 길이
+
+
+def speaker_label(name: str | None) -> str | None:
+    """저장할 화자 이름: 앞뒤 공백을 떼고 열 길이에 맞춘다. 역할 낱말(me/contact)·빈 값은 이름이 아니다."""
+    label = (name or "").strip()[:SPEAKER_NAME_MAX].strip()
+    return label if label and label not in ("me", "contact") else None
+
+
+ImportStatus = Literal["processing", "completed", "failed"]
+# limited: 그래프 수집 상한(GRAPH_INGEST_*_CAP)에 닿아 멈췄다. 미수집 메시지는 남아 있다 (DB 열 16자).
+GraphStatus = Literal["skipped", "pending", "running", "completed", "failed", "limited"]
 
 
 class Conversation(BaseModel):
@@ -33,6 +90,7 @@ class NewMessage(BaseModel):
 
     source_key: str = Field(min_length=1, max_length=64)
     speaker_role: SpeakerRole
+    speaker_name: str | None = Field(None, max_length=SPEAKER_NAME_MAX, description="내보내기의 화자 이름")
     sent_at: datetime
     text: str = Field(min_length=1, max_length=4000)
 
@@ -43,9 +101,21 @@ class Message(BaseModel):
     conversation_id: UUID
     source_key: str
     speaker_role: SpeakerRole
+    speaker_name: str | None = Field(
+        None, description="내보내기의 화자 이름. 모르면 None (0011 이전, 역할로만 올린 메시지)"
+    )
     sent_at: datetime
     text: str
     graph_ingested_at: datetime | None = Field(None, description="그래프(D)에 넣은 시각. None이면 미수집")
+    graph_attempts: int = Field(0, description="그래프에 넣다 실패한 횟수 (일시 장애는 세지 않는다)")
+    graph_held_at: datetime | None = Field(
+        None, description="거듭 실패해 더 시도하지 않기로 한 시각. 운영자가 graph_reset으로 푼다"
+    )
+
+    @property
+    def graph_pending(self) -> bool:
+        """그래프 수집을 기다리는가 — 아직 안 들어갔고 보류되지도 않았다."""
+        return self.graph_ingested_at is None and self.graph_held_at is None
 
 
 class EpisodeDraft(BaseModel):
@@ -100,5 +170,62 @@ class ImportJob(BaseModel):
     error_message: str | None = None
     graph_status: GraphStatus = Field("skipped", description="그래프 수집 단계. 그래프를 안 쓰면 skipped")
     graph_episodes: int = 0
-    graph_error: str | None = None
+    graph_error: str | None = Field(
+        None, description="failed면 오류 문장, limited면 닿은 상한(user_cap / daily_cap)"
+    )
     created_at: datetime
+
+
+class SpeakerCount(BaseModel):
+    """대화방 안의 화자 한 명(이름 × 역할)과 메시지 수. 이름을 모르는 메시지는 `name=None`으로 묶인다."""
+
+    name: str | None
+    speaker_role: SpeakerRole
+    messages: int
+
+
+class SpeakerRoleChange(BaseModel):
+    """화자 역할 고치기의 결과 (`PUT /v1/conversations/{id}/speaker-roles`).
+
+    두 가지로 고친다: 방 전체의 나↔상대 맞바꾸기(기준 메시지 하나로), 화자 이름별 지정(나/상대/제외 —
+    원래 화자 이름이 저장된 메시지만).
+    """
+
+    conversation_id: UUID
+    changed: bool = Field(description="거짓이면 이미 그 역할이라 아무것도 하지 않았다")
+    messages: int = Field(0, description="역할이 바뀐 메시지 수")
+    messages_removed: int = Field(0, description="제외(skip)로 지운 메시지 수")
+    my_messages: int = Field(0, description="바뀐 뒤 내 메시지 수")
+    me_name: str | None = None
+    graph_removed: int = Field(0, description="그래프에서 지운 에피소드 수 (잘못된 역할로 들어간 것)")
+    graph_requeued: int = Field(0, description="다시 수집 대상으로 돌린 메시지 수")
+    job: ImportJob | None = Field(None, description="묶음을 다시 만드는 작업. 바뀐 것이 없으면 None")
+
+
+class ConversationStats(BaseModel):
+    """대화방 하나의 집계 (`GET /v1/conversations/{id}/stats`)."""
+
+    conversation_id: UUID
+    messages: int = 0
+    my_messages: int = 0
+    episodes: int = 0
+    graph_ingested: int = 0
+    graph_held: int = 0  # 거듭 실패해 보류된 메시지 — 그래프에 없고, 다시 시도하지도 않는다
+    first_message_at: datetime | None = None
+    last_message_at: datetime | None = None
+
+    @property
+    def graph_pending(self) -> int:
+        """앞으로 넣을 메시지 수. 보류된 것은 세지 않는다."""
+        return max(self.messages - self.graph_ingested - self.graph_held, 0)
+
+
+class ContactDataStats(BaseModel):
+    """상대 한 명에게 쌓인 대화 자료의 집계 (`GET /v1/data/summary`, 조건 auto 판단)."""
+
+    contact_id: UUID
+    conversations: int = 0
+    messages: int = 0
+    my_messages: int = 0
+    episodes: int = 0
+    graph_ingested: int = 0

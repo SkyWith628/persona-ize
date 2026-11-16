@@ -14,8 +14,9 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from app.core.security import verify_password
+from app.core.security import verify_password_async
 from app.domain.auth import Session
+from app.domain.conversation import exception_kind
 from app.repositories.auth import AuthRepo
 from app.repositories.base import ContactRepo, ConversationRepo, RewriteRepo
 from app.repositories.usage import UsageRepo
@@ -63,13 +64,16 @@ class DeletionService:
         self._auth = auth
         self._graph = graph_store
 
-    async def delete_contact(self, user_id: str, contact_id: UUID) -> ContactDeletion:
+    async def delete_contact(
+        self, user_id: str, contact_id: UUID, *, remove_graph: bool = True
+    ) -> ContactDeletion:
+        """`remove_graph=False`는 계정 삭제 전용: 그래프는 부른 쪽이 통째로 지운다."""
         contact = await self._contacts.get(user_id, contact_id)  # 소유권
         result = ContactDeletion(
             contact_id=contact.id, conversations=0, messages=0, episodes=0, graph_episodes=0
         )
         for conv in await self._conversations.list(user_id, contact.id):
-            d = await self._imports.delete_conversation(user_id, conv.id)
+            d = await self._imports.delete_conversation(user_id, conv.id, remove_graph=remove_graph)
             result.conversations += 1
             result.messages += d.messages
             result.episodes += d.episodes
@@ -83,12 +87,16 @@ class DeletionService:
     async def delete_account(self, session: Session, password: str) -> AccountDeletion:
         user = await self._auth.get_user(session.user_id)
         found = await self._auth.find_user_by_username(user.username)
-        if found is None or not verify_password(password, found[1]):
+        # 비밀번호 해시(scrypt)는 수십 ms짜리 CPU 작업이다 — 이벤트 루프 밖에서 확인한다.
+        if found is None or not await verify_password_async(password, found[1]):
             raise UnauthorizedError("비밀번호가 맞지 않습니다.")
         user_id = str(user.id)
         result = AccountDeletion(user_id=user_id, contacts=0, conversations=0, messages=0)
+        # 그래프가 있으면 이 사용자의 것을 아래에서 통째로 지운다 — 대화방마다 에피소드를 하나씩 지우지 않는다
+        # (그래프가 없는 서버에서는 예전처럼 대화방 삭제가 그래프를 건너뛴다).
+        per_conversation = self._graph is None
         for contact in await self._contacts.list(user_id):
-            d = await self.delete_contact(user_id, contact.id)
+            d = await self.delete_contact(user_id, contact.id, remove_graph=per_conversation)
             result.contacts += 1
             result.conversations += d.conversations
             result.messages += d.messages
@@ -96,8 +104,8 @@ class DeletionService:
             try:
                 result.graph_nodes_removed = await self._graph.remove_group(user_id)
             except Exception as exc:  # noqa: BLE001 - DB 삭제는 계속
-                log.warning("graph group removal failed user=%s: %s", user_id, exc)
-                result.graph_error = str(exc)[:300]
+                result.graph_error = exception_kind(exc)
+                log.warning("graph group removal failed user=%s: %s", user_id, result.graph_error)
         await self._usage.delete_user(user_id)
         await self._auth.delete_user(user.id)  # 세션은 CASCADE
         return result

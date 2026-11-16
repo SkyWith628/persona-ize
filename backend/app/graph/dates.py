@@ -3,7 +3,7 @@
 haiku-4-5는 요일을 보여 줘도 '다음 주 수요일' 같은 산술을 자주 틀린다 (2026-11-08 3·4차 수집).
 그래서 코드가 먼저 계산해 `다음 주 수요일(=2026-10-14)`처럼 적어 주고, 모델은 그 값을 옮겨 쓰기만 한다.
 
-규칙 (주는 월~일, 날짜는 메시지 시각의 시간대 기준):
+규칙 (주는 월~일, 날짜는 메시지 시각을 **한국 시간**으로 읽은 것 — 저장소가 UTC로 돌려줘도 같다):
 - 그제/어제/오늘/내일/모레 → 해당 날짜
 - 이번/다음/지난 주 X요일 → 그 주의 X요일
 - X요일(수식어 없음) → 같은 대화방 앞 메시지가 그 요일의 날짜를 특정했고 아직 지나지 않았으면 그 날짜
@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import re
 from datetime import date, datetime, timedelta
+
+from app.domain.conversation import local_time
 
 WEEKDAY_INDEX = {"월": 0, "화": 1, "수": 2, "목": 3, "금": 4, "토": 5, "일": 6}
 WEEK_OFFSET = {"지난": -1, "이번": 0, "다음": 1}
@@ -117,7 +119,7 @@ def resolve_relative_dates(
     text: str, reference: datetime, context: DiscourseContext | None = None
 ) -> list[tuple[str, str]]:
     """본문에서 찾은 (표현, 절대 날짜) 목록. 순서는 등장 순. context를 주면 앵커를 읽고 갱신한다."""
-    today = reference.date()
+    today = local_time(reference).date()
     found: list[tuple[str, str]] = []
     for match in _PATTERN.finditer(text):
         value = _resolve(match, today, context)
@@ -128,7 +130,7 @@ def resolve_relative_dates(
 
 def annotate_relative_dates(text: str, reference: datetime, context: DiscourseContext | None = None) -> str:
     """상대 날짜 표현 뒤에 `(=YYYY-MM-DD)`를 붙인다. 이미 주석이 있으면 다시 붙이지 않는다."""
-    today = reference.date()
+    today = local_time(reference).date()
 
     def replace(match: re.Match[str]) -> str:
         expr = match.group(0)

@@ -24,7 +24,15 @@ function esc(s) { return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "
 async function api(method, path, body, extraHeaders = {}) {
   const headers = { "Content-Type": "application/json", ...extraHeaders };
   if (state.csrf && method !== "GET") headers["X-CSRF-Token"] = state.csrf;
-  const res = await fetch(path, { method, headers, credentials: "same-origin", body: body === undefined ? undefined : JSON.stringify(body) });
+  let res;
+  try {
+    res = await fetch(path, { method, headers, credentials: "same-origin", body: body === undefined ? undefined : JSON.stringify(body) });
+  } catch {
+    // 브라우저의 영어 문장(Failed to fetch 등)을 화면에 그대로 내보내지 않는다
+    const err = new Error("서버에 연결하지 못했습니다. 네트워크를 확인한 뒤 다시 시도해 주세요.");
+    err.network = true;
+    throw err;
+  }
   if (res.status === 204) return null;
   const text = await res.text();
   let data = null;
@@ -187,7 +195,9 @@ function render() {
   else if (state.mode === "pc") {
     // 주 행동에 포커스를 둔다: 넣기 → 다시 → 닫기 순 (querySelector의 쉼표 선택자는 문서 순서라 따로 찾는다)
     const p = panelEl();
-    (p.querySelector(".btn[data-act=insert]") || p.querySelector(".btn[data-act=run]") || p.querySelector(".btn[data-act=close]"))?.focus();
+    // 상대 고르기 화면에는 .btn이 없다 → 지금 상대 칩(없으면 첫 버튼). 안 그러면 포커스가 body로 빠진다
+    (p.querySelector(".btn[data-act=insert]") || p.querySelector(".btn[data-act=run]") || p.querySelector(".btn[data-act=close]")
+      || p.querySelector("[data-contact].on") || p.querySelector("button"))?.focus();
   }
 }
 
@@ -234,8 +244,10 @@ async function run() {
 
 async function insert() {
   if (state.stage !== "result") return;
-  const original = state.rec.result.result_text;
-  const text = state.editing ? $("#edit-text").value : original;
+  // '고치기 끝'은 result_text(화면 사본)를 덮어쓴다 → 고쳤는지는 모델이 낸 문장(model_text)과 비교한다
+  const shown = state.rec.result.result_text;
+  const original = state.rec.result.model_text ?? shown;
+  const text = state.editing ? $("#edit-text").value : shown;
   const rec = state.rec;
   inputEl().value = text;
   setStage("idle");
@@ -253,14 +265,21 @@ function close() {
 
 function onPanelClick(e) {
   const contactId = e.target.closest("[data-contact]")?.dataset.contact;
-  if (contactId) { selectContact(state.contacts.find((c) => c.id === contactId), true); return; }
+  if (contactId) {
+    selectContact(state.contacts.find((c) => c.id === contactId), true);
+    if (state.mode === "pc") inputEl().focus(); // 창이 닫히며 누른 칩이 사라진다 → 초안으로 돌아가 단축키를 바로 누를 수 있게
+    return;
+  }
   const act = e.target.closest("[data-act]")?.dataset.act;
   if (act === "close") close();
   else if (act === "run") run();
   else if (act === "insert") insert();
   else if (act === "pick") { state.requestSeq++; setStage("pick"); }
   else if (act === "edit") {
-    if (state.editing) state.rec.result.result_text = $("#edit-text").value; // 화면 표시용 사본만 고친다
+    if (state.editing) { // 화면 표시용 사본만 고친다. 모델 원문은 피드백 비교용으로 남긴다
+      state.rec.result.model_text ??= state.rec.result.result_text;
+      state.rec.result.result_text = $("#edit-text").value;
+    }
     state.editing = !state.editing; render();
   }
 }

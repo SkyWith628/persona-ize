@@ -1,4 +1,7 @@
-"""세션 쿠키 인증: 가입→쿠키→조회, 쓰기는 CSRF 필수, 로그아웃 뒤 401, 헤더 스텁 끄기, 비밀번호 해시."""
+"""세션 쿠키 인증: 가입→쿠키→조회, 쓰기는 CSRF 필수, 로그아웃 뒤 401, 헤더 스텁 끄기, 비밀번호 해시.
+
+초대 코드·동의·세션 목록·Bearer 토큰·비밀번호 재설정(2026-11-11 추가)은 `test_platform_auth.py`.
+"""
 
 from __future__ import annotations
 
@@ -45,6 +48,11 @@ def test_register_login_cookie_csrf_logout() -> None:
     assert client.get("/v1/contacts").status_code == 200
     me = client.get("/v1/auth/me").json()
     assert me["user_id"] == body["user_id"] and me["csrf_token"] == body["csrf_token"]
+    # 응답 필드는 더하기만 했다: 예전 필드는 그대로, 계정 상태(관리자·동의) 네 가지가 붙는다
+    account = {"is_admin", "consented_at", "consent_version", "consent_current"}
+    assert set(body) == {"user_id", "username", "csrf_token", "expires_at"} | account
+    assert set(me) == {"user_id", "username", "csrf_token"} | account
+    assert (me["is_admin"], me["consented_at"], me["consent_current"]) == (False, None, False)
 
     # 쓰기: CSRF 없으면 403, 틀리면 403, 맞으면 201
     payload = {"alias": "박지현", "relationship_type": "superior"}
@@ -109,9 +117,11 @@ def test_login_throttle_by_username_then_recovers_on_success() -> None:
     blocked = client.post("/v1/auth/login", json=CRED)  # 맞는 비밀번호여도 잠금
     assert blocked.status_code == 429 and blocked.json()["code"] == "too_many_attempts"
     assert "초 뒤" in blocked.json()["message"]
-    # 다른 이름은 영향 없음 (IP는 TestClient가 같지만 이름 키가 먼저 걸린 상태라 IP 키도 3회 → 함께 잠긴다)
+    assert f"{blocked.headers['retry-after']}초 뒤" in blocked.json()["message"]  # 헤더로도 같은 값을 알린다
+    # 같은 IP의 다른 이름은 잠기지 않는다 — 잠금은 (이름, IP) 쌍 기준이다 (2026-11-11 검토 뒤.
+    # 예전에는 IP 실패 3번으로 이 IP의 모든 로그인이 막혀 401과 429를 둘 다 허용했다)
     other = client.post("/v1/auth/login", json={"username": "someone_else", "password": "whatever-1"})
-    assert other.status_code in (401, 429)
+    assert other.status_code == 401
 
 
 def test_login_throttle_unit_and_reset() -> None:

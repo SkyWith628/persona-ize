@@ -11,6 +11,8 @@ dependencies = [
     "python-dotenv>=1.0",
     "anthropic>=2.0",
     "httpx>=0.27",
+    # 첨삭 워크플로의 상태 그래프 (app/ai/workflow.py). LangSmith 추적은 쓰지 않는다 — core/guard.py
+    "langgraph>=1.2,<2",
 ]
 
 [project.optional-dependencies]

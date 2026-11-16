@@ -197,3 +197,210 @@ async def test_workflow_passes_as_of_date_in_kst_to_prompt(as_of: datetime, expe
     r = await wf.run(inp.model_copy(update={"as_of": as_of}), contact, persona)
     assert r.status == "recommended"
     assert f"[오늘] {expected}" in provider.prompts[0]
+
+
+# ── 그래프 구조 (LangGraph) ───────────────────────────────────────────────────
+
+
+def test_graph_has_fixed_steps_and_two_forks() -> None:
+    """단계와 갈림길이 설계대로다 — 경로는 고정이고 갈림길은 generate·validate 뒤 두 곳뿐."""
+    wf, *_ = make(ScriptedProvider([]))
+    drawn = wf._graph.get_graph()
+    assert set(drawn.nodes) == {
+        "__start__",
+        "analyze",
+        "retrieve",
+        "compose",
+        "generate",
+        "validate",
+        "recommend",
+        "fallback",
+        "__end__",
+    }
+    fixed = {(e.source, e.target) for e in drawn.edges if not e.conditional}
+    forks = {(e.source, e.target) for e in drawn.edges if e.conditional}
+    assert fixed == {
+        ("__start__", "analyze"),
+        ("analyze", "retrieve"),
+        ("retrieve", "compose"),
+        ("compose", "generate"),
+        ("recommend", "__end__"),
+        ("fallback", "__end__"),
+    }
+    assert forks == {
+        ("generate", "validate"),
+        ("generate", "generate"),  # 거절 → 재생성
+        ("generate", "fallback"),  # 모델 장애 또는 기회 없음
+        ("validate", "recommend"),
+        ("validate", "generate"),  # 검증 실패 → 재생성
+        ("validate", "fallback"),
+    }
+
+
+@pytest.mark.parametrize(
+    ("outcome", "attempts", "expected"),
+    [
+        ("output", 1, "validate"),
+        ("output", 2, "validate"),
+        ("refusal", 1, "generate"),
+        ("refusal", 2, "fallback"),
+        ("unavailable", 1, "fallback"),  # 장애는 기회가 남아도 다시 부르지 않는다
+        ("unavailable", 2, "fallback"),
+    ],
+)
+def test_fork_after_generate(outcome: str, attempts: int, expected: str) -> None:
+    from app.ai.workflow import _after_generate
+
+    assert _after_generate({"outcome": outcome, "attempts": attempts}) == expected  # type: ignore[typeddict-item]
+
+
+@pytest.mark.parametrize(
+    ("passed", "attempts", "expected"),
+    [(True, 1, "recommend"), (True, 2, "recommend"), (False, 1, "generate"), (False, 2, "fallback")],
+)
+def test_fork_after_validate(passed: bool, attempts: int, expected: str) -> None:
+    from app.ai.workflow import _after_validate
+    from app.domain.rewrite import ValidationReport
+
+    state = {"report": ValidationReport(passed=passed, violations=[]), "attempts": attempts}
+    assert _after_validate(state) == expected  # type: ignore[arg-type]
+
+
+def test_graph_keeps_no_state_anywhere() -> None:
+    """상태에 초안·대화 원문이 들어 있다 — 체크포인터·저장소·캐시가 붙으면 안 된다."""
+    wf, *_ = make(ScriptedProvider([]))
+    assert wf._graph.checkpointer is None
+    assert wf._graph.store is None
+    assert wf._graph.cache is None
+
+
+@pytest.mark.anyio
+async def test_tracing_is_off_inside_the_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    """환경변수로 LangSmith 추적을 켜도 꺼져 있다 — 실행 밖에서도, 실행 구간에서도."""
+    from langsmith.utils import tracing_is_enabled
+
+    monkeypatch.setenv("LANGSMITH_TRACING", "true")
+    monkeypatch.setenv("LANGCHAIN_TRACING_V2", "true")
+    seen: list[object] = []
+
+    class Peek(ScriptedProvider):
+        async def generate(self, *, system: str, user: str):  # type: ignore[no-untyped-def]
+            seen.append(tracing_is_enabled())
+            return await super().generate(system=system, user=user)
+
+    # workflow 모듈이 import될 때 프로세스 전체에서 꺼 둔다 — 환경변수로 켜도 바깥에서부터 꺼져 있다
+    assert tracing_is_enabled() is False
+    wf, inp, contact, persona = make(Peek([GOOD]))
+    r = await wf.run(inp, contact, persona)
+    assert r.status == "recommended"
+    assert seen == [False]
+
+
+def test_graph_is_built_once_and_stays_out_of_repr_and_eq() -> None:
+    provider = ScriptedProvider([])
+    null = NullRetriever()
+    kwargs = dict(provider=provider, retrievers={"A": null}, prompt_version="rewrite-v1")
+    a, b = RewriteWorkflow(**kwargs), RewriteWorkflow(**kwargs)  # type: ignore[arg-type]
+    assert a._graph is not b._graph
+    assert a == b  # 비교는 공개 필드만 본다
+    assert "_graph" not in repr(a)
+    assert [f.name for f in __import__("dataclasses").fields(a) if f.init] == [
+        "provider",
+        "retrievers",
+        "prompt_version",
+    ]
+
+
+@pytest.mark.anyio
+async def test_provider_swapped_after_construction_is_used() -> None:
+    """다른 테스트들이 `workflow.provider = ...`로 바꿔 끼운다 — 단계는 실행 때의 값을 읽어야 한다."""
+    wf, inp, contact, persona = make(ScriptedProvider([BAD, BAD]))
+    graph = wf._graph
+    swapped = ScriptedProvider([GOOD])
+    wf.provider = swapped
+    r = await wf.run(inp, contact, persona)
+    assert r.status == "recommended" and swapped.calls == 1
+    assert wf._graph is graph  # 다시 컴파일하지 않는다
+
+
+@pytest.mark.anyio
+async def test_unknown_condition_raises_before_any_step() -> None:
+    provider = ScriptedProvider([GOOD])
+    wf, inp, contact, persona = make(provider)
+    with pytest.raises(ValueError, match="워크플로는 A~D 조건만 받습니다: auto"):
+        await wf.run(inp.model_copy(update={"condition": "auto"}), contact, persona)
+    assert provider.calls == 0
+
+
+@pytest.mark.anyio
+async def test_unavailable_on_second_attempt_does_not_recommend_earlier_output() -> None:
+    wf, inp, contact, persona = make(ScriptedProvider([BAD, ModelUnavailableError("503")]))
+    r = await wf.run(inp, contact, persona)
+    assert r.status == "fallback_original"
+    assert r.result_text == DRAFT
+    assert r.attempts == 2
+    assert [a.violations[0].check for a in r.attempt_log][-1] == "empty"
+    assert r.token_usage == {"input_tokens": 1, "output_tokens": 1} | {
+        "estimated_input_tokens": r.token_usage["estimated_input_tokens"]
+    }
+    assert r.token_usage["estimated_input_tokens"] > 0
+
+
+@pytest.mark.anyio
+async def test_concurrent_runs_on_one_instance_do_not_mix_state() -> None:
+    """같은 인스턴스(컴파일된 그래프 하나)를 여러 요청이 동시에 써도 상태가 섞이지 않는다."""
+    import asyncio
+
+    from app.ai.providers.base import GenerationResult
+
+    drafts = {
+        "pass": "오늘 정리해서 내일 오전까지 보내드릴게요.",
+        "retry": "회의는 3시에 시작합니다.",
+        "fail": "금요일까지 10만원 보내줄게.",
+    }
+
+    class ByDraft:
+        """원문에 따라 다르게 답하고, 호출마다 양보해 세 요청의 단계가 서로 끼어들게 한다."""
+
+        model_version = "fake-by-draft"
+
+        def __init__(self) -> None:
+            self.seen: dict[str, int] = {}
+
+        async def generate(self, *, system: str, user: str) -> GenerationResult:
+            key = next(k for k, d in drafts.items() if d in user)
+            n = self.seen[key] = self.seen.get(key, 0) + 1
+            for _ in range(5):
+                await asyncio.sleep(0)
+            if key == "fail":
+                raise ModelRefusalError(f"거절-{n}")
+            text = drafts[key] if key == "pass" or n == 2 else "회의는 4시에 시작합니다."
+            return GenerationResult(
+                output=ModelOutput(rewritten_text=text),
+                model_version=self.model_version,
+                usage={"input_tokens": len(key), "output_tokens": 1},
+            )
+
+    provider = ByDraft()
+    wf, inp, contact, _ = make(provider)
+    inputs = {k: inp.model_copy(update={"draft_text": d, "condition": "A"}) for k, d in drafts.items()}
+    results = dict(
+        zip(inputs, await asyncio.gather(*(wf.run(i, contact, None) for i in inputs.values())), strict=True)
+    )
+
+    assert provider.seen == {"pass": 1, "retry": 2, "fail": 2}
+    assert (results["pass"].status, results["pass"].attempts) == ("recommended", 1)
+    assert results["pass"].result_text == drafts["pass"]
+    assert results["pass"].token_usage == {"input_tokens": 4, "output_tokens": 1}
+    assert (results["retry"].status, results["retry"].attempts) == ("recommended", 2)
+    assert results["retry"].result_text == drafts["retry"]
+    assert results["retry"].token_usage == {"input_tokens": 10, "output_tokens": 2}
+    assert [a.rewritten_text for a in results["retry"].attempt_log] == [
+        "회의는 4시에 시작합니다.",
+        drafts["retry"],
+    ]
+    assert (results["fail"].status, results["fail"].attempts) == ("fallback_original", 2)
+    assert results["fail"].result_text == drafts["fail"]
+    assert results["fail"].warnings[1:] == ["거절-2"]
+    assert set(results["fail"].token_usage) == {"estimated_input_tokens"}
+    assert [len(r.attempt_log) for r in results.values()] == [1, 2, 2]

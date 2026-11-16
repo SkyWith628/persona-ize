@@ -11,6 +11,7 @@ from datetime import datetime
 from uuid import UUID
 
 from app.ai.retrieval.base import Retriever
+from app.domain.conversation import exception_kind
 from app.domain.rewrite import RetrievedExample
 
 log = logging.getLogger(__name__)
@@ -47,5 +48,7 @@ class CompositeRetriever:
                     )
                 )
             except Exception as exc:  # noqa: BLE001 - 부분 장애는 축소 동작
-                log.warning("retriever %s failed, continuing without it: %s", part.version, exc)
+                log.warning(
+                    "retriever %s failed, continuing without it: %s", part.version, exception_kind(exc)
+                )
         return out

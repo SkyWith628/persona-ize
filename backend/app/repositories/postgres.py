@@ -18,7 +18,7 @@ from app.db.session import SessionFactory
 from app.domain.contact import Contact
 from app.domain.persona import PersonaSettings, PersonaVersion, RelationshipType
 from app.domain.rewrite import Feedback, RewriteRecord, RewriteResult
-from app.repositories.postgres_conversations import PostgresConversationRepo
+from app.repositories.postgres_conversations import PostgresConversationRepo, _gone
 
 __all__ = ["PostgresContactRepo", "PostgresConversationRepo", "PostgresRewriteRepo"]
 
@@ -34,6 +34,7 @@ def _contact(row: ContactRow) -> Contact:
         alias=row.alias,
         relationship_type=row.relationship_type,  # type: ignore[arg-type]
         created_at=row.created_at,
+        graph_name=row.graph_name,
     )
 
 
@@ -48,7 +49,19 @@ def _persona(row: PersonaVersionRow) -> PersonaVersion:
     )
 
 
-def _record(row: RewriteRequestRow) -> RewriteRecord:
+def _feedback(row: FeedbackRow) -> Feedback:
+    return Feedback(
+        request_id=row.request_id,
+        accepted=row.accepted,
+        edited_text=row.edited_text,
+        reason=row.reason,
+        consent_to_reuse=row.consent_to_reuse,
+        reason_code=row.reason_code,  # type: ignore[arg-type]
+        created_at=row.created_at,
+    )
+
+
+def _record(row: RewriteRequestRow, feedback: FeedbackRow | None = None) -> RewriteRecord:
     if row.result is None:  # 결과 없는 요청은 저장 경로상 생기지 않는다
         raise NotFoundError("추천 요청을 찾을 수 없습니다.")
     return RewriteRecord(
@@ -58,10 +71,12 @@ def _record(row: RewriteRequestRow) -> RewriteRecord:
         persona_version_id=row.persona_version_id,
         draft_version=row.draft_version,
         condition=row.condition,  # type: ignore[arg-type]
+        channel=row.channel or "web",  # type: ignore[arg-type]
         input_hash=row.input_hash,
         idempotency_key=row.idempotency_key,
         created_at=row.created_at,
         result=RewriteResult.model_validate(row.result.payload),
+        feedback=_feedback(feedback) if feedback is not None else None,
     )
 
 
@@ -149,6 +164,56 @@ class PostgresContactRepo:
             row = await self._owned_contact(s, user_id, contact_id)
             await s.delete(row)  # persona_versions·rewrite_requests(→results·feedback)·conversations CASCADE
 
+    async def update(
+        self,
+        user_id: str,
+        contact_id: UUID,
+        *,
+        alias: str | None = None,
+        relationship_type: RelationshipType | None = None,
+    ) -> Contact:
+        async with self._sessions.begin() as s:
+            row = await self._owned_contact(s, user_id, contact_id)
+            if alias is not None:
+                row.alias = alias
+            if relationship_type is not None:
+                row.relationship_type = relationship_type
+        return _contact(row)
+
+    async def list_personas(self, user_id: str, contact_id: UUID, limit: int = 50) -> list[PersonaVersion]:
+        async with self._sessions() as s:
+            await self._owned_contact(s, user_id, contact_id)
+            stmt = (
+                select(PersonaVersionRow)
+                .where(PersonaVersionRow.contact_id == contact_id, PersonaVersionRow.user_id == user_id)
+                .order_by(PersonaVersionRow.version.desc())
+                .limit(limit)
+            )
+            rows = (await s.scalars(stmt)).all()
+        return [_persona(r) for r in rows]
+
+    async def latest_persona_versions(self, user_id: str) -> dict[UUID, int]:
+        stmt = (
+            select(PersonaVersionRow.contact_id, func.max(PersonaVersionRow.version))
+            .where(PersonaVersionRow.user_id == user_id)
+            .group_by(PersonaVersionRow.contact_id)
+        )
+        async with self._sessions() as s:
+            rows = (await s.execute(stmt)).all()
+        return {contact_id: int(version) for contact_id, version in rows}
+
+    async def count(self, user_id: str) -> int:
+        stmt = select(func.count()).select_from(ContactRow).where(ContactRow.user_id == user_id)
+        async with self._sessions() as s:
+            return int(await s.scalar(stmt) or 0)
+
+    async def remember_graph_name(self, user_id: str, contact_id: UUID, name: str) -> Contact:
+        async with self._sessions.begin() as s:
+            row = await self._owned_contact(s, user_id, contact_id)
+            if row.graph_name is None:
+                row.graph_name = name
+        return _contact(row)
+
     @staticmethod
     async def _owned_contact(s, user_id: str, contact_id: UUID) -> ContactRow:  # noqa: ANN001
         row = await s.scalar(
@@ -178,7 +243,8 @@ class PostgresRewriteRepo:
         )
         async with self._sessions() as s:
             row = await s.scalar(stmt)
-        return _record(row) if row is not None else None
+            fb = await s.get(FeedbackRow, row.id) if row is not None else None
+        return _record(row, fb) if row is not None else None
 
     async def save(
         self,
@@ -191,6 +257,7 @@ class PostgresRewriteRepo:
         idempotency_key: str | None,
         result: RewriteResult,
         condition: str = "B",
+        channel: str = "web",
     ) -> RewriteRecord:
         req = RewriteRequestRow(
             id=uuid4(),
@@ -199,6 +266,7 @@ class PostgresRewriteRepo:
             persona_version_id=persona_version_id,
             draft_version=draft_version,
             condition=condition,
+            channel=channel,
             input_hash=input_hash,
             idempotency_key=idempotency_key,
             status=result.status,
@@ -218,6 +286,8 @@ class PostgresRewriteRepo:
             async with self._sessions.begin() as s:
                 s.add(req)
         except IntegrityError as exc:
+            if _gone(exc):  # 첨삭하는 사이에 상대(또는 계정)가 지워졌다
+                raise NotFoundError("상대를 찾을 수 없습니다.") from exc
             # 서비스가 먼저 조회하지만, 같은 키의 동시 요청은 유일 제약에서 걸린다.
             raise VersionConflictError("같은 Idempotency-Key 요청이 동시에 처리되었습니다.") from exc
         return _record(req)
@@ -225,18 +295,31 @@ class PostgresRewriteRepo:
     async def get(self, user_id: str, request_id: UUID) -> RewriteRecord:
         async with self._sessions() as s:
             row = await self._owned_request(s, user_id, request_id)
-        return _record(row)
+            fb = await s.get(FeedbackRow, row.id)
+        return _record(row, fb)
 
     async def list(
-        self, user_id: str, contact_id: UUID | None = None, limit: int = 20
+        self,
+        user_id: str,
+        contact_id: UUID | None = None,
+        limit: int = 20,
+        before: datetime | None = None,
     ) -> list[RewriteRecord]:
         stmt = select(RewriteRequestRow).where(RewriteRequestRow.user_id == user_id)
         if contact_id is not None:
             stmt = stmt.where(RewriteRequestRow.contact_id == contact_id)
+        if before is not None:
+            stmt = stmt.where(RewriteRequestRow.created_at < before)
         stmt = stmt.order_by(RewriteRequestRow.created_at.desc()).limit(limit)
         async with self._sessions() as s:
             rows = (await s.scalars(stmt)).unique().all()
-        return [_record(r) for r in rows if r.result is not None]
+            feedback: dict[UUID, FeedbackRow] = {}
+            if rows:  # 피드백은 한 번에 읽는다 (요청마다 따로 읽지 않는다)
+                found = await s.scalars(
+                    select(FeedbackRow).where(FeedbackRow.request_id.in_([r.id for r in rows]))
+                )
+                feedback = {f.request_id: f for f in found.all()}
+        return [_record(r, feedback.get(r.id)) for r in rows if r.result is not None]
 
     async def save_feedback(self, user_id: str, feedback: Feedback) -> Feedback:
         async with self._sessions.begin() as s:
@@ -249,11 +332,34 @@ class PostgresRewriteRepo:
                     accepted=feedback.accepted,
                     edited_text=feedback.edited_text,
                     reason=feedback.reason,
+                    reason_code=feedback.reason_code,
                     consent_to_reuse=feedback.consent_to_reuse,
                     created_at=_now(),
                 )
             )
         return feedback
+
+    async def delete(self, user_id: str, request_id: UUID) -> None:
+        async with self._sessions.begin() as s:
+            row = await self._owned_request(s, user_id, request_id)
+            await s.delete(row)  # 결과는 ORM cascade, 피드백은 FK ON DELETE CASCADE
+
+    async def stats_by_contact(self, user_id: str) -> dict[UUID, tuple[int, datetime | None]]:
+        stmt = (
+            select(RewriteRequestRow.contact_id, func.count(), func.max(RewriteRequestRow.created_at))
+            .where(RewriteRequestRow.user_id == user_id)
+            .group_by(RewriteRequestRow.contact_id)
+        )
+        async with self._sessions() as s:
+            rows = (await s.execute(stmt)).all()
+        return {contact_id: (int(count), last) for contact_id, count, last in rows}
+
+    async def purge_before(self, before: datetime) -> int:
+        async with self._sessions.begin() as s:
+            result = await s.execute(
+                delete(RewriteRequestRow).where(RewriteRequestRow.created_at < before)
+            )  # results·feedback은 FK ON DELETE CASCADE
+        return int(result.rowcount or 0)
 
     @staticmethod
     async def _owned_request(s, user_id: str, request_id: UUID) -> RewriteRequestRow:  # noqa: ANN001

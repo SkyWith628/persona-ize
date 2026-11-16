@@ -267,12 +267,60 @@ class GraphitiStore:
             names=names,
         )
         records = result[0] if isinstance(result, tuple) else result.records
-        uuids = [r["uuid"] for r in records]
-        for uuid in uuids:
-            # 에피소드 + 그 에피소드만 언급한 엣지·노드를 지운다 (graphiti 구현).
-            # 다른 에피소드도 근거인 사실은 남는다.
-            await self._g.remove_episode(uuid)
+        uuids = sorted({r["uuid"] for r in records})
+        if uuids:
+            await self._remove_episode_nodes(group_id, uuids)
         return len(uuids)
+
+    async def _remove_episode_nodes(self, group_id: str, gone: list[str]) -> None:
+        """에피소드와, 그 에피소드만 근거인 사실(엣지)·개체(노드)를 지운다. 모델을 부르지 않는다.
+
+        `graphiti.remove_episode`를 쓰지 않는다: 그 구현은 에피소드를 하나 지울 때마다 남는 개체의 요약을
+        LLM으로 다시 만든다(2026-11-14 실측: 36건 삭제에 haiku 159회, 248초). 지우는 규칙은 그 구현과 같다 —
+        다른 에피소드도 근거인 사실·개체는 남기고 근거 목록에서만 뺀다. 다른 점은 남는 개체의 요약을
+        다시 만들지 않고 비운다는 것이다: 지운 대화의 내용이 요약에 남으면 안 되고, 이 앱은 개체 요약을
+        읽지 않는다(검색은 사실 엣지를 쓴다). 요약은 다음 수집 때 graphiti가 다시 채운다.
+
+        에피소드를 맨 나중에 지우므로 도중에 실패해도 같은 이름으로 다시 부르면 이어서 지운다.
+        """
+        run = self._g.driver.execute_query
+        params = {"group_id": group_id, "gone": gone}
+        # 1) 이 에피소드들이 언급한 개체: 다른 에피소드가 언급하지 않으면 지울 것, 언급하면 남길 것
+        result = await run(
+            "MATCH (e:Episodic {group_id: $group_id})-[:MENTIONS]->(n:Entity) WHERE e.uuid IN $gone "
+            "WITH DISTINCT n "
+            "OPTIONAL MATCH (o:Episodic)-[:MENTIONS]->(n) WHERE NOT o.uuid IN $gone "
+            "WITH n, count(o) AS others "
+            "RETURN n.uuid AS uuid, others",
+            **params,
+        )
+        records = result[0] if isinstance(result, tuple) else result.records
+        orphans = sorted(r["uuid"] for r in records if int(r["others"]) == 0)
+        survivors = sorted(r["uuid"] for r in records if int(r["others"]) > 0)
+        # 2) 사실: 근거 목록에서 빼고, 근거가 남지 않으면 지운다
+        await run(
+            "MATCH (:Entity)-[r:RELATES_TO {group_id: $group_id}]->(:Entity) "
+            "WHERE any(x IN r.episodes WHERE x IN $gone) "
+            "SET r.episodes = [x IN r.episodes WHERE NOT x IN $gone] "
+            "WITH r WHERE size(r.episodes) = 0 "
+            "DELETE r",
+            **params,
+        )
+        # 3) 개체: 이 에피소드만 언급한 것은 지우고, 남는 것은 요약을 비운다
+        if orphans:
+            await run(
+                "MATCH (n:Entity {group_id: $group_id}) WHERE n.uuid IN $uuids DETACH DELETE n",
+                group_id=group_id,
+                uuids=orphans,
+            )
+        if survivors:
+            await run(
+                "MATCH (n:Entity {group_id: $group_id}) WHERE n.uuid IN $uuids SET n.summary = ''",
+                group_id=group_id,
+                uuids=survivors,
+            )
+        # 4) 에피소드 (MENTIONS 엣지와 함께)
+        await run("MATCH (e:Episodic {group_id: $group_id}) WHERE e.uuid IN $gone DETACH DELETE e", **params)
 
     async def remove_group(self, group_id: str) -> int:
         result = await self._g.driver.execute_query(

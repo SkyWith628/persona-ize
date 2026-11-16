@@ -172,7 +172,7 @@ async def test_ingest_failure_keeps_progress_and_marks_job() -> None:
         await ingest.ingest_conversation("u", c1.id, job.id)
     failed = await conversations.get_job("u", job.id)
     assert (failed.graph_status, failed.graph_episodes) == ("failed", 1)
-    assert "boom" in (failed.graph_error or "")
+    assert failed.graph_error == "RuntimeError"  # 종류만 남긴다 — 예외 문구("boom")는 저장하지 않는다
     # 첫 메시지 표시는 남아 재시도는 둘째부터
     store.fail_on = None
     assert await ingest.ingest_conversation("u", c1.id, job.id) == 1
@@ -189,23 +189,35 @@ async def test_import_sync_graph_mode_fills_job_graph_fields() -> None:
     assert again.id == job.id and len(store.added) == 2
 
 
-async def test_background_ingest_is_serialized_per_user_and_time_ordered_across_rooms() -> None:
-    """두 방을 잇달아 가져오면 뒤 작업이 잠금을 기다리고, 그래프에는 전체 시각 순으로 들어간다."""
+async def test_background_ingest_is_serialized_per_user_and_time_ordered_within_a_run() -> None:
+    """두 방을 잇달아 가져오면 뒤 작업이 잠금을 기다리고, 한 번의 수집 안에서는 시각 순으로 들어간다.
+
+    첫 수집은 묶음 생성이 끝나자마자 시작하므로(2026-11-13) 그때 저장돼 있던 메시지만 본다 — 뒤에 가져온 방의
+    메시지는 다음 수집이 넣는다. 수집을 시작할 때 쌓여 있던 것끼리의 방 사이 순서는
+    `test_resume_all_ingests_pending_users_and_closes_stale_jobs`가 본다.
+    """
     import asyncio as _asyncio
 
     _, conversations, store, _, svc, _, _, c1, c2 = await _setup(graph_mode="background")
 
     orig = store.add_episode
+    active = 0
+    overlapped = False
 
     async def slow_add(**kw):  # noqa: ANN003, ANN202
+        nonlocal active, overlapped
+        active += 1
+        overlapped = overlapped or active > 1
         await _asyncio.sleep(0.02)  # 겹치게 만들기
         await orig(**kw)
+        active -= 1
 
     store.add_episode = slow_add  # type: ignore[method-assign]
     job1 = await svc.import_messages("u", c1.id, ImportPayload(messages=MESSAGES_C1))  # 09:25, 09:31
     job2 = await svc.import_messages("u", c2.id, ImportPayload(messages=MESSAGES_C2))  # 09:28
     await svc.wait_graph_tasks()
-    assert [a["name"] for a in store.added] == ["c1:m01", "c2:m01", "c1:m02"]  # 방을 가로질러 시각 순
+    assert not overlapped  # 같은 사용자의 수집은 한 번에 하나
+    assert [a["name"] for a in store.added] == ["c1:m01", "c1:m02", "c2:m01"]
     assert len(store.added) == 3  # 중복 없음
     j1 = await conversations.get_job("u", job1.id)
     j2 = await conversations.get_job("u", job2.id)
@@ -314,10 +326,34 @@ async def test_graph_retriever_keeps_only_contact_or_its_events() -> None:
     got = await r.retrieve(user_id="u", contact_id=boss.id, draft_text="일정", situation="")
     assert [e.id for e in got] == ["keep-contact", "keep-event"]
 
-    # 상대 노드를 못 찾으면 필터 없이 전부 (거리 재정렬만)
+    # 상대 노드를 못 찾으면 사실 맥락을 비운다 (필터 없이 돌려주면 다른 상대의 사실이 섞인다)
     store.entities = {}
+    searched = len(store.searches)
     got = await r.retrieve(user_id="u", contact_id=boss.id, draft_text="일정", situation="")
-    assert len(got) == 4
+    assert got == [] and len(store.searches) == searched  # 검색도 하지 않는다
+
+
+async def test_renamed_contact_keeps_its_first_name_in_the_graph() -> None:
+    """별칭을 바꿔도 그래프의 상대 이름은 처음 수집한 이름이다: 에피소드 본문도, 검색의 중심 노드도."""
+    contacts, _, store, ingest, svc, boss, _, c1, _ = await _setup()
+    await svc.import_messages("u", c1.id, ImportPayload(messages=MESSAGES_C1[:1]))
+    assert (await contacts.get("u", boss.id)).graph_name is None  # 수집 전에는 비어 있다
+    assert await ingest.ingest_pending("u") == 1
+    assert (await contacts.get("u", boss.id)).graph_name == "박지현"
+
+    renamed = await contacts.update("u", boss.id, alias="박 팀장님")
+    assert (renamed.alias, renamed.graph_name, renamed.name_in_graph) == ("박 팀장님", "박지현", "박지현")
+    await svc.import_messages("u", c1.id, ImportPayload(messages=MESSAGES_C1))  # m02 추가
+    assert await ingest.ingest_pending("u") == 1
+    assert store.added[-1]["body"].startswith("[2026-10-05 월 09:31] 김민수 → 박지현:")  # 옛 이름 그대로
+
+    store.entities = {"박지현": "node-boss"}
+    store.refs = {"e1": EpisodeRef("e1", "c1:m01", datetime(2026, 10, 5, tzinfo=UTC))}
+    store.edges = [_edge("x1", "박지현이 일정을 물었다", ["e1"], src="node-boss", dst="node-me")]
+    r = GraphContextRetriever(store, contacts, top_k=4)
+    got = await r.retrieve(user_id="u", contact_id=boss.id, draft_text="일정", situation="")
+    assert [e.id for e in got] == ["x1"]  # 예전: 새 별칭으로 찾아 노드를 못 찾았다
+    assert store.searches[-1][2] == "node-boss"
 
 
 async def test_delete_conversation_removes_rows_episodes_and_graph() -> None:
@@ -346,6 +382,7 @@ async def test_graph_retriever_dedupes_facts_from_same_source() -> None:
     boss = await contacts.create("u", "박지현", "superior")
     t = datetime(2026, 10, 5, tzinfo=UTC)
     store = FakeGraphStore(
+        entities={"박지현": "node-boss"},  # 상대 노드가 있어야 사실 맥락을 돌려준다
         refs={"e1": EpisodeRef("e1", "c1:m01", t), "e2": EpisodeRef("e2", "c1:m04", t)},
         edges=[
             _edge("a", "박지현이 주간보고 초안을 받았다", ["e1"]),
@@ -365,6 +402,8 @@ async def test_graph_retriever_reranks_by_query_similarity_and_recency() -> None
     boss = await contacts.create("u", "박지현", "superior")
     t = lambda d: datetime(2026, 10, d, 9, tzinfo=UTC)  # noqa: E731
     store = FakeGraphStore(
+        entities={"박지현": "node-boss"},  # 상대 노드와 그에 이어진 사건들
+        events={"node-boss": {"ev-report", "ev-sched"}},
         refs={
             "e1": EpisodeRef("e1", "c1:m01", t(5)),
             "e2": EpisodeRef("e2", "c1:m05", t(5)),
@@ -581,6 +620,30 @@ def test_contact_graph_empty_states_and_ownership() -> None:
     assert client.get(url, headers=headers).json()["enabled"] is False
 
 
+def test_contact_graph_follows_the_name_used_at_first_ingest_after_a_rename() -> None:
+    """상대 이름을 바꿔도 그래프 노드는 처음 수집한 이름이다 — D 검색기와 같은 이름으로 찾아야 한다."""
+    import asyncio
+    from uuid import UUID
+
+    store = FakeGraphStore(
+        entities={"박지현": "n-contact"},
+        nodes=[GraphNodeInfo("n-contact", "박지현", "person", "팀장")],
+    )
+    client, headers = _graph_client(store)
+    contact = client.post(
+        "/v1/contacts", json={"alias": "박지현", "relationship_type": "superior"}, headers=headers
+    ).json()
+    contacts = client.app.state.container.contacts  # type: ignore[attr-defined]
+    asyncio.run(contacts.remember_graph_name("user-a", UUID(contact["id"]), "박지현"))  # 첫 수집
+    renamed = client.patch(f"/v1/contacts/{contact['id']}", json={"alias": "지현 팀장"}, headers=headers)
+    assert renamed.status_code == 200 and renamed.json()["alias"] == "지현 팀장"
+
+    body = client.get(f"/v1/contacts/{contact['id']}/graph", headers=headers).json()
+
+    assert body["center_id"] == "n-contact"
+    assert [(n["name"], n["is_contact"]) for n in body["nodes"]] == [("박지현", True)]
+
+
 def test_as_datetime_accepts_neo4j_values_strings_and_naive() -> None:
     class Neo4jDateTime:
         def to_native(self) -> datetime:
@@ -591,3 +654,26 @@ def test_as_datetime_accepts_neo4j_values_strings_and_naive() -> None:
     assert _as_datetime("2026-10-05T00:10:00Z") == datetime(2026, 10, 5, 0, 10, tzinfo=UTC)
     assert _as_datetime(datetime(2026, 10, 5)) == datetime(2026, 10, 5, tzinfo=UTC)
     assert _as_datetime(12345) is None
+
+
+async def test_conversation_deleted_during_ingest_leaves_nothing_in_graph() -> None:
+    """수집 도중 대화방을 지우면: 넣던 에피소드는 되돌리고, 그 방의 남은 메시지는 넣지 않는다."""
+    _, conversations, store, ingest, svc, _, _, c1, c2 = await _setup(graph_mode="off")
+    job1 = await svc.import_messages("u", c1.id, ImportPayload(messages=MESSAGES_C1))
+    await svc.import_messages("u", c2.id, ImportPayload(messages=MESSAGES_C2))
+    orig = store.add_episode
+
+    async def add_then_delete(**kw):  # noqa: ANN003, ANN202
+        await orig(**kw)
+        if kw["name"] == "c1:m01":
+            # 모델 호출이 도는 사이에 사용자가 c1을 지운다. 삭제 시점에 c1:m01은 아직 '수집됨' 표시 전이라
+            # 삭제 경로는 이 에피소드를 모른다 — 수집 쪽이 되돌려야 한다.
+            deleted = await svc.delete_conversation("u", c1.id)
+            assert deleted.graph_episodes == 0
+
+    store.add_episode = add_then_delete  # type: ignore[method-assign]
+    # 전체 시각 순: c1:m01 → c2:m01 → c1:m02. 작업(job1)도 대화방과 함께 지워졌지만 수집은 계속된다.
+    assert await ingest.ingest_user("u", job1.id) == 1
+    assert [a["name"] for a in store.added] == ["c2:m01"]
+    assert await conversations.users_with_pending_graph() == []
+    assert await ingest.ingest_user("u") == 0

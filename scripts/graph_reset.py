@@ -3,8 +3,11 @@
 언제 쓰나 — 그래프 스키마·추출 프롬프트·모델(GRAPH_LLM_MODEL)을 바꿨을 때, 수집이 반쯤 깨졌을 때.
 무엇을 하나
   1. --conversation <source_key> 를 주면 그 방의 에피소드만, 아니면 사용자 group 전체를 Neo4j에서 지운다.
-  2. 그 메시지들의 graph_ingested_at을 비운다 (DB 원문·문체 묶음은 그대로).
+  2. 그 메시지들의 graph_ingested_at을 비운다 (DB 원문·문체 묶음은 그대로). 거듭 실패해 보류된 메시지의
+     실패 횟수·보류 표시도 함께 지워 다시 시도하게 한다.
   3. --no-reingest 가 아니면 바로 다시 수집한다 (haiku 호출, 메시지당 10~15초, 비용 발생).
+     운영자 작업이라 그래프 수집 상한(GRAPH_INGEST_*_CAP)을 따르지 않는다 — 이 사용자의 미수집 메시지를
+     (예전에 상한에 걸려 남았던 것까지) 전부 넣고, 실제로 넣은 수를 찍는다.
 
 사용 예 (저장소 루트, .env의 DATABASE_URL·NEO4J_*·ANTHROPIC_API_KEY):
     .venv/Scripts/python.exe scripts/graph_reset.py --user demo --dry-run          # 지울 것만 보여준다
@@ -43,6 +46,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 async def _resolve_user(state, raw: str) -> str:  # noqa: ANN001
     found = await state.auth.find_user_by_username(raw)
     return str(found[0].id) if found else raw
+
+
+async def _pending_count(state, user_id: str) -> int:  # noqa: ANN001
+    """이 사용자의 메시지 중 아직 그래프에 들어가지 않은 수."""
+    n = 0
+    for conv in await state.conversations.list(user_id):
+        messages = await state.conversations.list_messages(user_id, conv.id)
+        n += sum(1 for m in messages if m.graph_ingested_at is None)
+    return n
 
 
 async def run(args: argparse.Namespace) -> int:
@@ -98,9 +110,18 @@ async def run(args: argparse.Namespace) -> int:
                 "(또는 이 스크립트를 다시)."
             )
             return 0
+        # 운영자가 직접 다시 넣는 작업이다 — 그래프 수집 상한(GRAPH_INGEST_*_CAP)을 따르지 않고
+        # 사용량 카운터에도 세지 않는다 (상한을 따르면 지운 것의 일부만 다시 들어간다).
+        # 이 사용자의 미수집 메시지 전부가 대상이다: 예전에 상한에 걸려 남았던 것도 함께 들어간다.
+        waiting = await _pending_count(state, user_id)
+        print(f"다시 넣을 메시지 {waiting}건 (이 사용자의 미수집 전체, 상한 없음)")
         started = time.monotonic()
-        n = await state.graph_ingest.ingest_user(user_id)
-        print(f"재수집 완료: 에피소드 {n}개, {time.monotonic() - started:.0f}초")
+        n = await state.graph_ingest.ingest_user(user_id, enforce_caps=False)
+        left = await _pending_count(state, user_id)
+        print(f"재수집: 에피소드 {n}개를 넣었습니다 ({time.monotonic() - started:.0f}초).")
+        if left:
+            print(f"미수집으로 남은 메시지 {left}건 — 그 사이 새로 가져온 것일 수 있습니다. 다시 실행하세요.")
+            return 1
         return 0
     finally:
         await state.close()

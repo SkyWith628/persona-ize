@@ -6,14 +6,16 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from uuid import UUID, uuid4
 
 from app.ai.embeddings import cosine
 from app.core.errors import NotFoundError, VersionConflictError
 from app.domain.contact import Contact
 from app.domain.conversation import (
+    ContactDataStats,
     Conversation,
+    ConversationStats,
     Episode,
     EpisodeDraft,
     EpisodeHit,
@@ -21,6 +23,9 @@ from app.domain.conversation import (
     ImportJob,
     Message,
     NewMessage,
+    SpeakerCount,
+    SpeakerRole,
+    graph_units,
 )
 from app.domain.persona import PersonaSettings, PersonaVersion, RelationshipType
 from app.domain.rewrite import Feedback, RewriteRecord, RewriteResult
@@ -92,6 +97,46 @@ class InMemoryContactRepo:
         self._personas.pop(contact_id, None)
         # 첨삭 이력은 RewriteRepo에 있다. 인메모리에서는 조회가 user·contact로 막히므로 따로 지우지 않는다
 
+    async def update(
+        self,
+        user_id: str,
+        contact_id: UUID,
+        *,
+        alias: str | None = None,
+        relationship_type: RelationshipType | None = None,
+    ) -> Contact:
+        c = await self.get(user_id, contact_id)
+        changes: dict[str, str] = {}
+        if alias is not None:
+            changes["alias"] = alias
+        if relationship_type is not None:
+            changes["relationship_type"] = relationship_type
+        if changes:
+            c = c.model_copy(update=changes)
+            self._contacts[contact_id] = c
+        return c
+
+    async def list_personas(self, user_id: str, contact_id: UUID, limit: int = 50) -> list[PersonaVersion]:
+        await self.get(user_id, contact_id)
+        return list(reversed(self._personas.get(contact_id, [])))[:limit]
+
+    async def latest_persona_versions(self, user_id: str) -> dict[UUID, int]:
+        return {
+            cid: versions[-1].version
+            for cid, versions in self._personas.items()
+            if versions and cid in self._contacts and self._contacts[cid].user_id == user_id
+        }
+
+    async def count(self, user_id: str) -> int:
+        return sum(1 for c in self._contacts.values() if c.user_id == user_id)
+
+    async def remember_graph_name(self, user_id: str, contact_id: UUID, name: str) -> Contact:
+        c = await self.get(user_id, contact_id)
+        if c.graph_name is None:
+            c = c.model_copy(update={"graph_name": name})
+            self._contacts[contact_id] = c
+        return c
+
 
 class InMemoryRewriteRepo:
     def __init__(self) -> None:
@@ -99,9 +144,14 @@ class InMemoryRewriteRepo:
         self._by_idem: dict[tuple[str, str], UUID] = {}
         self._feedback: dict[UUID, Feedback] = {}
 
+    def _with_feedback(self, rec: RewriteRecord) -> RewriteRecord:
+        fb = self._feedback.get(rec.id)
+        return rec.model_copy(update={"feedback": fb}) if fb is not None else rec
+
     async def find_by_idempotency(self, user_id: str, key: str) -> RewriteRecord | None:
         rid = self._by_idem.get((user_id, key))
-        return self._records.get(rid) if rid else None
+        rec = self._records.get(rid) if rid else None
+        return self._with_feedback(rec) if rec is not None else None
 
     async def delete_by_contact(self, user_id: str, contact_id: UUID) -> int:
         gone = [
@@ -124,6 +174,7 @@ class InMemoryRewriteRepo:
         idempotency_key: str | None,
         result: RewriteResult,
         condition: str = "B",
+        channel: str = "web",
     ) -> RewriteRecord:
         rec = RewriteRecord(
             id=uuid4(),
@@ -132,6 +183,7 @@ class InMemoryRewriteRepo:
             persona_version_id=persona_version_id,
             draft_version=draft_version,
             condition=condition,  # type: ignore[arg-type]
+            channel=channel,  # type: ignore[arg-type]
             input_hash=input_hash,
             idempotency_key=idempotency_key,
             created_at=_now(),
@@ -146,23 +198,52 @@ class InMemoryRewriteRepo:
         rec = self._records.get(request_id)
         if rec is None or rec.user_id != user_id:
             raise NotFoundError("추천 요청을 찾을 수 없습니다.")
-        return rec
+        return self._with_feedback(rec)
 
     async def list(
-        self, user_id: str, contact_id: UUID | None = None, limit: int = 20
+        self,
+        user_id: str,
+        contact_id: UUID | None = None,
+        limit: int = 20,
+        before: datetime | None = None,
     ) -> list[RewriteRecord]:
         rows = [
             r
             for r in self._records.values()
-            if r.user_id == user_id and (contact_id is None or r.contact_id == contact_id)
+            if r.user_id == user_id
+            and (contact_id is None or r.contact_id == contact_id)
+            and (before is None or r.created_at < before)
         ]
         rows.sort(key=lambda r: r.created_at, reverse=True)
-        return rows[:limit]
+        return [self._with_feedback(r) for r in rows[:limit]]
 
     async def save_feedback(self, user_id: str, feedback: Feedback) -> Feedback:
         await self.get(user_id, feedback.request_id)
-        self._feedback[feedback.request_id] = feedback
+        self._feedback[feedback.request_id] = feedback.model_copy(update={"created_at": _now()})
         return feedback
+
+    async def delete(self, user_id: str, request_id: UUID) -> None:
+        await self.get(user_id, request_id)
+        del self._records[request_id]
+        self._feedback.pop(request_id, None)
+        self._by_idem = {k: v for k, v in self._by_idem.items() if v != request_id}
+
+    async def stats_by_contact(self, user_id: str) -> dict[UUID, tuple[int, datetime | None]]:
+        out: dict[UUID, tuple[int, datetime | None]] = {}
+        for r in self._records.values():
+            if r.user_id != user_id:
+                continue
+            count, last = out.get(r.contact_id, (0, None))
+            out[r.contact_id] = (count + 1, r.created_at if last is None or r.created_at > last else last)
+        return out
+
+    async def purge_before(self, before: datetime) -> int:
+        gone = [rid for rid, r in self._records.items() if r.created_at < before]
+        for rid in gone:
+            del self._records[rid]
+            self._feedback.pop(rid, None)
+        self._by_idem = {k: v for k, v in self._by_idem.items() if v not in gone}
+        return len(gone)
 
 
 class InMemoryConversationRepo:
@@ -173,6 +254,7 @@ class InMemoryConversationRepo:
         self._messages: dict[UUID, list[Message]] = {}
         self._episodes: dict[UUID, list[tuple[Episode, list[float]]]] = {}  # conversation_id → (episode, vec)
         self._jobs: dict[UUID, ImportJob] = {}
+        self._graph_usage: dict[tuple[str, date], int] = {}  # (user_id, 날짜) → 그날 그래프에 넣은 양
 
     async def create(
         self,
@@ -234,6 +316,7 @@ class InMemoryConversationRepo:
                     conversation_id=conv.id,
                     source_key=nm.source_key,
                     speaker_role=nm.speaker_role,
+                    speaker_name=nm.speaker_name,
                     sent_at=nm.sent_at,
                     text=nm.text,
                 )
@@ -241,9 +324,84 @@ class InMemoryConversationRepo:
             inserted += 1
         return inserted, len(messages) - inserted
 
-    async def list_messages(self, user_id: str, conversation_id: UUID) -> list[Message]:
+    async def list_messages(
+        self, user_id: str, conversation_id: UUID, limit: int | None = None
+    ) -> list[Message]:
         conv = await self.get(user_id, conversation_id)
-        return sorted(self._messages[conv.id], key=lambda m: m.sent_at)
+        ordered = sorted(self._messages[conv.id], key=lambda m: m.sent_at)
+        return ordered if limit is None else ordered[-limit:]
+
+    async def get_message(self, user_id: str, conversation_id: UUID, message_id: UUID) -> Message:
+        conv = await self.get(user_id, conversation_id)
+        for m in self._messages[conv.id]:
+            if m.id == message_id:
+                return m
+        raise NotFoundError("메시지를 찾을 수 없습니다.")
+
+    async def swap_speaker_roles(self, user_id: str, conversation_id: UUID) -> int:
+        conv = await self.get(user_id, conversation_id)
+        self._messages[conv.id] = [
+            m.model_copy(update={"speaker_role": "contact" if m.speaker_role == "me" else "me"})
+            for m in self._messages[conv.id]
+        ]
+        return len(self._messages[conv.id])
+
+    async def fill_speaker_names(self, user_id: str, conversation_id: UUID, names: dict[str, str]) -> int:
+        conv = await self.get(user_id, conversation_id)
+        filled = 0
+        out: list[Message] = []
+        for msg in self._messages[conv.id]:
+            name = names.get(msg.source_key) if msg.speaker_name is None else None
+            if name:
+                msg = msg.model_copy(update={"speaker_name": name})
+                filled += 1
+            out.append(msg)
+        self._messages[conv.id] = out
+        return filled
+
+    async def speakers(self, user_id: str, conversation_id: UUID) -> list[SpeakerCount]:
+        conv = await self.get(user_id, conversation_id)
+        counts: dict[tuple[str | None, str], int] = {}
+        for msg in self._messages[conv.id]:
+            key = (msg.speaker_name, msg.speaker_role)
+            counts[key] = counts.get(key, 0) + 1
+        found = [
+            SpeakerCount(name=name, speaker_role=role, messages=n)  # type: ignore[arg-type]
+            for (name, role), n in counts.items()
+        ]
+        return sorted(found, key=lambda sp: (sp.name is None, -sp.messages, sp.name or "", sp.speaker_role))
+
+    async def apply_speaker_roles(
+        self, user_id: str, conversation_id: UUID, roles: dict[str, SpeakerRole], remove: set[str]
+    ) -> tuple[int, int]:
+        conv = await self.get(user_id, conversation_id)
+        changed = removed = 0
+        out: list[Message] = []
+        for msg in self._messages[conv.id]:
+            if msg.speaker_name is not None and msg.speaker_name in remove:
+                removed += 1
+                continue
+            role = roles.get(msg.speaker_name) if msg.speaker_name is not None else None
+            if role is not None and role != msg.speaker_role:
+                msg = msg.model_copy(update={"speaker_role": role})
+                changed += 1
+            out.append(msg)
+        self._messages[conv.id] = out
+        return changed, removed
+
+    async def message_keys(self, user_id: str, conversation_id: UUID) -> set[str]:
+        conv = await self.get(user_id, conversation_id)
+        return {m.source_key for m in self._messages[conv.id]}
+
+    async def count_owned(self, user_id: str) -> tuple[int, int]:
+        mine = [cid for cid, c in self._conversations.items() if c.user_id == user_id]
+        return len(mine), sum(len(self._messages.get(cid, [])) for cid in mine)
+
+    async def episode_vectors(self, user_id: str, conversation_id: UUID) -> dict[str, list[float]]:
+        conv = await self.get(user_id, conversation_id)
+        return {
+            f"{ep.embedding_version}\n{ep.context_text}": vec for ep, vec in self._episodes.get(conv.id, [])
+        }
 
     async def replace_episodes(
         self,
@@ -311,6 +469,11 @@ class InMemoryConversationRepo:
         self._jobs[job.id] = job
         return job
 
+    async def processing_jobs(self) -> list[ImportJob]:
+        return sorted(
+            (j for j in self._jobs.values() if j.status == "processing"), key=lambda j: j.created_at
+        )
+
     async def get_job(self, user_id: str, job_id: UUID) -> ImportJob:
         job = self._jobs.get(job_id)
         if job is None or job.user_id != user_id:
@@ -354,37 +517,169 @@ class InMemoryConversationRepo:
         users = {
             self._conversations[cid].user_id
             for cid, msgs in self._messages.items()
-            if cid in self._conversations and any(m.graph_ingested_at is None for m in msgs)
+            if cid in self._conversations and any(m.graph_pending for m in msgs)
         }
         return sorted(users)
+
+    async def record_graph_failure(self, user_id: str, message_id: UUID, hold: bool, at: datetime) -> None:
+        for conv_id, msgs in self._messages.items():
+            conv = self._conversations.get(conv_id)
+            if conv is None or conv.user_id != user_id:
+                continue
+            self._messages[conv_id] = [
+                m.model_copy(
+                    update={
+                        "graph_attempts": m.graph_attempts + 1,
+                        "graph_held_at": at if hold else m.graph_held_at,
+                    }
+                )
+                if m.id == message_id
+                else m
+                for m in msgs
+            ]
+
+    async def release_held_graph(self, user_id: str | None = None) -> dict[str, int]:
+        released: dict[str, int] = {}
+        for conv_id, msgs in self._messages.items():
+            conv = self._conversations.get(conv_id)
+            if conv is None or (user_id is not None and conv.user_id != user_id):
+                continue
+            held = {m.id for m in msgs if m.graph_ingested_at is None and m.graph_held_at is not None}
+            if not held:
+                continue
+            cleared = {"graph_attempts": 0, "graph_held_at": None}
+            self._messages[conv_id] = [m.model_copy(update=cleared) if m.id in held else m for m in msgs]
+            released[conv.user_id] = released.get(conv.user_id, 0) + len(held)
+        return released
 
     async def close_stale_graph_jobs(self, user_id: str) -> int:
         n = 0
         for jid, job in list(self._jobs.items()):
-            if job.user_id != user_id or job.graph_status not in ("pending", "running"):
+            if job.user_id != user_id or job.graph_status not in ("pending", "running", "limited"):
                 continue
             msgs = self._messages.get(job.conversation_id, [])
-            if all(m.graph_ingested_at is not None for m in msgs):
-                self._jobs[jid] = job.model_copy(update={"graph_status": "completed"})
+            if not any(m.graph_pending for m in msgs):
+                self._jobs[jid] = job.model_copy(update={"graph_status": "completed", "graph_error": None})
                 n += 1
         return n
 
-    async def reset_graph_ingested(self, user_id: str, conversation_id: UUID | None = None) -> int:
+    async def reset_graph_ingested(
+        self, user_id: str, conversation_id: UUID | None = None, message_ids: list[UUID] | None = None
+    ) -> int:
         n = 0
+        only = None if message_ids is None else set(message_ids)
+        cleared = {"graph_ingested_at": None, "graph_attempts": 0, "graph_held_at": None}
         for conv_id, msgs in self._messages.items():
             conv = self._conversations.get(conv_id)
             if conv is None or conv.user_id != user_id or (conversation_id and conv_id != conversation_id):
                 continue
-            n += sum(1 for m in msgs if m.graph_ingested_at is not None)
-            self._messages[conv_id] = [m.model_copy(update={"graph_ingested_at": None}) for m in msgs]
+            out: list[Message] = []
+            for m in msgs:
+                if only is None or m.id in only:
+                    n += int(m.graph_ingested_at is not None or m.graph_attempts > 0)
+                    m = m.model_copy(update=cleared)
+                out.append(m)
+            self._messages[conv_id] = out
         return n
 
     async def purge_jobs(self, before: datetime) -> int:
         gone = [
             jid
             for jid, j in self._jobs.items()
-            if j.created_at < before and j.graph_status not in ("pending", "running")
+            if j.created_at < before
+            and j.status != "processing"
+            and j.graph_status not in ("pending", "running")
         ]
         for jid in gone:
             del self._jobs[jid]
         return len(gone)
+
+    async def conversation_stats(self, user_id: str, conversation_id: UUID) -> ConversationStats:
+        conv = await self.get(user_id, conversation_id)
+        msgs = self._messages.get(conv.id, [])
+        return ConversationStats(
+            conversation_id=conv.id,
+            messages=len(msgs),
+            my_messages=sum(1 for m in msgs if m.speaker_role == "me"),
+            episodes=len(self._episodes.get(conv.id, [])),
+            graph_ingested=sum(1 for m in msgs if m.graph_ingested_at is not None),
+            graph_held=sum(1 for m in msgs if m.graph_ingested_at is None and m.graph_held_at is not None),
+            first_message_at=min((m.sent_at for m in msgs), default=None),
+            last_message_at=max((m.sent_at for m in msgs), default=None),
+        )
+
+    async def latest_job(self, user_id: str, conversation_id: UUID) -> ImportJob | None:
+        jobs = [
+            j for j in self._jobs.values() if j.user_id == user_id and j.conversation_id == conversation_id
+        ]
+        return max(jobs, key=lambda j: j.created_at) if jobs else None
+
+    async def contact_stats(
+        self, user_id: str, contact_id: UUID | None = None
+    ) -> dict[UUID, ContactDataStats]:
+        out: dict[UUID, ContactDataStats] = {}
+        for conv in self._conversations.values():
+            if conv.user_id != user_id or (contact_id is not None and conv.contact_id != contact_id):
+                continue
+            st = out.setdefault(conv.contact_id, ContactDataStats(contact_id=conv.contact_id))
+            msgs = self._messages.get(conv.id, [])
+            st.conversations += 1
+            st.messages += len(msgs)
+            st.my_messages += sum(1 for m in msgs if m.speaker_role == "me")
+            st.episodes += len(self._episodes.get(conv.id, []))
+            st.graph_ingested += sum(1 for m in msgs if m.graph_ingested_at is not None)
+        return out
+
+    async def count_graph_ingested(self, user_id: str | None = None, since: datetime | None = None) -> int:
+        n = 0
+        for conv_id, msgs in self._messages.items():
+            conv = self._conversations.get(conv_id)
+            if conv is None or (user_id is not None and conv.user_id != user_id):
+                continue
+            n += sum(
+                1
+                for m in msgs
+                if m.graph_ingested_at is not None and (since is None or m.graph_ingested_at >= since)
+            )
+        return n
+
+    async def find_messages(self, user_id: str, refs: list[str]) -> dict[str, Message]:
+        wanted = set(refs)
+        out: dict[str, Message] = {}
+        for conv in self._conversations.values():
+            if conv.user_id != user_id:
+                continue
+            for m in self._messages.get(conv.id, []):
+                ref = f"{conv.source_key}:{m.source_key}"
+                if ref in wanted:
+                    out[ref] = m
+        return out
+
+    async def graph_units_in_graph(self, user_id: str) -> int:
+        return sum(
+            graph_units(m.text)
+            for conv_id, msgs in self._messages.items()
+            if conv_id in self._conversations and self._conversations[conv_id].user_id == user_id
+            for m in msgs
+            if m.graph_ingested_at is not None
+        )
+
+    async def add_graph_usage(self, user_id: str, day: date, units: int) -> None:
+        key = (user_id, day)
+        self._graph_usage[key] = max(self._graph_usage.get(key, 0) + units, 0)
+
+    async def graph_usage(self, day: date, user_id: str | None = None) -> int:
+        return sum(
+            n for (uid, d), n in self._graph_usage.items() if d == day and (user_id is None or uid == user_id)
+        )
+
+    async def limit_stale_graph_jobs(self, user_id: str, reason: str) -> int:
+        n = 0
+        for jid, job in list(self._jobs.items()):
+            if job.user_id != user_id or job.graph_status not in ("pending", "running"):
+                continue
+            msgs = self._messages.get(job.conversation_id, [])
+            if any(m.graph_pending for m in msgs):
+                self._jobs[jid] = job.model_copy(update={"graph_status": "limited", "graph_error": reason})
+                n += 1
+        return n

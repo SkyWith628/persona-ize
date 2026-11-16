@@ -14,23 +14,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from app.domain.persona import PersonaSettings, RelationshipType
+from app.domain.persona import DEFAULT_PERSONAS, PersonaSettings, RelationshipType
 from app.services.import_service import ImportMessage, ImportPayload
 
 if TYPE_CHECKING:
     from app.api.deps import AppState
 
-
-# 관계 유형별 기본 페르소나. 평가 하니스(run_eval)와 시연 준비(prepare_demo)가 같이 쓴다.
-DEFAULT_PERSONAS: dict[str, PersonaSettings] = {
-    "superior": PersonaSettings(formality=5, friendliness=2, directness=3, forbidden_phrases=["ㅋㅋ", "ㅠ"]),
-    "colleague": PersonaSettings(formality=3, friendliness=4, directness=4),
-    "subordinate": PersonaSettings(formality=3, friendliness=3, directness=4),
-    "friend": PersonaSettings(formality=1, friendliness=5, directness=5, emoji="rare"),
-    "family": PersonaSettings(formality=1, friendliness=5, directness=5),
-    "partner": PersonaSettings(formality=1, friendliness=5, directness=3, emoji="often"),
-    "acquaintance": PersonaSettings(formality=4, friendliness=2, directness=3),
-}
+# 관계 유형별 기본 페르소나의 정본은 `app.domain.persona.DEFAULT_PERSONAS` (7종 전부).
+# 시연 준비(prepare_demo)가 `synthetic_loader.DEFAULT_PERSONAS`로 가져다 쓰므로 여기서도 같은 이름으로 보인다.
 
 
 def load_aliases(characters_csv: Path | None) -> dict[str, list[str]]:
@@ -112,14 +103,40 @@ async def load_synthetic(
     """graph=True면 적재 뒤 미수집 메시지를 전체 시각 순으로 그래프에 넣는다 (NEO4J_URI 필요, haiku 호출).
 
     가져오기 중에는 백그라운드 그래프 수집을 끈다 — 스크립트가 끝나면 태스크가 죽고, 순서도 대화방별로 섞인다.
+    묶음 생성도 끝날 때까지 기다린다 — `build_state`는 API용 대기 시간(`IMPORT_INDEX_WAIT_SECONDS`, 기본 2초)
+    을 넣는데, 임베딩 모델을 처음 올리는 실행에서는 그 안에 끝나지 않아 `processing` 작업이 실패로 보고되고
+    스크립트가 닫히면서 묶음 생성까지 취소됐다 (2026-11-16).
     """
     data = load_dataset(dataset_path)
     rel_types = load_relationship_types(characters_csv)
     report = LoadReport(user_id=user_id)
     me_name = str((data.get("user") or {}).get("name") or "").strip() or None
     previous_mode = state.import_service.graph_mode
+    previous_wait = state.import_service.index_wait
     state.import_service.graph_mode = "off"
+    state.import_service.index_wait = None
+    try:
+        await _import_conversations(state, data, dataset_path, user_id, rel_types, me_name, report)
+    finally:
+        state.import_service.graph_mode = previous_mode
+        state.import_service.index_wait = previous_wait
 
+    if graph:
+        if state.graph_ingest is None:
+            raise RuntimeError("그래프 수집에는 NEO4J_URI가 필요합니다 (.env).")
+        report.graph_episodes = await state.graph_ingest.ingest_pending(user_id)
+    return report
+
+
+async def _import_conversations(
+    state: AppState,
+    data: dict[str, Any],
+    dataset_path: Path,
+    user_id: str,
+    rel_types: dict[str, str],
+    me_name: str | None,
+    report: LoadReport,
+) -> None:
     by_alias = {c.alias: c for c in await state.contacts.list(user_id)}
     by_key = {c.source_key: c for c in await state.conversations.list(user_id)}
 
@@ -157,11 +174,4 @@ async def load_synthetic(
         report.duplicates += job.duplicates
         report.episodes += job.episodes
         if job.status != "completed":
-            report.failed.append(f"{key}: {job.error_code} {job.error_message}")
-    state.import_service.graph_mode = previous_mode
-
-    if graph:
-        if state.graph_ingest is None:
-            raise RuntimeError("그래프 수집에는 NEO4J_URI가 필요합니다 (.env).")
-        report.graph_episodes = await state.graph_ingest.ingest_pending(user_id)
-    return report
+            report.failed.append(f"{key}: {job.status} {job.error_code} {job.error_message}")

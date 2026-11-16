@@ -12,6 +12,7 @@ from pathlib import Path
 
 from app.core.config import PROMPTS_DIR
 from app.domain.contact import Contact
+from app.domain.conversation import local_time
 from app.domain.persona import PersonaSettings
 from app.domain.rewrite import Intent, PreservedItem, RetrievedExample, Violation
 
@@ -26,8 +27,23 @@ _RELATION_KO = {
 }
 _LENGTH_KO = {"shorter": "원문보다 짧게", "same": "원문과 비슷하게", "longer": "원문보다 조금 길게"}
 _EMOJI_KO = {"none": "없음", "rare": "가끔", "often": "자주"}
+# 이번 요청만의 조정 (RewriteInput.adjust). 설정 수치도 함께 바뀌지만(`apply_adjust`),
+# 한 줄로도 분명히 알린다.
+_ADJUST_KO = {
+    "shorter": "지금보다 짧게 쓴다 (사실은 빼지 않는다)",
+    "longer": "조금 더 길게 쓴다 (새 사실은 넣지 않는다)",
+    "more_formal": "조금 더 격식 있게 쓴다",
+    "more_casual": "조금 더 편한 말투로 쓴다",
+}
 _WEEKDAY_KO = ("월요일", "화요일", "수요일", "목요일", "금요일", "토요일", "일요일")
 KST = timezone(timedelta(hours=9))
+
+# 검색 예시가 프롬프트에서 차지할 수 있는 글자 수 (설계 예산: 입력 6,000토큰 안쪽 — project-design §5.3).
+# 보통 자료(예시 4개, 각 수십~수백 자)는 닿지 않는다.
+EXAMPLE_MAX_CHARS = 600
+BLOCK_MAX_CHARS = {"style": 2400, "context": 1200}
+TRUNCATED_MARK = " …(뒤 생략)"
+PHRASE_MAX_CHARS = 40  # [설정] 블록에 넣는 선호·금지 표현 하나의 길이
 
 
 def today_kst(as_of: datetime | None = None) -> date:
@@ -57,23 +73,45 @@ def _load(version: str, name: str) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def _persona_block(contact: Contact, persona: PersonaSettings | None) -> str:
-    if persona is None:
+def _clip(phrase: str) -> str:
+    """표현 하나가 블록을 채우지 않게 앞부분만 쓴다 (저장되는 표현에는 길이 제한이 없다)."""
+    return phrase if len(phrase) <= PHRASE_MAX_CHARS else phrase[:PHRASE_MAX_CHARS] + "…"
+
+
+def _persona_block(
+    contact: Contact,
+    persona: PersonaSettings | None,
+    *,
+    contact_known: bool = False,
+    adjust: str | None = None,
+) -> str:
+    """[설정] 블록. `adjust`가 없고 설정이 있거나 A 조건이면 예전과 같은 글자 그대로다 (평가 재현성)."""
+    relation = _RELATION_KO.get(contact.relationship_type, contact.relationship_type)
+    if persona is None and not contact_known:
         # A 조건: 일반 첨삭. 상대 정보도 숨겨 기준선을 깨끗하게 유지한다.
-        return "상대 정보 없음. 일반적으로 자연스럽고 정중한 한국어로 다듬는다."
-    lines = [
-        f"상대: {contact.alias} ({_RELATION_KO.get(contact.relationship_type, contact.relationship_type)})",
-        f"격식 {persona.formality}/5 · 친근함 {persona.friendliness}/5 · 직접성 {persona.directness}/5",
-        f"길이: {_LENGTH_KO[persona.length]} · 이모지: {_EMOJI_KO[persona.emoji]}",
-    ]
-    if persona.address_term:
-        lines.append(f"호칭: {persona.address_term}")
-    if persona.preferred_phrases:
-        lines.append("선호 표현: " + ", ".join(persona.preferred_phrases))
-    if persona.forbidden_phrases:
-        lines.append("금지 표현: " + ", ".join(persona.forbidden_phrases))
-    if persona.notes:
-        lines.append(f"메모: {persona.notes}")
+        lines = ["상대 정보 없음. 일반적으로 자연스럽고 정중한 한국어로 다듬는다."]
+    elif persona is None:
+        # 저장된 설정 없이 과거 표현을 쓰는 경우 (조건 auto가 C·D를 골랐는데 페르소나가 없을 때).
+        lines = [
+            f"상대: {contact.alias} ({relation})",
+            "저장된 말투 설정 없음. 문체 예시가 있으면 그 말투를 따른다.",
+        ]
+    else:
+        lines = [
+            f"상대: {contact.alias} ({relation})",
+            f"격식 {persona.formality}/5 · 친근함 {persona.friendliness}/5 · 직접성 {persona.directness}/5",
+            f"길이: {_LENGTH_KO[persona.length]} · 이모지: {_EMOJI_KO[persona.emoji]}",
+        ]
+        if persona.address_term:
+            lines.append(f"호칭: {persona.address_term}")
+        if persona.preferred_phrases:
+            lines.append("선호 표현: " + ", ".join(_clip(p) for p in persona.preferred_phrases))
+        if persona.forbidden_phrases:
+            lines.append("금지 표현: " + ", ".join(_clip(p) for p in persona.forbidden_phrases))
+        if persona.notes:
+            lines.append(f"메모: {persona.notes}")
+    if adjust:
+        lines.append(f"이번 요청: {_ADJUST_KO[adjust]}")
     return "\n".join(lines)
 
 
@@ -83,13 +121,35 @@ def _preserved_block(items: list[PreservedItem]) -> str:
     return "\n".join(f"- {i.kind}: {i.text}" for i in items)
 
 
+def fit_examples(examples: list[RetrievedExample]) -> list[RetrievedExample]:
+    """프롬프트에 넣을 만큼만 남긴다: 예시 하나는 `EXAMPLE_MAX_CHARS`자, 용도별 합계는 `BLOCK_MAX_CHARS`자.
+
+    상한에 걸리지 않는 보통 자료에서는 받은 목록 그대로다(프롬프트가 글자까지 같다). 긴 예시는 앞부분만
+    남기고 표시를 붙이며, 합계를 넘기는 뒤쪽 예시는 뺀다 — 검색기가 준 순서(가까운 것 먼저)를 믿는다.
+    내 연속 발화가 아주 긴 대화(단체방에서 다른 사람을 건너뛴 경우 등)에서 예시 하나가 수십만 자가 되어
+    첨삭 한 번이 하루 토큰 한도를 넘던 것을 막는다 (2026-11-11 검토).
+    """
+    out: list[RetrievedExample] = []
+    used: dict[str, int] = {}
+    for e in examples:
+        text = e.text
+        if len(text) > EXAMPLE_MAX_CHARS:
+            text = text[:EXAMPLE_MAX_CHARS].rstrip() + TRUNCATED_MARK
+        if used.get(e.purpose, 0) + len(text) > BLOCK_MAX_CHARS.get(e.purpose, 0):
+            continue
+        used[e.purpose] = used.get(e.purpose, 0) + len(text)
+        out.append(e if text is e.text else e.model_copy(update={"text": text}))
+    return out
+
+
 def _examples_block(examples: list[RetrievedExample], purpose: str) -> str:
     picked = [e for e in examples if e.purpose == purpose]
     if not picked:
         return "(없음)"
     out = []
     for e in picked:
-        when = e.sent_at.strftime("%m/%d") if e.sent_at else "-"
+        # 날짜는 한국 시간으로 읽는다 (PostgreSQL은 UTC로 돌려준다 — 08:01의 메시지가 전날로 찍히지 않게).
+        when = local_time(e.sent_at).strftime("%m/%d") if e.sent_at else "-"
         out.append(f'- id={e.id} ({when}) "{e.text}"')
     return "\n".join(out)
 
@@ -105,15 +165,19 @@ def build_prompt(
     situation: str,
     retrieved: list[RetrievedExample],
     today: date | None = None,
+    adjust: str | None = None,
+    contact_known: bool = False,
 ) -> PromptBundle:
     """첫 생성용 프롬프트.
 
     `today`는 v3부터 쓰는 `{today}` 자리표시자를 채운다.
     v1·v2의 user.md에는 그 자리가 없어 본문이 달라지지 않는다.
+    `adjust`(이번 요청만의 조정)와 `contact_known`(설정이 없어도 상대를 밝힘)은 [설정] 블록 안에서만 쓰이고,
+    기본값이면 블록이 예전과 같다.
     """
     user = _load(version, "user").format(
         today=_today_line(today or today_kst()),
-        persona_block=_persona_block(contact, persona),
+        persona_block=_persona_block(contact, persona, contact_known=contact_known, adjust=adjust),
         situation=situation.strip() or "(설명 없음)",
         intent=intent,
         preserved_block=_preserved_block(preserved),

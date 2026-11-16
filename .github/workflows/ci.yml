@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
 
+# 이 워크플로는 저장소를 읽기만 한다 (토큰 권한을 최소로).
+permissions:
+  contents: read
+
 jobs:
   backend:
     runs-on: ubuntu-latest
@@ -31,7 +35,7 @@ jobs:
           python-version: "3.12"
           cache: pip
       - name: Install (dev + db — torch 없는 조합)
-        run: pip install -e "backend[dev,db]"
+        run: pip install -e "backend[dev,db]" -c backend/constraints.txt # 운영 이미지와 같은 버전으로
       - name: Lint (저장소 전체, ruff.toml)
         run: |
           ruff check .
@@ -51,3 +55,84 @@ jobs:
           python-version: "3.12"
       - name: Validate CSV/JSON 접점 파일
         run: python scripts/validate_data_files.py
+
+  # 운영 배포 구성(docs/deploy.md)이 깨지지 않았는지 본다: 설정 파일 검증 → 운영 이미지 빌드 → 이미지 자체 점검
+  # → 러너 안에 운영 스택을 띄워 스모크 테스트(가짜 모델, 실제 Claude 호출 없음).
+  # 같은 명령을 Windows + Docker Desktop에서 손으로 검증했고(2026-11-11), GitHub 러너에서는 main 첫 푸시에서
+  # 고친 것 없이 통과했다(5분 14초: 이미지 빌드 3분 44초, 스택 기동 48초, 스모크 10초 — 빌드 캐시 없이).
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 운영 compose 설정 검증 (.env.production.example)
+        run: |
+          cp .env.production.example .env.production
+          docker compose --env-file .env.production -f docker-compose.prod.yml config --quiet
+          # 필수 비밀이 비어 있으면 실패해야 한다
+          if POSTGRES_PASSWORD= docker compose --env-file .env.production -f docker-compose.prod.yml config --quiet 2>/dev/null; then
+            echo "POSTGRES_PASSWORD가 비었는데도 통과했습니다"; exit 1
+          fi
+
+      - name: 개발 compose 설정 검증 (test 프로필 포함)
+        run: |
+          cp .env.example .env
+          docker compose -f docker-compose.yml --profile test config --quiet
+
+      - name: 셸 스크립트 문법
+        run: |
+          for f in scripts/ops/*.sh; do bash -n "$f"; done
+          for f in docker/backup/*.sh; do sh -n "$f"; done
+
+      - name: Caddyfile 검증
+        run: |
+          docker run --rm -e SITE_ADDRESS=localhost \
+            -v "$PWD/docker/caddy/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: 운영 이미지 빌드 (prod 타깃)
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          target: prod
+          load: true
+          tags: persona-ize/backend:prod
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: 이미지 자체 점검 (비루트, 네트워크 없이 e5 모델 로딩, 앱 import)
+        run: |
+          docker run --rm --network none persona-ize/backend:prod sh -c '
+            [ "$(id -u)" != "0" ] || { echo "root로 실행됩니다"; exit 1; }
+            python -c "
+          from sentence_transformers import SentenceTransformer
+          print(\"e5\", SentenceTransformer(\"intfloat/multilingual-e5-small\").encode([\"query: 확인\"]).shape)
+          import app.main
+          print(\"app import ok\")
+          "'
+
+      - name: 운영 스택 기동 (가짜 모델, localhost 자체 서명)
+        run: |
+          # 예시 파일에서 출발해 CI용 값만 바꾼다 → 예시 파일의 설정이 운영 모드에서 받아들여지는지도 함께 확인된다
+          sed -E \
+            -e 's|^SITE_ADDRESS=.*|SITE_ADDRESS=localhost|' \
+            -e 's|^LLM_PROVIDER=.*|LLM_PROVIDER=fake|' \
+            -e 's|^ANTHROPIC_API_KEY=.*|ANTHROPIC_API_KEY=|' \
+            -e "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=ci$(openssl rand -hex 12)|" \
+            -e "s|^NEO4J_PASSWORD=.*|NEO4J_PASSWORD=ci$(openssl rand -hex 12)|" \
+            -e 's|^REGISTER_INVITE_CODE=.*|REGISTER_INVITE_CODE=ci-invite|' \
+            -e 's|^ADMIN_USERNAMES=.*|ADMIN_USERNAMES=ci-admin|' \
+            .env.production.example > .env.production
+          docker compose --env-file .env.production -f docker-compose.prod.yml up -d --no-build --wait --wait-timeout 300
+
+      - name: 스모크 테스트 (Caddy 경유)
+        run: python3 scripts/smoke_test.py --base-url https://localhost --insecure --invite-code ci-invite
+
+      - name: 실패 시 상태·로그
+        if: failure()
+        run: |
+          docker compose --env-file .env.production -f docker-compose.prod.yml ps || true
+          docker compose --env-file .env.production -f docker-compose.prod.yml logs --tail 80 backend caddy || true

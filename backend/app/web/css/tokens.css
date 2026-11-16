@@ -1,0 +1,120 @@
+/* Persona_ize 디자인 토큰 — 모든 화면(index.html, admin.html, 안내 문서)이 이 파일을 먼저 불러온다.
+   색·간격·글자 크기는 여기 변수만 쓴다. 화면별 CSS에서 색 값을 직접 적지 않는다.
+   의미 색: accent = 주 행동(파랑 하나), ok = 지킨 사실, warn = 확인할 것·원문 유지, bad = 삭제·오류.
+   어두운 테마는 시스템 설정을 따르고, <html data-theme="light|dark">로 덮어쓸 수 있다. */
+
+:root {
+  color-scheme: light dark;
+
+  --font: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo",
+    "Noto Sans KR", "Malgun Gothic", "Segoe UI", sans-serif;
+  --mono: ui-monospace, "Cascadia Mono", Consolas, Menlo, monospace;
+
+  --bg: #f6f6f4;
+  --surface: #ffffff;
+  --surface-2: #f0f1f3;
+  --ink: #16171a;
+  --ink-2: #3d4049;
+  --muted: #5c606b;
+  --line: #dcdee4;
+  --line-strong: #b9bcc6;
+
+  --accent: #3b5bdb;
+  --accent-strong: #2f49b3;
+  --accent-ink: #ffffff;
+  --accent-soft: #e8ecfb;
+
+  --ok: #1d6b3a;
+  --ok-soft: #e3f4e8;
+  --warn: #8a5300;
+  --warn-soft: #fff3d6;
+  --bad: #b3261e;
+  --bad-soft: #fde7e5;
+
+  --radius-s: 6px;
+  --radius: 10px;
+  --radius-l: 14px;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+
+  --text-xs: 12px;
+  --text-s: 13px;
+  --text: 15px;
+  --text-l: 17px;
+  --text-xl: 22px;
+  --text-2xl: 28px;
+
+  --shadow-1: 0 1px 2px rgba(20, 22, 30, 0.06), 0 1px 1px rgba(20, 22, 30, 0.04);
+  --shadow-2: 0 10px 30px rgba(20, 22, 30, 0.16);
+  --focus-ring: 0 0 0 3px rgba(59, 91, 219, 0.35);
+
+  --control-h: 40px; /* 버튼·입력 높이. 누를 수 있는 것은 이보다 작게 만들지 않는다 */
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111318;
+    --surface: #1a1d24;
+    --surface-2: #22262f;
+    --ink: #e8eaef;
+    --ink-2: #c5c9d3;
+    --muted: #9aa1ae;
+    --line: #2c313b;
+    --line-strong: #414857;
+
+    --accent: #8aa2ff;
+    --accent-strong: #a9bbff;
+    --accent-ink: #0d1330;
+    --accent-soft: #1f2a52;
+
+    --ok: #6fd69a;
+    --ok-soft: #15321f;
+    --warn: #f2bd5b;
+    --warn-soft: #3a2b0e;
+    --bad: #ff8f85;
+    --bad-soft: #40201c;
+
+    --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-2: 0 10px 30px rgba(0, 0, 0, 0.55);
+    --focus-ring: 0 0 0 3px rgba(138, 162, 255, 0.45);
+  }
+}
+
+/* 고른 테마에 맞춰 브라우저 기본 부품(라디오·체크박스·스크롤바) 색도 바꾼다 */
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #111318;
+  --surface: #1a1d24;
+  --surface-2: #22262f;
+  --ink: #e8eaef;
+  --ink-2: #c5c9d3;
+  --muted: #9aa1ae;
+  --line: #2c313b;
+  --line-strong: #414857;
+
+  --accent: #8aa2ff;
+  --accent-strong: #a9bbff;
+  --accent-ink: #0d1330;
+  --accent-soft: #1f2a52;
+
+  --ok: #6fd69a;
+  --ok-soft: #15321f;
+  --warn: #f2bd5b;
+  --warn-soft: #3a2b0e;
+  --bad: #ff8f85;
+  --bad-soft: #40201c;
+
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-2: 0 10px 30px rgba(0, 0, 0, 0.55);
+  --focus-ring: 0 0 0 3px rgba(138, 162, 255, 0.45);
+}

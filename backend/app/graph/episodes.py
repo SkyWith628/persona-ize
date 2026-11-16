@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
-from app.domain.conversation import Message
+from app.domain.conversation import Message, local_time
 from app.graph.dates import DiscourseContext, annotate_relative_dates
 
 WEEKDAYS_KO = ("월", "화", "수", "목", "금", "토", "일")
@@ -31,8 +31,11 @@ class GraphEpisode:
 def format_body(
     sent_at: datetime, speaker: str, listener: str, text: str, context: DiscourseContext | None = None
 ) -> str:
-    stamp = f"{sent_at:%Y-%m-%d} {WEEKDAYS_KO[sent_at.weekday()]} {sent_at:%H:%M}"
-    return f"[{stamp}] {speaker} → {listener}: {annotate_relative_dates(text, sent_at, context)}"
+    # 날짜·요일·시각은 한국 시간으로 읽는다. PostgreSQL은 시각을 UTC로 돌려주므로 그대로 쓰면 화요일 08:01의
+    # "내일"이 `[월 23:01] … 내일(=화요일)`로 들어간다 (2026-11-11 정확성 검토).
+    local = local_time(sent_at)
+    stamp = f"{local:%Y-%m-%d} {WEEKDAYS_KO[local.weekday()]} {local:%H:%M}"
+    return f"[{stamp}] {speaker} → {listener}: {annotate_relative_dates(text, local, context)}"
 
 
 def build_graph_episodes(
