@@ -23,6 +23,7 @@ from app.graph.store import (
     GraphEdgeHit,
     GraphNeighborhood,
     GraphNodeInfo,
+    RelationshipFact,
     _as_datetime,
 )
 from app.repositories.memory import InMemoryContactRepo, InMemoryConversationRepo
@@ -42,6 +43,8 @@ class FakeGraphStore:
     event_meta: dict[str, EventInfo] = field(default_factory=dict)  # Event uuid → 유형·중요도
     searches: list[tuple[str, str, str | None, int]] = field(default_factory=list)
     nodes: list[GraphNodeInfo] = field(default_factory=list)  # neighborhood가 돌려줄 노드
+    # (source uuid, target uuid) → relationship_facts가 돌려줄 사실
+    relationships: dict[tuple[str, str], list[RelationshipFact]] = field(default_factory=dict)
     fail_on: str | None = None  # 이 이름의 에피소드에서 예외
 
     async def prepare(self) -> None:
@@ -75,6 +78,9 @@ class FakeGraphStore:
         edges = [e for e in self.edges if {e.source_node_uuid, e.target_node_uuid} & scope]
         ends = {node_uuid} | {e.source_node_uuid for e in edges} | {e.target_node_uuid for e in edges}
         return GraphNeighborhood(nodes=[n for n in self.nodes if n.uuid in ends], edges=edges)
+
+    async def relationship_facts(self, group_id, source_uuid, target_uuid) -> list[RelationshipFact]:  # noqa: ANN001
+        return list(self.relationships.get((source_uuid, target_uuid), []))
 
     async def remove_episodes(self, group_id, names) -> int:  # noqa: ANN001
         before = len(self.added)

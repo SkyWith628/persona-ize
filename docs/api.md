@@ -45,7 +45,7 @@ curl -s -c cookie.txt -X POST localhost:8000/v1/auth/register -H "Content-Type: 
 | `GET /v1/contacts/{id}/persona` | 최신 버전 |
 | `GET /v1/contacts/{id}/graph` | 상대 주변 맥락 그래프 `{enabled, center_id, nodes[{id,name,kind,summary,event_type,importance,is_contact}], edges[{id,source,target,relation,fact,valid_at,invalid_at,current}]}`. 상대 노드와 그 상대가 관여한 사건에 닿은 사실만(D 검색 범위와 같음), 유효한 사실 먼저·최근 순. 그래프가 꺼져 있으면 `enabled=false` |
 | `GET /v1/contacts/{id}/persona/versions` | 버전 기록 (최신 먼저, 최대 50) |
-| `GET /v1/contacts/{id}/persona/suggestion` | 이 상대에게 보낸 **내 과거 메시지**로 추정한 말투 제안: `{based_on_messages, settings|null, signals: [{field, value, reason}]}`. 규칙 기반(모델 호출 없음), 저장하지 않는다 — 화면에서 사용자가 확인하고 저장한다. 내 메시지가 5건 미만이면 `settings: null` |
+| `GET /v1/contacts/{id}/persona/suggestion` | 이 상대에게 보낸 **내 과거 메시지**로 추정한 말투 제안: `{based_on_messages, settings|null, signals: [{field, value, reason, source, since}]}`. 규칙 기반(모델 호출 없음), 저장하지 않는다 — 화면에서 사용자가 확인하고 저장한다. 내 메시지가 5건 미만이면 `settings: null` 그래프가 켜져 있으면 관계 사실의 시간 순 변화에서 읽은 제안(`source: "graph"`, `since`: 그 값이 처음 확인된 날 — 예: "10/17부터 존댓말", "10/21부터 '파트장님'")이 뒤에 붙고, 같은 항목이면 그래프 쪽이 `settings`에 반영된다 |
 | `GET /v1/persona-defaults` | 관계 유형별 기본 페르소나 7종 |
 | `DELETE /v1/contacts/{id}` | **상대 삭제**. 그 상대의 대화방·메시지·묶음·그래프 에피소드·페르소나·첨삭 이력을 모두 지운다 (그래프 삭제가 실패해도 DB는 지우고 사유를 돌려준다) |
 

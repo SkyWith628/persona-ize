@@ -22,6 +22,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 from dataclasses import dataclass
+from datetime import date
 from typing import Any
 
 from app.domain.persona import PersonaSettings
@@ -67,6 +68,8 @@ class Signal:
     field: str
     value: Any
     reason: str
+    source: str = "messages"  # messages: 내 메시지의 겉모습 / graph: 그래프의 관계 사실 (persona_signals)
+    since: date | None = None  # 그래프 근거일 때: 이 값이 처음 확인된 날 (한국 시간)
 
 
 def _ending(text: str) -> str | None:

@@ -65,6 +65,18 @@ class GraphNeighborhood:
     edges: list[GraphEdgeHit] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class RelationshipFact:
+    """source → target 방향의 Relationship 사실 하나와 추출기가 채운 속성 (`schema.Relationship`)."""
+
+    uuid: str
+    fact: str
+    valid_at: datetime | None
+    speech_style: str | None = None  # 반말 | 존댓말 | 혼용
+    address_term: str | None = None  # source가 target을 직접 부른 말
+    hierarchy: str | None = None  # target_higher | target_lower | equal
+
+
 class GraphStore(Protocol):
     async def prepare(self) -> None:
         """인덱스·제약 생성. 여러 번 불러도 된다."""
@@ -96,6 +108,15 @@ class GraphStore(Protocol):
         """이 노드, 또는 이 노드와 이어진 Event 노드에 닿은 엣지 전부와 그 양 끝 노드.
 
         검색기(`GraphContextRetriever`)가 상대의 사실로 인정하는 범위와 같다. 무효화된 사실도 포함한다.
+        """
+        ...
+
+    async def relationship_facts(
+        self, group_id: str, source_uuid: str, target_uuid: str
+    ) -> list[RelationshipFact]:
+        """source → target 방향의 Relationship 사실 전부 (무효화된 것 포함, 순서 없음).
+
+        페르소나 갱신 제안(`persona_signals`)이 말투·호칭의 시간 순 변화를 읽는 데 쓴다.
         """
         ...
 
@@ -258,6 +279,31 @@ class GraphitiStore:
         ]
         return GraphNeighborhood(nodes=nodes, edges=edges)
 
+    async def relationship_facts(
+        self, group_id: str, source_uuid: str, target_uuid: str
+    ) -> list[RelationshipFact]:
+        result = await self._g.driver.execute_query(
+            "MATCH (a:Entity {uuid: $source, group_id: $group_id})"
+            "-[r:RELATES_TO {name: 'Relationship'}]->(b:Entity {uuid: $target, group_id: $group_id}) "
+            "RETURN r.uuid AS uuid, r.fact AS fact, r.valid_at AS valid_at, r.speech_style AS speech_style, "
+            "r.address_term AS address_term, r.hierarchy AS hierarchy",
+            source=source_uuid,
+            target=target_uuid,
+            group_id=group_id,
+        )
+        records = result[0] if isinstance(result, tuple) else result.records
+        return [
+            RelationshipFact(
+                uuid=r["uuid"],
+                fact=r["fact"] or "",
+                valid_at=_as_datetime(r["valid_at"]),
+                speech_style=_text_or_none(r["speech_style"]),
+                address_term=_text_or_none(r["address_term"]),
+                hierarchy=_text_or_none(r["hierarchy"]),
+            )
+            for r in records
+        ]
+
     async def remove_episodes(self, group_id: str, names: list[str]) -> int:
         if not names:
             return 0
@@ -335,6 +381,11 @@ class GraphitiStore:
 
     async def close(self) -> None:
         await self._g.close()
+
+
+def _text_or_none(value: object) -> str | None:
+    """추출 속성은 모델이 채운다 — 빈 글자·글자가 아닌 값은 없는 것으로 본다."""
+    return value.strip() or None if isinstance(value, str) else None
 
 
 def _as_datetime(value: object) -> datetime | None:

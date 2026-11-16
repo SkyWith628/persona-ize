@@ -429,6 +429,10 @@ class PersonaSignalOut(BaseModel):
     field: str
     value: Any
     reason: str
+    source: Literal["messages", "graph"] = Field(
+        "messages", description="근거의 출처: 내 메시지의 겉모습 / 그래프의 관계 사실(말투·호칭이 바뀐 시점)"
+    )
+    since: date | None = Field(None, description="그래프 근거일 때 이 값이 처음 확인된 날 (한국 시간)")
 
 
 class PersonaSuggestionOut(BaseModel):
