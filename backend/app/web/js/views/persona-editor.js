@@ -2,6 +2,7 @@
 //  - 격식·친근함·직접성은 5단계 고르기(단계마다 말로 된 설명). 0~100 슬라이더는 쓰지 않는다.
 //  - 저장하면 새 버전이 된다(예전 버전은 기록에 남는다). 다른 곳에서 먼저 저장했으면(409) 고르게 한다.
 //  - "과거 대화 기준 제안"은 근거와 함께 보여 주고, 적용은 사용자가 누를 때만. 저장은 따로.
+//    말투가 바뀐 시점을 찾으면 제안 카드(이전 → 현재, 호칭, 그래프가 찾은 계기·범위 단서)를 신호 목록 위에 둔다.
 
 import { api } from "../api.js";
 import { describeError, isMissingEndpoint } from "../lib/errors.js";
@@ -12,12 +13,16 @@ import {
   LIMITS,
   SCALES,
   applySignals,
+  cardSignals,
+  cardView,
   describeSettings,
+  isFewMessages,
   normalizeSettings,
   settingsEqual,
   signalMatches,
   signalView,
   suggestionState,
+  visibleSignals,
 } from "../lib/persona.js";
 import { buildHash } from "../lib/router.js";
 import { invalidateContacts } from "../session.js";
@@ -316,9 +321,67 @@ export function mountPersonaEditor(box, { contact, persona: initial, onSaved = n
     (suggestionBox.querySelector(".signal .btn") || saveBtn).focus();
   }
 
+  // "그대로 두기"를 고른 카드는 이 화면을 떠날 때까지 다시 묻지 않는다(아무것도 저장하지 않는다)
+  let cardDismissed = false;
+
+  /** 제안 카드: 말투 이전 → 현재, 호칭, 그래프가 찾은 계기·범위 단서. 값을 채우는 것은 버튼을 누를 때만. */
+  function renderCard(card, current) {
+    const view = cardView(card, contact.alias);
+    if (!view) return null;
+    if (cardDismissed) return note("말투 변화 제안은 그대로 두기로 했어요. 설정은 바뀌지 않았어요.");
+    const proposed = cardSignals(card);
+    const same = proposed.length > 0 && proposed.every((sig) => signalMatches(current, sig));
+    const titleId = uid("card-title");
+    const keep = h(
+      "button",
+      {
+        type: "button",
+        class: "btn btn-quiet",
+        "aria-label": "말투 변화 제안 그대로 두기",
+        onClick: () => {
+          cardDismissed = true;
+          openSuggestion();
+          (suggestionBox.querySelector(".signal .btn, .form-actions .btn") || suggestBtn).focus();
+        },
+      },
+      "그대로 두기",
+    );
+    let question = null;
+    if (view.ask) {
+      // 상황에 따라 다른 말투일 수 있으면 값을 정해 주지 않고 묻는다 — 왜 묻는지부터 말한다
+      const tail = same ? "" : proposed.length ? "어떻게 할까요?" : "값은 정해 드리지 않았어요. 아래에서 직접 골라 주세요.";
+      question = [view.askReason, tail].filter(Boolean).join(" ");
+    }
+    return h(
+      "section",
+      { class: "suggestion-card", "aria-labelledby": titleId },
+      h("p", { class: "suggestion-card-title", id: titleId }, view.title),
+      h(
+        "dl",
+        { class: "suggestion-card-rows" },
+        view.rows.map((row) => [h("dt", null, row.label), h("dd", null, row.text)]),
+      ),
+      question ? h("p", { class: "suggestion-card-ask" }, question) : null,
+      h(
+        "div",
+        { class: "form-actions" },
+        same
+          ? tag("지금 설정과 같아요")
+          : proposed.length
+            ? h(
+                "button",
+                { type: "button", class: "btn", "aria-label": `${view.applyLabel} (말투 변화 제안 적용)`, onClick: () => applySuggestion(proposed) },
+                view.applyLabel,
+              )
+            : null,
+        same ? null : keep,
+      ),
+    );
+  }
+
   function renderSuggestion(data) {
     const count = Number(data?.based_on_messages) || 0;
-    const signals = (Array.isArray(data?.signals) ? data.signals : []).filter((s) => signalView(s).usable);
+    const signals = visibleSignals(data);
     const state = suggestionState(data);
     const importLink = () =>
       h("a", { class: "btn", href: buildHash("import", {}, { contact: contact.id }), "aria-label": `${contact.alias} 대화 가져오기` }, "대화 가져오기");
@@ -337,38 +400,51 @@ export function mountPersonaEditor(box, { contact, persona: initial, onSaved = n
       return emptyState("지금 설정을 바꿀 만한 뚜렷한 특징을 찾지 못했어요", `내 메시지 ${formatNumber(count)}개를 봤어요.`);
     }
     const current = readForm();
+    // 표본이 적어 전체 문체는 읽지 않았더라도, 말투가 바뀐 시점과 그래프 근거는 따로 보여 준다
+    const lead = isFewMessages(data)
+      ? `내 메시지가 ${formatNumber(count)}개뿐이라 전체 문체는 읽지 않았어요. 말투가 바뀐 시점과 그 근거만 보여 드려요.`
+      : `이 상대에게 보낸 내 메시지 ${formatNumber(count)}개에서 읽은 문체예요. 성격을 추정하지 않고 말투의 특징만 봐요.`;
     return [
-      h(
-        "p",
-        null,
-        `이 상대에게 보낸 내 메시지 ${formatNumber(count)}개에서 읽은 문체예요. 성격을 추정하지 않고 말투의 특징만 봐요.`,
-      ),
-      h(
-        "ul",
-        { class: "signal-list" },
-        signals.map((sig) => {
-          const v = signalView(sig);
-          const same = signalMatches(current, sig);
-          return h(
-            "li",
-            { class: "signal" },
-            h("div", { class: "signal-main" }, h("strong", null, v.fieldLabel), " → ", h("span", { class: "signal-value" }, v.valueLabel)),
-            h("p", { class: "signal-reason" }, h("span", { class: "muted" }, "근거: "), v.reason || "근거 설명이 없어요."),
-            same
-              ? tag("지금 설정과 같아요")
-              : h(
-                  "button",
-                  // 제안마다 같은 글자라, 읽는 이름에는 무엇을 적용하는지 붙인다
-                  { type: "button", class: "btn", "aria-label": `${v.fieldLabel} ${v.valueLabel} 적용`, onClick: () => applySuggestion([sig]) },
-                  "적용",
+      h("p", null, lead),
+      renderCard(data?.card, current),
+      signals.length
+        ? h(
+            "ul",
+            { class: "signal-list" },
+            signals.map((sig) => {
+              const v = signalView(sig);
+              const same = signalMatches(current, sig);
+              return h(
+                "li",
+                { class: "signal" },
+                h(
+                  "div",
+                  { class: "signal-main" },
+                  h("strong", null, v.fieldLabel),
+                  " → ",
+                  h("span", { class: "signal-value" }, v.valueLabel),
+                  " ",
+                  // 어디서 읽은 제안인지: 내 메시지 전체 · 말투 변화 · 그래프
+                  h("span", { class: "tag signal-source" }, h("span", { class: "sr-only" }, "출처: "), v.sourceLabel),
+                  v.since ? [" ", h("span", { class: "signal-since" }, `${v.since}부터`)] : null,
                 ),
-          );
-        }),
-      ),
+                h("p", { class: "signal-reason" }, h("span", { class: "muted" }, "근거: "), v.reason || "근거 설명이 없어요."),
+                same
+                  ? tag("지금 설정과 같아요")
+                  : h(
+                      "button",
+                      // 제안마다 같은 글자라, 읽는 이름에는 무엇을 적용하는지 붙인다
+                      { type: "button", class: "btn", "aria-label": `${v.fieldLabel} ${v.valueLabel} 적용`, onClick: () => applySuggestion([sig]) },
+                      "적용",
+                    ),
+              );
+            }),
+          )
+        : null,
       h(
         "div",
         { class: "form-actions" },
-        h("button", { type: "button", class: "btn", onClick: () => applySuggestion(signals) }, "모두 적용"),
+        signals.length ? h("button", { type: "button", class: "btn", onClick: () => applySuggestion(signals) }, "모두 적용") : null,
         h(
           "button",
           {
@@ -382,7 +458,8 @@ export function mountPersonaEditor(box, { contact, persona: initial, onSaved = n
           "닫기",
         ),
       ),
-      note("적용해도 바로 저장되지 않아요. 값을 확인한 뒤 아래 '저장'을 눌러 주세요."),
+      // 적용할 것이 남아 있을 때만 안내한다(카드를 그대로 두기로 했고 신호도 없으면 적용할 것이 없다)
+      signals.length || !cardDismissed ? note("적용해도 바로 저장되지 않아요. 값을 확인한 뒤 아래 '저장'을 눌러 주세요.") : null,
     ];
   }
 

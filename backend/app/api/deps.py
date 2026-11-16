@@ -19,6 +19,7 @@ import os
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal
+from uuid import UUID
 
 from fastapi import Depends, Header, HTTPException, Request
 
@@ -145,7 +146,14 @@ def _build_graph(settings: Settings, embedder: Any, contacts: ContactRepo, conve
             day_offset_hours=settings.usage_day_offset_hours,
             max_attempts=settings.graph_episode_max_attempts,
         ),
-        GraphContextRetriever(store, contacts, top_k=settings.graph_search_top_k, embedder=embedder),
+        GraphContextRetriever(
+            store,
+            contacts,
+            top_k=settings.graph_search_top_k,
+            embedder=embedder,
+            # 무효화된 사실 처리 (기본 trust = 예전 동작). 세 설정 비교는 run_eval.py --invalidation
+            invalidation_mode=settings.graph_invalidation_mode,
+        ),
     )
 
 
@@ -155,13 +163,24 @@ def build_state(settings: Settings) -> AppState:
     embedder = build_embedder(settings)
     graph_store, graph_ingest, graph_retriever = _build_graph(settings, embedder, contacts, conversations)
     null = NullRetriever()
-    vector = VectorStyleRetriever(conversations, embedder)
+    # 아래 말투 프로필 플래그들(docs/graph-redesign-2026-11-16.md 5절)은 기본값에서 예전 동작 그대로다.
+    # 문체 예시를 현재 말투 구간으로 좁히기 (경로 X)
+
+    async def alias_of(user_id: str, contact_id: UUID) -> str:
+        # 걸러내기가 제안 카드·상태 블록과 같은 프로필을 계산하려면 상대 별칭이 필요하다 (이름+아/야 호격)
+        return (await contacts.get(user_id, contact_id)).alias
+
+    vector = VectorStyleRetriever(
+        conversations, embedder, gate_by_register=settings.style_example_gating, alias_of=alias_of
+    )
     # D = C(문체 예시) + 그래프 사실 맥락. 그래프가 없으면 C와 같다 (그때 D 수치는 비교에 쓰지 않는다).
     d_retriever: Retriever = CompositeRetriever([vector, graph_retriever]) if graph_retriever else vector
     workflow = RewriteWorkflow(
         provider=build_provider(settings),
         retrievers={"A": null, "B": null, "C": vector, "D": d_retriever},
         prompt_version=settings.prompt_version,
+        register_warnings=settings.register_warnings,  # 설정·원문에 없는 호칭이 결과에 있으면 경고
+        register_post_check=settings.register_post_check,  # 반말/존댓말이 설정과 다르면 한 번 다시
     )
     import_service = ImportService(
         contacts,
@@ -189,6 +208,9 @@ def build_state(settings: Settings) -> AppState:
             usage,
             conversations=conversations,
             graph_enabled=graph_store is not None,
+            # 설정 없는 요청의 [관계 상태] 블록(rewrite-v4부터 프롬프트에 자리가 있다) / 설정 있는 요청의 경고
+            register_state_block=settings.register_state_block,
+            register_warnings=settings.register_warnings,
         ),
         import_service=import_service,
         deletion_service=DeletionService(

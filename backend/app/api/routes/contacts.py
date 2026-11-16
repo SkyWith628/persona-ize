@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import asyncio
 import logging
+from dataclasses import asdict
 from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, status
 
-from app.ai.style_suggest import MAX_MESSAGES, Signal, suggest_persona
 from app.api.deps import AppState, State, UserId
 from app.api.schemas import (
     ContactCreate,
@@ -21,14 +20,13 @@ from app.api.schemas import (
     PersonaPut,
     PersonaSignalOut,
     PersonaSuggestionOut,
+    SuggestionCardOut,
 )
 from app.core.errors import InvalidInputError, NotFoundError
 from app.domain.contact import Contact
-from app.domain.conversation import exception_kind
-from app.domain.persona import PersonaSettings, PersonaVersion, default_persona
+from app.domain.persona import PersonaVersion, default_persona
 from app.domain.usage import QuotaExceededError
-from app.graph.episodes import DEFAULT_ME_NAME
-from app.graph.persona_signals import graph_persona_signals
+from app.services.suggestion_service import ALL_SOURCES, suggest_persona_for_contact
 
 log = logging.getLogger(__name__)
 
@@ -133,59 +131,30 @@ async def suggest_persona_settings(contact_id: UUID, user_id: UserId, state: Sta
     `since`: 그 값이 처음 확인된 날). 내 메시지 전체를 한 덩어리로 보는 추정과 달리 "10/17부터 존댓말",
     "10/21부터 '파트장님'"처럼 바뀐 시점을 말한다. 같은 항목이면 그래프 쪽이 `settings`에 반영된다(뒤에 온
     근거가 이긴다). 그래프 조회가 실패하면 메시지 근거만 돌려준다.
+
+    말투 프로필(`source: "register"`)은 내 메시지를 문장 단위로 분류해 말투가 **언제 바뀌었는지**를 말한다
+    ("10/21부터 합쇼체 2건, 그 전에는 반말 3건"). 근거 순서는 messages → register → graph. 제안할 것이 있으면
+    `card`에 제안 카드가 온다 — 이전·지금 말투와 근거 메시지, 호칭, 그래프에서 찾은 계기 사건과 범위 단서.
+    `card.ask`가 참이면 말투 프로필의 값은 `settings`에 넣지 않는다 (값을 정해 주지 않고 묻는다).
+    말투 프로필에는 메시지 수 문턱이 없다 — 구간 규칙(같은 쪽 말투 연속 2건, 호칭 2회)만 있고 건수를
+    근거에 적는다. 그래서 내 메시지가 5건보다 적어도 register 근거와 카드는 올 수 있다.
+    계산은 `services/suggestion_service.py`가 한다.
     """
     contact = await state.contacts.get(user_id, contact_id)
-    mine: list[tuple[datetime, str]] = []
-    convs = await state.conversations.list(user_id, contact.id)
-    for conv in convs:
-        mine.extend(
-            (m.sent_at, m.text)
-            for m in await state.conversations.list_messages(user_id, conv.id)
-            if m.speaker_role == "me"
-        )
-    mine.sort(key=lambda pair: pair[0])
-    texts = [text for _, text in mine][-MAX_MESSAGES:]  # 최근 것부터 MAX_MESSAGES건만 본다
-    current = await state.contacts.latest_persona(user_id, contact.id)
-    base = current.settings if current else default_persona(contact.relationship_type)
-    # 메시지 500건에 정규식을 여러 번 돌린다 — 이벤트 루프 밖에서 계산한다.
-    settings, signals = await asyncio.to_thread(suggest_persona, texts, base, contact.alias)
-    me_names = [conv.me_name or DEFAULT_ME_NAME for conv in convs] or [DEFAULT_ME_NAME]
-    graph_signals = await _graph_signals(state, user_id, contact, me_names, settings or base)
-    if graph_signals:
-        settings = (settings or base).model_copy(update={s.field: s.value for s in graph_signals})
-        signals = [*signals, *graph_signals]
-    return PersonaSuggestionOut(
-        based_on_messages=len(texts),
-        settings=settings,
+    # 말투 프로필 근거는 설정으로 끌 수 있다 (`REGISTER_SUGGESTIONS=false` → 예전 응답 그대로)
+    sources = ALL_SOURCES if state.settings.register_suggestions else ALL_SOURCES - {"register"}
+    suggestion = await suggest_persona_for_contact(state, user_id, contact, sources=sources)
+    out = PersonaSuggestionOut(
+        based_on_messages=suggestion.based_on_messages,
+        settings=suggestion.settings,
         signals=[
             PersonaSignalOut(field=s.field, value=s.value, reason=s.reason, source=s.source, since=s.since)  # type: ignore[arg-type]
-            for s in signals
+            for s in suggestion.signals
         ],
     )
-
-
-async def _graph_signals(
-    state: AppState, user_id: str, contact: Contact, me_names: list[str], base: PersonaSettings
-) -> list[Signal]:
-    """그래프의 나 → 상대 관계 사실에서 읽은 갱신 제안. 그래프가 없거나 노드를 못 찾으면 빈 목록."""
-    if state.graph_store is None:
-        return []
-    try:
-        center = await state.graph_store.find_entity_uuid(user_id, contact.name_in_graph)
-        if center is None:
-            return []
-        me = None
-        for name in dict.fromkeys(me_names):  # 대화방마다 내 표시 이름이 다를 수 있다 — 처음 찾은 노드
-            me = await state.graph_store.find_entity_uuid(user_id, name)
-            if me is not None:
-                break
-        if me is None or me == center:
-            return []
-        facts = await state.graph_store.relationship_facts(user_id, me, center)
-    except Exception as exc:  # noqa: BLE001 - 제안은 부가 기능이다. 그래프 장애로 화면을 막지 않는다
-        log.warning("graph persona signals failed, continuing without them: %s", exception_kind(exc))
-        return []
-    return graph_persona_signals(facts, base)
+    if suggestion.card is not None:
+        out.card = SuggestionCardOut.model_validate(asdict(suggestion.card))
+    return out
 
 
 @router.get("/{contact_id}/graph", response_model=ContactGraphOut, summary="상대 주변 맥락 그래프")

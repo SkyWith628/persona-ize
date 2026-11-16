@@ -383,6 +383,7 @@ class PostgresConversationRepo:
         query: list[float],
         top_k: int,
         before: datetime | None = None,
+        after: datetime | None = None,
     ) -> list[EpisodeHit]:
         distance = EpisodeRow.embedding.cosine_distance(query).label("distance")
         stmt = select(EpisodeRow, distance).where(
@@ -390,6 +391,9 @@ class PostgresConversationRepo:
         )
         if before is not None:
             stmt = stmt.where(EpisodeRow.end_at < before)
+        if after is not None:
+            # 본인 발화가 after 이후에 하나라도 있는 묶음만 (경계 설명은 base.py의 search_episodes)
+            stmt = stmt.where(EpisodeRow.end_at >= after)
         stmt = stmt.order_by(distance, EpisodeRow.end_at).limit(top_k)
         async with self._sessions() as s:
             rows = (await s.execute(stmt)).all()

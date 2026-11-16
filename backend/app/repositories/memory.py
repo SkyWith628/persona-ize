@@ -442,6 +442,7 @@ class InMemoryConversationRepo:
         query: list[float],
         top_k: int,
         before: datetime | None = None,
+        after: datetime | None = None,
     ) -> list[EpisodeHit]:
         hits: list[EpisodeHit] = []
         for conv_id, pairs in self._episodes.items():
@@ -450,6 +451,8 @@ class InMemoryConversationRepo:
                 continue
             for ep, vec in pairs:
                 if before is not None and ep.end_at >= before:
+                    continue
+                if after is not None and ep.end_at < after:
                     continue
                 hits.append(EpisodeHit(episode=ep, score=cosine(query, vec)))
         hits.sort(key=lambda h: (-h.score, h.episode.end_at))

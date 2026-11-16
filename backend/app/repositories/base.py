@@ -222,8 +222,16 @@ class ConversationRepo(Protocol):
         query: list[float],
         top_k: int,
         before: datetime | None = None,
+        after: datetime | None = None,
     ) -> list[EpisodeHit]:
-        """같은 사용자·같은 상대, end_at < before 인 묶음을 코사인 유사도 순으로."""
+        """같은 사용자·같은 상대, end_at < before 인 묶음을 코사인 유사도 순으로.
+
+        `after`를 주면 end_at >= after 인 묶음만 남긴다 (설계 5.4, 현재 말투 구간의 예시만 고르기).
+        경계를 start_at이 아니라 end_at으로 잡는 이유: 묶음의 start_at은 앞에 붙인 맥락(상대 발화 포함)의
+        시각이라 구간이 바뀌기 전일 수 있고, end_at은 항상 본인 발화의 마지막 시각이다. 그래서 "본인 발화가
+        `after` 이후에 하나라도 있는 묶음"이 남는다. 본인 발화가 답 없이 이어져 경계를 걸친 묶음은 앞쪽에
+        이전 구간의 발화가 섞인 채로 남는다. None이면 예전과 같다.
+        """
         ...
 
     async def find_job(self, user_id: str, conversation_id: UUID, source_hash: str) -> ImportJob | None: ...

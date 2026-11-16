@@ -2,6 +2,8 @@
 
 커밋 7b54c7e의 `backend/app/ai/workflow.py` 그대로다. 클래스 이름만 `LegacyRewriteWorkflow`로 바꿨다.
 `tests/test_workflow_parity.py`가 같은 입력을 이 구현과 `app.ai.workflow.RewriteWorkflow`에 넣어 견준다.
+예외 하나: 결과에 `validator_version`을 찍는 두 줄(2026-11-16)은 지금 구현과 같이 넣었다.
+새 필드라 옛 구현에는 없었고, 빼 두면 대조가 모든 시나리오에서 이 필드 하나로 어긋난다.
 아래는 원래 머리말.
 
 첨삭 고정 워크플로 (project-design §5.3 / design.md §3).
@@ -36,6 +38,7 @@ from app.domain.rewrite import (
     ValidationReport,
     Violation,
 )
+from app.domain.titles import VALIDATOR_VERSION
 from app.domain.usage import estimate_tokens
 
 log = logging.getLogger(__name__)
@@ -162,6 +165,7 @@ class LegacyRewriteWorkflow:
                 retrieval_version=retriever.version,
                 token_usage=usage,
                 latency_ms=latency_ms,
+                validator_version=VALIDATOR_VERSION,
                 adjust=inp.adjust,
                 # 근거의 출처 메시지 참조만 남긴다. 원문 사본은 두지 않는다 —
                 # 근거 조회 때 남아 있는 메시지를 다시 읽는다.
@@ -185,6 +189,7 @@ class LegacyRewriteWorkflow:
             retrieval_version=retriever.version,
             token_usage=usage,
             latency_ms=latency_ms,
+            validator_version=VALIDATOR_VERSION,
             adjust=inp.adjust,
         )
 

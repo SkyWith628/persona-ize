@@ -543,8 +543,12 @@ def test_data_api_flow_on_postgres(pg_url: str) -> None:
         assert client.get("/v1/data/summary", headers=stranger).json()["totals"]["contacts"] == 0
 
         suggestion = client.get(f"/v1/contacts/{cid}/persona/suggestion", headers=h).json()
-        # 내 메시지 3건: 표본이 작아 추정하지 않는다 (집계 쿼리가 내 메시지만 세는지는 여기서 본다)
-        assert suggestion == {"based_on_messages": 3, "settings": None, "signals": []}
+        # 내 메시지 3건: 표본이 작아 겉모습 추정(messages)은 하지 않는다 (집계 쿼리가 내 메시지만 세는지는
+        # 여기서 본다). 말투 프로필(register)은 건수 문턱이 없어 두 번 쓴 호칭을 제안한다 (설계 3.2).
+        assert suggestion["based_on_messages"] == 3
+        assert [(s["field"], s["value"], s["source"]) for s in suggestion["signals"]] == [
+            ("address_term", "팀장님", "register")
+        ]
 
         export = client.get("/v1/export", headers=h)
         assert export.status_code == 200 and "attachment" in export.headers["content-disposition"]

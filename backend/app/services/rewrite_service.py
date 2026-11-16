@@ -11,13 +11,20 @@
   넘기지 못하게 (2026-11-11 검토). 서버 프로세스가 여럿이면 프로세스 사이의 경합은 남는다.
 - 모델 호출이 실패·시간 초과로 끝나도 보낸 프롬프트만큼의 추정 입력 토큰을 사용량에 더한다
   (`token_usage.estimated_input_tokens` — 워크플로가 채운다).
+- 말투 프로필(graph-redesign 5.2·5.3, 둘 다 기본은 꺼짐): 내가 이 상대에게 보낸 메시지에서 규칙으로
+  계산한다(모델 호출 없음). 저장된 설정이 **없는** 요청(auto가 C·D를 고른 경우)에는 [관계 상태] 블록을
+  프롬프트에 붙이고, 저장된 설정이 **있는** 요청에는 문장을 건드리지 않고 경고만 덧붙인다 — 명시적
+  설정이 이긴다. 프로필 계산이 실패하면 기록만 남기고 예전과 똑같이 첨삭한다.
 """
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
-from datetime import date, datetime
+import logging
+from datetime import UTC, date, datetime
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -26,14 +33,19 @@ from app.ai.workflow import RewriteWorkflow
 from app.core.config import Settings
 from app.core.errors import InvalidInputError, UsageLimitError, VersionConflictError
 from app.domain.contact import Contact
-from app.domain.conversation import SpeakerRole
-from app.domain.persona import PersonaVersion
+from app.domain.conversation import SpeakerRole, exception_kind
+from app.domain.persona import PersonaSettings, PersonaVersion
 from app.domain.rewrite import IDEMPOTENCY_KEY_MAX, Condition, Feedback, RewriteInput, RewriteRecord
 from app.domain.usage import BudgetExceededError, UsageStatus, usage_day
 from app.importers.base import has_unstorable_text
 from app.repositories.base import ContactRepo, ConversationRepo, RewriteRepo
 from app.repositories.usage import UsageRepo
 from app.services.locks import KeyedLocks
+
+if TYPE_CHECKING:
+    from app.ai.register import RegisterProfile
+
+log = logging.getLogger(__name__)
 
 # 진행 중인 요청 하나가 쓸 토큰의 추정값. 끝난 요청의 실제 사용량으로 조금씩 맞춰 간다.
 DEFAULT_REQUEST_TOKENS = 2_000
@@ -50,6 +62,56 @@ def _input_hash(inp: RewriteInput) -> str:
     # 서버가 내 과거 메시지에서 만들어 붙이는 값이다 — 요청 본문이 아니므로 해시에 넣지 않는다
     payload.pop("register_block", None)
     return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+
+def _same_address(observed: str, saved: str) -> bool:
+    """관찰된 호칭과 설정의 호칭이 같은 말인가. 띄어쓰기·쉼표는 무시하고, 한쪽이 다른 쪽을 품으면 같다고 본다.
+
+    '서연 파트장님'과 '파트장님'처럼 이름만 덧붙은 차이로 경고를 내지 않으려는 것이다.
+    """
+    a = "".join(observed.replace(",", " ").split())
+    b = "".join(saved.replace(",", " ").split())
+    return bool(a) and bool(b) and (a in b or b in a)
+
+
+def persona_register_warnings(profile: RegisterProfile, persona: PersonaSettings) -> list[str]:
+    """저장된 설정과 관찰된 말투 프로필이 어긋나는 점 (graph-redesign 5.2). 순수 함수.
+
+    경고는 사용자에게 보여 주는 안내일 뿐이다 — 첨삭 문장과 설정은 바꾸지 않는다.
+    - 관찰된 호칭이 설정에 없음: 현재 호칭 구간(1회뿐이어도 횟수를 밝혀 알린다)이 설정의 호칭과 다를 때.
+    - 설정과 최근 말투 불일치: 확정된 현재 말투와 설정의 격식이 **반말/존댓말 경계**에서 갈릴 때만.
+      합쇼체와 해요체의 차이는 경고하지 않는다(자연스러운 존댓말은 둘을 섞는다). 최근 메시지에 두 단계가
+      섞여 있으면(`two_valued`) 상황별 말투일 수 있어 말하지 않는다.
+    """
+    # 꺼 둔 서버는 말투 분류기를 올리지 않는다 — 경고를 만들 때만 가져온다.
+    from app.ai.register import LEVEL_KO, level_of_formality, polite
+
+    out: list[str] = []
+    address = profile.current_address
+    if address is not None and address.value.strip():
+        saved = (persona.address_term or "").strip()
+        if not saved:
+            out.append(
+                f"최근 메시지에서 '{address.value}'(이)라고 불렀는데({address.count}회 관찰) "
+                "설정에는 호칭이 없습니다. 계속 쓰는 호칭이라면 설정에 추가해 주세요."
+            )
+        elif not _same_address(address.value, saved):
+            out.append(
+                f"최근 메시지의 호칭 '{address.value}'({address.count}회 관찰)이(가) "
+                f"설정의 호칭 '{saved}'과(와) 다릅니다. 설정을 확인해 주세요."
+            )
+    speech = profile.current_speech
+    if speech is not None and speech.status == "confirmed" and not profile.two_valued:
+        observed = polite(speech.value)
+        setting = polite(level_of_formality(persona.formality))
+        if observed is not None and setting is not None and observed != setting:
+            side = "존댓말" if setting else "반말"
+            level = LEVEL_KO.get(speech.value, speech.value)
+            out.append(
+                f"설정은 격식 {persona.formality}({side})인데 최근 {speech.count}건은 {level}(으)로 "
+                "보냈습니다. 설정을 확인해 주세요."
+            )
+    return out
 
 
 class EvidenceMessage(BaseModel):
@@ -86,6 +148,8 @@ class RewriteService:
         *,
         conversations: ConversationRepo | None = None,
         graph_enabled: bool = False,
+        register_state_block: bool = False,
+        register_warnings: bool = False,
     ) -> None:
         self._settings = settings
         self._contacts = contacts
@@ -95,6 +159,11 @@ class RewriteService:
         # 조건 auto(쌓인 대화 자료 확인)·근거 원문 조회·그래프 사용량에 쓴다. 없으면 그 기능만 줄어든다.
         self._conversations = conversations
         self.graph_enabled = graph_enabled  # D 조건을 쓸 수 있는가 (NEO4J_URI)
+        # 말투 프로필 쓰임새 (둘 다 꺼 두면 프로필을 계산하지 않고 결과가 예전과 글자까지 같다).
+        # 블록: 저장된 설정이 없는 요청의 프롬프트에 [관계 상태]를 붙인다 (rewrite-v4부터 자리가 있다).
+        # 경고: 저장된 설정이 있는 요청의 결과에 설정과 관찰이 어긋나는 점을 덧붙인다.
+        self._register_state_block = register_state_block
+        self._register_warnings = register_warnings
         # 진행 중(모델 호출이 끝나지 않은) 요청 — 프로세스 메모리. 한도 계산에만 쓴다.
         self._locks = KeyedLocks()
         self._in_flight: dict[str, int] = {}
@@ -136,6 +205,52 @@ class RewriteService:
                 if stats.episodes >= 1:
                     return "C"
         return "B" if persona is not None else "A"
+
+    async def _register_profile(self, inp: RewriteInput, contact: Contact) -> RegisterProfile | None:
+        """이 상대에 대한 내 말투 프로필 (요청의 `as_of` 이전 메시지만). 어떤 이유로든 못 만들면 None.
+
+        프로필은 덧붙이는 정보다 — 여기서 난 오류로 첨삭이 실패해서는 안 된다. 오류는 종류만 남긴다
+        (예외 문장에는 대화 원문이 섞일 수 있다).
+        """
+        try:
+            from app.ai.register import build_profile
+
+            as_of = inp.as_of
+            if as_of is not None and as_of.tzinfo is None:
+                as_of = as_of.replace(tzinfo=UTC)
+            if self._conversations is None:
+                return None
+            from app.ai.register_source import own_messages, recent_before
+
+            # 제안과 같은 입력(as_of 이전, 최근 500건)만 넘긴다. 정규식 계산이라 이벤트 루프 밖에서 돈다 —
+            # 요청마다 불리므로 루프에서 돌리면 가져온 대화가 많은 상대의 첨삭이 서버 전체를 세운다.
+            messages = recent_before(await own_messages(self._conversations, inp.user_id, contact.id), as_of)
+            if not messages:
+                return None
+            return await asyncio.to_thread(build_profile, messages, contact.alias, as_of=as_of)
+        except Exception as exc:  # noqa: BLE001 - 프로필 계산의 어떤 장애든 프로필 없이 계속한다
+            log.warning("register profile failed, continuing without it: %s", exception_kind(exc))
+            return None
+
+    @staticmethod
+    def _state_block(profile: RegisterProfile) -> str | None:
+        """[관계 상태] 블록 본문. 못 만들면 블록 없이 첨삭한다."""
+        try:
+            from app.ai.register_block import render_state_block
+
+            return render_state_block(profile)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("register state block failed: %s", exception_kind(exc))
+            return None
+
+    @staticmethod
+    def _persona_warnings(profile: RegisterProfile, persona: PersonaSettings) -> list[str]:
+        """설정과 관찰이 어긋나는 점. 못 만들면 경고 없이 결과를 낸다."""
+        try:
+            return persona_register_warnings(profile, persona)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("register warnings failed: %s", exception_kind(exc))
+            return []
 
     async def _admit(self, user_id: str, day: date) -> None:
         """한도 확인 → 요청 수 예약 → 진행 중 등록. 통과하면 반드시 `_release`로 짝을 맞춘다.
@@ -228,8 +343,20 @@ class RewriteService:
         day = usage_day(offset_hours=self._settings.usage_day_offset_hours)
         await self._admit(inp.user_id, day)
         try:
-            run_input = inp.model_copy(update={"condition": condition})
+            # 말투 프로필은 필요한 요청에만 계산한다. 설정이 없으면(auto가 C·D를 고른 경우) 블록, 설정이
+            # 있으면 경고 — 한 요청에 둘이 함께 나가지 않는다. A는 상대 정보를 쓰지 않는 기준선이라 뺀다.
+            want_block = self._register_state_block and pv is None and condition in ("C", "D")
+            want_warnings = self._register_warnings and pv is not None and condition != "A"
+            profile = await self._register_profile(inp, contact) if (want_block or want_warnings) else None
+            block = self._state_block(profile) if (want_block and profile is not None) else None
+            # register_block은 서버만 채운다 — 호출 쪽이 넣어 온 값은 쓰지 않는다.
+            run_input = inp.model_copy(update={"condition": condition, "register_block": block})
             result = await self._workflow.run(run_input, contact, pv.settings if pv else None)
+            if want_warnings and profile is not None and pv is not None:
+                extra = [w for w in self._persona_warnings(profile, pv.settings) if w not in result.warnings]
+                if extra:
+                    # 문장(result_text)과 검증 결과는 그대로 두고 경고만 덧붙인다.
+                    result = result.model_copy(update={"warnings": [*result.warnings, *extra]})
             # 실패·시간 초과한 호출은 실제 토큰 수를 모른다 — 보낸 프롬프트만큼의 추정치를 입력에 더한다.
             input_tokens = result.token_usage.get("input_tokens", 0) + result.token_usage.get(
                 "estimated_input_tokens", 0

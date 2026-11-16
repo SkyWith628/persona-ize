@@ -156,7 +156,10 @@ def test_suggestion_api_without_graph_or_nodes_is_unchanged(client: TestClient) 
     _import(client, contact["id"], ["밥 먹었어", "그래 가자", "축하해", "네 알겠습니다", "공유드립니다"])
     url = f"/v1/contacts/{contact['id']}/persona/suggestion"
     plain = client.get(url, headers=HEADERS).json()  # 그래프 꺼짐
-    assert all(s["source"] == "messages" and s["since"] is None for s in plain["signals"])
+    # 그래프 근거는 없다. 말투 프로필 근거(register, 기본 켜짐)는 그래프와 무관하게 나온다 — 이 이력은
+    # 반말 3건 → 합쇼체 2건이라 register가 격식을 제안한다 (2026-11-16 이전에는 messages만 있었다).
+    assert all(s["source"] != "graph" for s in plain["signals"])
+    assert all(s["since"] is None for s in plain["signals"] if s["source"] == "messages")
 
     container = client.app.state.container  # type: ignore[attr-defined]
     # 상대 노드가 없다 / 내 노드가 없다 → 메시지 근거만
