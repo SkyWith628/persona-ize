@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, status
@@ -11,8 +11,11 @@ from app.api.deps import AppState, State, UserId
 from app.api.schemas import (
     ContactCreate,
     ContactDeletionOut,
+    ContactGraphOut,
     ContactOut,
     ContactUpdate,
+    GraphEdgeOut,
+    GraphNodeOut,
     PersonaOut,
     PersonaPut,
     PersonaSignalOut,
@@ -140,6 +143,48 @@ async def suggest_persona_settings(contact_id: UUID, user_id: UserId, state: Sta
         settings=settings,
         signals=[PersonaSignalOut(field=s.field, value=s.value, reason=s.reason) for s in signals],
     )
+
+
+@router.get("/{contact_id}/graph", response_model=ContactGraphOut, summary="상대 주변 맥락 그래프")
+async def get_contact_graph(contact_id: UUID, user_id: UserId, state: State) -> ContactGraphOut:
+    """상대 노드와 그 상대가 관여한 사건에 닿은 사실들. 유효한 사실 먼저, 그 안에서는 최근 순."""
+    contact = await state.contacts.get(user_id, contact_id)
+    if state.graph_store is None:
+        return ContactGraphOut(enabled=False)
+    # 검색기와 같은 이름으로 찾는다 — 상대 이름을 바꿔도 그래프에는 처음 수집한 이름이 남는다 (0009).
+    center = await state.graph_store.find_entity_uuid(user_id, contact.name_in_graph)
+    if center is None:
+        return ContactGraphOut(enabled=True)
+    hood = await state.graph_store.neighborhood(user_id, center)
+    now = datetime.now(UTC)
+    oldest = datetime.min.replace(tzinfo=UTC)
+    edges = [
+        GraphEdgeOut(
+            id=e.uuid,
+            source=e.source_node_uuid,
+            target=e.target_node_uuid,
+            relation=e.name,
+            fact=e.fact,
+            valid_at=e.valid_at,
+            invalid_at=e.invalid_at,
+            current=e.invalid_at is None or e.invalid_at > now,
+        )
+        for e in hood.edges
+    ]
+    edges.sort(key=lambda e: (e.current, e.valid_at or oldest, e.id), reverse=True)
+    nodes = [
+        GraphNodeOut(
+            id=n.uuid,
+            name=n.name,
+            kind=n.kind if n.kind in ("person", "event") else "other",  # type: ignore[arg-type]
+            summary=n.summary,
+            event_type=n.event_type,
+            importance=n.importance,
+            is_contact=n.uuid == center,
+        )
+        for n in sorted(hood.nodes, key=lambda n: (n.uuid != center, n.kind, n.name))
+    ]
+    return ContactGraphOut(enabled=True, center_id=center, nodes=nodes, edges=edges)
 
 
 @router.delete("/{contact_id}", response_model=ContactDeletionOut)

@@ -8,12 +8,23 @@
 
 /* Begin PBXBuildFile section */
 		0478ABC65A20EFFF015255FE /* KeyboardMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = A477A2B5C3ACD02D7F028452 /* KeyboardMessage.swift */; };
+		0B803EB1CC1968465E83F220 /* ComposeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D676CC6B0F184F621B2D3B1 /* ComposeView.swift */; };
 		1BEE14D0D75C8C11D4B4D676 /* PersonaKeyboard.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = AB1AE5CAF335B93CE53F90D7 /* PersonaKeyboard.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		232B6291DAF673487B62763A /* ContactsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAAA0B61FFEE36ED78B0848C /* ContactsView.swift */; };
 		238F21182C1219B6C2BC2155 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = EF7BB4E1880DB646D5D3BA09 /* Assets.xcassets */; };
+		2BAD3D929927ED401E21B5C9 /* ImportParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72CC54FD92EDDDBDA4BE8660 /* ImportParser.swift */; };
+		38BB4CBF2F67AE78112821CB /* HistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA71B1FF087D052BF97AF339 /* HistoryView.swift */; };
+		6252F81305D446861C2B6214 /* AccountView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D1E5E4FB150A18EF37F8615 /* AccountView.swift */; };
+		82B69B66A9BF6F9AFA9E2201 /* ImportParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D02744E7766F1F302B2886AD /* ImportParserTests.swift */; };
+		84EC4A1FCA087352CD0B8026 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A4171FFD049740E668E8666 /* Models.swift */; };
 		8CF9B06274D9CF74F9B9342F /* KeyboardMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = A477A2B5C3ACD02D7F028452 /* KeyboardMessage.swift */; };
+		8E46E8D7409AC5CE0FA27284 /* ContactGraphView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50B090C82E69E9171A208558 /* ContactGraphView.swift */; };
 		9B70E05335D615D4C86E74B8 /* API.swift in Sources */ = {isa = PBXBuildFile; fileRef = 773518E568FD0C17A2B259C6 /* API.swift */; };
 		CE74257DE59EC0A74A7F07CC /* KeyboardController.swift in Sources */ = {isa = PBXBuildFile; fileRef = CACE38E6845FA3BA652D0016 /* KeyboardController.swift */; };
 		E3DF94799C566F25BE3F006B /* PersonaApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63C0760AE82A2E59E63C00B8 /* PersonaApp.swift */; };
+		F04E99E38678FFFEF0675296 /* KeyboardLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13FC5556657E000B7CA763ED /* KeyboardLink.swift */; };
+		FC1755DFC8B089D67EAF023C /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A4171FFD049740E668E8666 /* Models.swift */; };
+		FEAD15EF0D375FAA2AB90FEC /* KeyboardLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13FC5556657E000B7CA763ED /* KeyboardLink.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -23,6 +34,13 @@
 			proxyType = 1;
 			remoteGlobalIDString = 89315CEE17A869112531BDB6;
 			remoteInfo = PersonaKeyboard;
+		};
+		79212F1E7B9B924714CF759C /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 3E891787503FF9B7C1A7538D /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = F6396991FF8525220CBA804C;
+			remoteInfo = PersonaIze;
 		};
 /* End PBXContainerItemProxy section */
 
@@ -41,24 +59,44 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		003502A261D4996C76691F35 /* PersonaIzeTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = PersonaIzeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		09688CC54F3A0C100BC6D1C5 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		12D5A4735F54EFA12C6A72CF /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		13FC5556657E000B7CA763ED /* KeyboardLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardLink.swift; sourceTree = "<group>"; };
+		1D1E5E4FB150A18EF37F8615 /* AccountView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountView.swift; sourceTree = "<group>"; };
 		21D15657CF1892500780613C /* PersonaIze.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = PersonaIze.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		2A4171FFD049740E668E8666 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		50B090C82E69E9171A208558 /* ContactGraphView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactGraphView.swift; sourceTree = "<group>"; };
 		63C0760AE82A2E59E63C00B8 /* PersonaApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonaApp.swift; sourceTree = "<group>"; };
+		72CC54FD92EDDDBDA4BE8660 /* ImportParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImportParser.swift; sourceTree = "<group>"; };
 		773518E568FD0C17A2B259C6 /* API.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = API.swift; sourceTree = "<group>"; };
+		7D676CC6B0F184F621B2D3B1 /* ComposeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposeView.swift; sourceTree = "<group>"; };
 		A477A2B5C3ACD02D7F028452 /* KeyboardMessage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardMessage.swift; sourceTree = "<group>"; };
+		AAAA0B61FFEE36ED78B0848C /* ContactsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactsView.swift; sourceTree = "<group>"; };
 		AB1AE5CAF335B93CE53F90D7 /* PersonaKeyboard.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = PersonaKeyboard.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		AB64B4FC4B755A0344DD0C95 /* App.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = App.entitlements; sourceTree = "<group>"; };
 		AF241E3315A6E054AA49B6FA /* Keyboard.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Keyboard.entitlements; sourceTree = "<group>"; };
 		CACE38E6845FA3BA652D0016 /* KeyboardController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardController.swift; sourceTree = "<group>"; };
+		D02744E7766F1F302B2886AD /* ImportParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImportParserTests.swift; sourceTree = "<group>"; };
+		DA71B1FF087D052BF97AF339 /* HistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryView.swift; sourceTree = "<group>"; };
 		EF7BB4E1880DB646D5D3BA09 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
+		009D1D47158603989DB55980 /* Tests */ = {
+			isa = PBXGroup;
+			children = (
+				D02744E7766F1F302B2886AD /* ImportParserTests.swift */,
+			);
+			path = Tests;
+			sourceTree = "<group>";
+		};
 		11DE9CCABDCCB2A94B67456D /* Shared */ = {
 			isa = PBXGroup;
 			children = (
+				13FC5556657E000B7CA763ED /* KeyboardLink.swift */,
 				A477A2B5C3ACD02D7F028452 /* KeyboardMessage.swift */,
+				2A4171FFD049740E668E8666 /* Models.swift */,
 			);
 			path = Shared;
 			sourceTree = "<group>";
@@ -67,6 +105,7 @@
 			isa = PBXGroup;
 			children = (
 				21D15657CF1892500780613C /* PersonaIze.app */,
+				003502A261D4996C76691F35 /* PersonaIzeTests.xctest */,
 				AB1AE5CAF335B93CE53F90D7 /* PersonaKeyboard.appex */,
 			);
 			name = Products;
@@ -78,6 +117,7 @@
 				95AF86B2BAFFB06DD99B87FF /* App */,
 				DF4DBE8D3454EF91B3B5D93E /* Keyboard */,
 				11DE9CCABDCCB2A94B67456D /* Shared */,
+				009D1D47158603989DB55980 /* Tests */,
 				40F7C4D42F5DD24D6FF51DE5 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -85,9 +125,15 @@
 		95AF86B2BAFFB06DD99B87FF /* App */ = {
 			isa = PBXGroup;
 			children = (
+				1D1E5E4FB150A18EF37F8615 /* AccountView.swift */,
 				773518E568FD0C17A2B259C6 /* API.swift */,
 				AB64B4FC4B755A0344DD0C95 /* App.entitlements */,
 				EF7BB4E1880DB646D5D3BA09 /* Assets.xcassets */,
+				7D676CC6B0F184F621B2D3B1 /* ComposeView.swift */,
+				50B090C82E69E9171A208558 /* ContactGraphView.swift */,
+				AAAA0B61FFEE36ED78B0848C /* ContactsView.swift */,
+				DA71B1FF087D052BF97AF339 /* HistoryView.swift */,
+				72CC54FD92EDDDBDA4BE8660 /* ImportParser.swift */,
 				12D5A4735F54EFA12C6A72CF /* Info.plist */,
 				63C0760AE82A2E59E63C00B8 /* PersonaApp.swift */,
 			);
@@ -107,6 +153,24 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		165A7A7DFD83B184C8546EF2 /* PersonaIzeTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E43B1A3CC84A6AD9D6848855 /* Build configuration list for PBXNativeTarget "PersonaIzeTests" */;
+			buildPhases = (
+				452D1B3E55C120D1411DCEBF /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A8C8A316D34109A6FE4BD130 /* PBXTargetDependency */,
+			);
+			name = PersonaIzeTests;
+			packageProductDependencies = (
+			);
+			productName = PersonaIzeTests;
+			productReference = 003502A261D4996C76691F35 /* PersonaIzeTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 		89315CEE17A869112531BDB6 /* PersonaKeyboard */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 7F60BE40B289BF583FE07852 /* Build configuration list for PBXNativeTarget "PersonaKeyboard" */;
@@ -153,6 +217,9 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
+					165A7A7DFD83B184C8546EF2 = {
+						ProvisioningStyle = Automatic;
+					};
 					89315CEE17A869112531BDB6 = {
 						ProvisioningStyle = Automatic;
 					};
@@ -176,6 +243,7 @@
 			projectRoot = "";
 			targets = (
 				F6396991FF8525220CBA804C /* PersonaIze */,
+				165A7A7DFD83B184C8546EF2 /* PersonaIzeTests */,
 				89315CEE17A869112531BDB6 /* PersonaKeyboard */,
 			);
 		};
@@ -193,12 +261,22 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		452D1B3E55C120D1411DCEBF /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				82B69B66A9BF6F9AFA9E2201 /* ImportParserTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		5367830CE7117ACC71621A00 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 				CE74257DE59EC0A74A7F07CC /* KeyboardController.swift in Sources */,
+				F04E99E38678FFFEF0675296 /* KeyboardLink.swift in Sources */,
 				0478ABC65A20EFFF015255FE /* KeyboardMessage.swift in Sources */,
+				84EC4A1FCA087352CD0B8026 /* Models.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -207,7 +285,15 @@
 			buildActionMask = 2147483647;
 			files = (
 				9B70E05335D615D4C86E74B8 /* API.swift in Sources */,
+				6252F81305D446861C2B6214 /* AccountView.swift in Sources */,
+				0B803EB1CC1968465E83F220 /* ComposeView.swift in Sources */,
+				8E46E8D7409AC5CE0FA27284 /* ContactGraphView.swift in Sources */,
+				232B6291DAF673487B62763A /* ContactsView.swift in Sources */,
+				38BB4CBF2F67AE78112821CB /* HistoryView.swift in Sources */,
+				2BAD3D929927ED401E21B5C9 /* ImportParser.swift in Sources */,
+				FEAD15EF0D375FAA2AB90FEC /* KeyboardLink.swift in Sources */,
 				8CF9B06274D9CF74F9B9342F /* KeyboardMessage.swift in Sources */,
+				FC1755DFC8B089D67EAF023C /* Models.swift in Sources */,
 				E3DF94799C566F25BE3F006B /* PersonaApp.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -219,6 +305,11 @@
 			isa = PBXTargetDependency;
 			target = 89315CEE17A869112531BDB6 /* PersonaKeyboard */;
 			targetProxy = 56EA5DF02030F0ED5188F213 /* PBXContainerItemProxy */;
+		};
+		A8C8A316D34109A6FE4BD130 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = F6396991FF8525220CBA804C /* PersonaIze */;
+			targetProxy = 79212F1E7B9B924714CF759C /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -237,6 +328,40 @@
 				PRODUCT_BUNDLE_IDENTIFIER = "$(PERSONA_BUNDLE_ID)";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		224011EE883FA864591F4D13 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(PERSONA_BUNDLE_ID).tests";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/PersonaIze.app/PersonaIze";
+			};
+			name = Release;
+		};
+		4CD24CC08FCDD02CA0CB60BA /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(PERSONA_BUNDLE_ID).tests";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/PersonaIze.app/PersonaIze";
 			};
 			name = Debug;
 		};
@@ -448,6 +573,15 @@
 			buildConfigurations = (
 				5281A57C8DAB7A3660F4A1E2 /* Debug */,
 				5FF508A33C5B10FAEB856626 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		E43B1A3CC84A6AD9D6848855 /* Build configuration list for PBXNativeTarget "PersonaIzeTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				4CD24CC08FCDD02CA0CB60BA /* Debug */,
+				224011EE883FA864591F4D13 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;

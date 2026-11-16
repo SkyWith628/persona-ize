@@ -32,3 +32,6 @@ Thumbs.db
 
 # 블라인드 평가 정답 키 (채점 끝날 때까지 비공개)
 evals/blind/*-key.csv
+
+# Xcode 사용자별 상태
+xcuserdata/
