@@ -377,6 +377,119 @@ async def test_delete_conversation_removes_rows_episodes_and_graph() -> None:
         await svc.delete_conversation("someone-else", c2.id)
 
 
+def _rel(uuid: str, fact: str, episodes: list[str], valid_at=None, invalid_at=None) -> GraphEdgeHit:  # noqa: ANN001
+    """나(node-me)와 상대(node-peer) 사이의 Relationship 사실."""
+    return GraphEdgeHit(uuid, "Relationship", fact, valid_at, invalid_at, episodes, "node-me", "node-peer")
+
+
+async def _state_setup():  # noqa: ANN202
+    """동기가 10/17에 파트장이 되어 말투가 바뀐 대화 (E004). 검색은 초안과 비슷한 '점심'만 돌려준다."""
+    contacts = InMemoryContactRepo()
+    peer = await contacts.create("u", "이서연", "colleague")
+    t = lambda d, h=9: datetime(2026, 10, d, h, tzinfo=UTC)  # noqa: E731
+    lunch = _edge("lunch", "이서연이 점심을 제안했다", ["e1"], valid_at=t(7), src="node-peer", dst="ev-lunch")
+    store = FakeGraphStore(
+        entities={"이서연": "node-peer"},
+        refs={
+            "e1": EpisodeRef("e1", "c3:m01", t(7)),
+            "e2": EpisodeRef("e2", "c3:m04", t(7, 10)),
+            "e5": EpisodeRef("e5", "c3:m05", t(17)),
+            "e6": EpisodeRef("e6", "c3:m06", t(17, 10)),
+            "e9": EpisodeRef("e9", "c3:m09", t(21)),
+            "e10": EpisodeRef("e10", "c3:m10", t(21, 10)),
+        },
+        edges=[
+            lunch,
+            _rel(
+                "r-banmal",
+                "김민수와 이서연은 반말을 쓰는 동기다",
+                ["e2"],
+                valid_at=t(7, 10),
+                invalid_at=t(19),
+            ),
+            _rel("r-congrats", "김민수는 회사에서 존댓말을 써야겠다고 했다", ["e6"], valid_at=t(17, 10)),
+            _rel("r-older", "김민수가 이서연의 발령을 축하했다", ["e5"], valid_at=t(17)),
+            _rel(
+                "r-title",
+                "김민수가 이서연을 '파트장님'이라 부르며 존댓말을 쓴다",
+                ["e10"],
+                valid_at=t(21, 10),
+            ),
+            # 다른 상대와의 관계 사실 — 상대 노드에 닿지 않으므로 슬롯에 들지 않는다
+            GraphEdgeHit(
+                "r-other", "Relationship", "김민수와 최유진은 친구다", t(1), None, [], "node-me", "node-x"
+            ),
+        ],
+    )
+    store.search = _search_returning([lunch])  # type: ignore[method-assign]
+    return contacts, peer, store, t
+
+
+def _search_returning(hits: list[GraphEdgeHit]):  # noqa: ANN202
+    async def search(query, group_id, center_node_uuid, limit) -> list[GraphEdgeHit]:  # noqa: ANN001
+        return list(hits)
+
+    return search
+
+
+async def test_graph_retriever_puts_relationship_state_before_query_hits() -> None:
+    contacts, peer, store, t = await _state_setup()
+    r = GraphContextRetriever(store, contacts, top_k=4)
+    got = await r.retrieve(
+        user_id="u", contact_id=peer.id, draft_text="어제는 제가 좀 예민했던 것 같아요", situation="사과"
+    )
+    # 가장 최근 관계 사실 3건(최근 순) → 질의 검색 결과. 오래된 반말 사실(r-banmal)은 밀려난다
+    assert [e.id for e in got] == ["r-title", "r-congrats", "r-older", "lunch"]
+    assert got[0].text == "김민수가 이서연을 '파트장님'이라 부르며 존댓말을 쓴다"
+    assert got[0].source_message_ids == ["c3:m10"] and got[0].sent_at == t(21, 10)
+    assert all(e.purpose == "context" and e.speaker_role == "graph" for e in got)
+    assert r.version == "graph-context-v3"
+
+
+async def test_graph_retriever_relationship_state_respects_as_of() -> None:
+    contacts, peer, store, t = await _state_setup()
+    r = GraphContextRetriever(store, contacts, top_k=4)
+    # 10/18 시점: 호칭 변경(10/21)은 아직 모른다
+    got = await r.retrieve(user_id="u", contact_id=peer.id, draft_text="미안", situation="", as_of=t(18))
+    assert [e.id for e in got] == ["r-congrats", "r-older", "r-banmal", "lunch"]
+    # 10/8 시점: 발령 전 — 반말 사실만 유효
+    got = await r.retrieve(user_id="u", contact_id=peer.id, draft_text="미안", situation="", as_of=t(8))
+    assert [e.id for e in got] == ["r-banmal", "lunch"]
+    assert got[0].text == "김민수와 이서연은 반말을 쓰는 동기다"
+
+
+async def test_graph_retriever_relationship_state_dedupes_and_can_be_turned_off() -> None:
+    contacts, peer, store, t = await _state_setup()
+    # 질의 검색이 관계 사실과 같은 것·같은 메시지에서 나온 것을 돌려줘도 한 번만 들어간다
+    same_fact = next(e for e in store.edges if e.uuid == "r-title")
+    same_source = _edge(
+        "ev-same-msg", "이서연이 문서 정리를 부탁했다", ["e10"], src="node-peer", dst="ev-doc"
+    )
+    store.search = _search_returning([same_fact, same_source])  # type: ignore[method-assign]
+    got = await GraphContextRetriever(store, contacts, top_k=4).retrieve(
+        user_id="u", contact_id=peer.id, draft_text="미안", situation=""
+    )
+    assert [e.id for e in got] == ["r-title", "r-congrats", "r-older"]
+
+    # 슬롯을 끄면 질의 검색만 (v2 동작)
+    off = GraphContextRetriever(store, contacts, top_k=4, state_slots=False)
+    got = await off.retrieve(user_id="u", contact_id=peer.id, draft_text="미안", situation="")
+    assert [e.id for e in got] == ["r-title"]  # 같은 메시지에서 나온 둘째 사실은 v2에서도 하나만
+
+
+async def test_graph_retriever_survives_a_failing_relationship_lookup() -> None:
+    contacts, peer, store, _ = await _state_setup()
+
+    async def boom(group_id, node_uuid):  # noqa: ANN001, ANN202
+        raise RuntimeError("neo4j down")
+
+    store.neighborhood = boom  # type: ignore[method-assign]
+    got = await GraphContextRetriever(store, contacts, top_k=4).retrieve(
+        user_id="u", contact_id=peer.id, draft_text="미안", situation=""
+    )
+    assert [e.id for e in got] == ["lunch"]  # 관계 상태 없이 질의 검색 결과는 그대로
+
+
 async def test_graph_retriever_dedupes_facts_from_same_source() -> None:
     contacts = InMemoryContactRepo()
     boss = await contacts.create("u", "박지현", "superior")
@@ -449,7 +562,7 @@ async def test_graph_retriever_reranks_by_query_similarity_and_recency() -> None
     assert ids[0] in ("sched-new", "sched-old") and ids[:2] != ["generic", "sched-old"]
     assert "generic" not in ids or ids.index("generic") == len(ids) - 1  # 무관한 사실은 꼴찌이거나 버려진다
     assert all(e.score is not None for e in got) and got[0].score >= got[-1].score
-    assert r.version == "graph-context-v2"
+    assert r.version == "graph-context-v3"
 
     # 임베더 없으면 v1 동작: Graphiti 순위 그대로, 점수 없음
     plain = GraphContextRetriever(store, contacts, top_k=4)

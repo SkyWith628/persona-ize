@@ -14,16 +14,29 @@
   상위에 왔다. 남은 후보를 **질의-사실 임베딩 유사도(로컬 e5) + 최근성**으로 다시 매기고, 1위보다 많이
   떨어지는 사실은 버린다. LLM 호출은 없다.
 - 결과 `text`는 사실 문장 그대로. 프롬프트의 [사실 맥락] 블록에 들어가며 "어조 조정에만 사용"한다.
+- 관계 상태 슬롯(v3, 11-16): 위 검색은 **초안과 비슷한 사실**을 고른다. 그런데 어조를 정하는 것은 초안과
+  비슷한 사실이 아니라 지금의 관계다 — "어제 예민했어요, 미안합니다"(E004)에 점심 제안이 뽑히고, 정작 필요한
+  "'파트장님'이라 부르며 존댓말을 쓴다"는 빠졌다. 그래서 질의와 무관하게 **상대 노드에 닿은 Relationship
+  사실 가운데 가장 최근 `STATE_RECENT`건**을 먼저 넣고, 그 뒤에 질의 검색 결과를 둔다. LLM 호출은 없다.
+  - **무효화 여부는 보지 않는다.** 로컬 그래프 둘(demo·eval, 합성 36건)에서 무효화된 사실 26건 중 11건이
+    유효 시각 1시간 안에 무효화됐다 — 같은 대화 안에서 다음 메시지가 앞 사실을 덮어쓴 추출 부산물이다.
+    "'파트장님'으로 존댓말로 대한다", "공식 자리에서는 존댓말을 쓰기로 했다"처럼 지금도 참인 사실이 무효로
+    찍혀 있어, 무효화를 '관계가 바뀌었다'는 신호로 쓰면 틀린 안내가 된다(처음엔 그렇게 만들었다가 실측 뒤
+    뺐다). 최근 순으로 넣으면 실제로 바뀐 경우에도 새 사실이 함께 들어가고, 프롬프트에 날짜가 찍힌다.
+  - 질의 검색 쪽의 무효화 필터(위)는 그대로다 — 바꾸려면 평가로 따로 확인한다.
+  - `as_of` 이후 출처는 여기서도 버린다. `state_slots=False`면 v2와 같다.
 """
 
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
 
 from app.ai.embeddings import Embedder, cosine
+from app.domain.conversation import exception_kind
 from app.domain.rewrite import RetrievedExample
 from app.graph.store import EventInfo, GraphEdgeHit, GraphStore
 from app.repositories.base import ContactRepo
@@ -46,6 +59,10 @@ EVENT_TYPE_WEIGHT = {
     "status": 0.75,
 }
 DEFAULT_IMPORTANCE = 5  # 모델이 importance를 안 채운 사건
+STATE_EDGE_NAME = "Relationship"  # schema.EDGE_TYPES — 사람↔사람 관계·말투·호칭 사실
+STATE_RECENT = 3  # 가장 최근 관계 사실 몇 건을 질의와 무관하게 넣는가
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -59,7 +76,8 @@ class _Candidate:
 
 
 class GraphContextRetriever:
-    version = "graph-context-v2"  # v1: Graphiti 순위 그대로 / v2: 유사도+최근성 재정렬
+    # v1: Graphiti 순위 그대로 / v2: 유사도+최근성 재정렬 / v3: 관계 상태 슬롯을 앞에 둔다
+    version = "graph-context-v3"
 
     def __init__(
         self,
@@ -68,12 +86,14 @@ class GraphContextRetriever:
         top_k: int = 4,
         oversample: int = 4,
         embedder: Embedder | None = None,
+        state_slots: bool = True,
     ) -> None:
         self._store = store
         self._contacts = contacts
         self._top_k = top_k
         self._oversample = oversample
         self._embedder = embedder  # None이면 재정렬 없이 Graphiti 순위를 쓴다 (v1 동작)
+        self._state_slots = state_slots  # False면 질의 검색만 (v2 동작)
 
     async def retrieve(
         self,
@@ -96,14 +116,19 @@ class GraphContextRetriever:
             # 상대 노드가 없으면 '이 상대와 관련된 사실'을 가려낼 기준이 없다. 필터 없이 돌려주면
             # 다른 상대의 사실이 섞인다 — 사실 맥락 없이 간다 (2026-11-11 검토).
             return []
+        cutoff = as_of or datetime.now(UTC)
+        state = await self._relationship_state(user_id, center, cutoff) if self._state_slots else []
         hits = await self._store.search(query, user_id, center, k * self._oversample)
         allowed: set[str] | None = {center} | await self._store.event_neighbors(user_id, center)
         refs = await self._store.episode_refs({u for h in hits for u in h.episode_uuids})
-        cutoff = as_of or datetime.now(UTC)
 
         candidates: list[_Candidate] = []
-        seen_sources: set[frozenset[str]] = set()
+        state_ids = {s.id for s in state}
+        # 관계 상태로 이미 넣은 메시지에서 나온 사실은 질의 검색에서 다시 넣지 않는다
+        seen_sources: set[frozenset[str]] = {frozenset(s.source_message_ids) for s in state} - {frozenset()}
         for rank, h in enumerate(hits):
+            if h.uuid in state_ids:
+                continue
             if allowed is not None and not ({h.source_node_uuid, h.target_node_uuid} & allowed):
                 continue
             eps = [refs[u] for u in h.episode_uuids if u in refs]
@@ -128,7 +153,7 @@ class GraphContextRetriever:
             candidates = await self._rerank(query, candidates, cutoff, events)
         chosen = candidates[:k]
 
-        return [
+        return state + [
             RetrievedExample(
                 id=c.hit.uuid,
                 purpose="context",
@@ -140,6 +165,60 @@ class GraphContextRetriever:
             )
             for c in chosen
         ]
+
+    async def _relationship_state(
+        self, user_id: str, center: str, cutoff: datetime
+    ) -> list[RetrievedExample]:
+        """상대 노드에 닿은 Relationship 사실 가운데 가장 최근 `STATE_RECENT`건 (최근 순).
+
+        질의와 무관하다 — 어조는 초안의 주제가 아니라 지금의 관계가 정한다. 무효화 표시는 보지 않는다
+        (모듈 설명 참고). 이 조회가 실패해도 질의 검색은 계속한다 (사실 맥락 전체를 잃지 않게).
+        """
+        try:
+            hood = await self._store.neighborhood(user_id, center)
+            edges = [
+                e
+                for e in hood.edges
+                if e.name == STATE_EDGE_NAME and center in (e.source_node_uuid, e.target_node_uuid)
+            ]
+            refs = await self._store.episode_refs({u for e in edges for u in e.episode_uuids})
+        except Exception as exc:  # noqa: BLE001 - 부분 장애는 축소 동작
+            log.warning("relationship state lookup failed, continuing without it: %s", exception_kind(exc))
+            return []
+
+        recent: list[_Candidate] = []
+        for e in edges:
+            eps = [refs[u] for u in e.episode_uuids if u in refs]
+            times = [ep.valid_at for ep in eps if ep.valid_at is not None]
+            when = e.valid_at or (max(times) if times else None)
+            # 요청 시점 이후에 알게 된 사실은 쓰지 않는다 (평가의 미래 유출 방지)
+            if any(t >= cutoff for t in times) or (when is not None and when >= cutoff):
+                continue
+            recent.append(_Candidate(hit=e, when=when, source_ids=sorted(ep.name for ep in eps), rank=0))
+        oldest = datetime.min.replace(tzinfo=UTC)
+        recent.sort(key=lambda c: (c.when or oldest, c.hit.uuid), reverse=True)
+
+        out: list[RetrievedExample] = []
+        seen: set[frozenset[str]] = set()
+        for cand in recent:
+            if len(out) >= STATE_RECENT:
+                break
+            key = frozenset(cand.source_ids)
+            if key and key in seen:  # 같은 메시지에서 나온 관계 사실은 하나만
+                continue
+            seen.add(key)
+            out.append(
+                RetrievedExample(
+                    id=cand.hit.uuid,
+                    purpose="context",
+                    text=cand.hit.fact,
+                    speaker_role="graph",
+                    sent_at=cand.when,
+                    source_message_ids=cand.source_ids,
+                    score=None,
+                )
+            )
+        return out
 
     async def _rerank(
         self, query: str, candidates: list[_Candidate], cutoff: datetime, events: dict[str, EventInfo]
