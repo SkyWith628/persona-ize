@@ -13,6 +13,12 @@ C/D 조건은 과거 대화가 필요하다. `--dataset`(기본 data/synthetic/s
 임베딩은 EMBEDDING_PROVIDER(local=e5-small, 첫 실행에 모델 다운로드; `--embedding fake`로 빠른 점검).
 검색 기준 시각은 사례의 `as_of` 날짜 당일 끝(한국 시간)이다 — 그 날까지의 대화만 본다.
 
+맥락 지표 (2026-11-16) — 그래프(D)가 문장이 아니라 사실 맥락·경고로 드러나서, 그쪽을 따로 센다
+- `context_facts`·`context_msg_ids`: 프롬프트의 [사실 맥락]에 들어간 사실 문장과 그 출처 메시지.
+- `context_recall`: `relevant_msg_ids` 중 사실 맥락의 출처가 덮은 비율 (`recall`은 문체 예시까지 합친 값).
+- `context_hit`·`warning_hit`: 사례에 **선택 열** `expected_context`(`;`로 나눈 핵심어, 예: `파트장;존댓말`)가
+  있으면 그 핵심어가 사실 맥락 / 경고 문장에 나온 비율. 열이 없거나 비어 있으면 빈칸.
+
 결과: evals/results/eval-<시각>.csv (요약) + .jsonl (원시, 커밋 제외)
 """
 
@@ -30,6 +36,7 @@ from uuid import uuid4
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
 
+from app.ai.prompt import fit_examples  # noqa: E402
 from app.api.deps import AppState, build_state  # noqa: E402
 from app.core.config import Settings  # noqa: E402
 from app.domain.contact import Contact  # noqa: E402
@@ -116,6 +123,17 @@ def parse_as_of(raw: str) -> datetime | None:
         return None
     day = datetime.strptime(raw[:10], "%Y-%m-%d").replace(tzinfo=KST)
     return day + timedelta(days=1)
+
+
+def parse_keywords(raw: str) -> list[str]:
+    return [x.strip() for x in raw.replace(",", ";").split(";") if x.strip()]
+
+
+def keyword_hit(keywords: list[str], text: str) -> str:
+    """핵심어 가운데 본문에 나온 비율 (`0.50`). 핵심어가 없으면 빈칸."""
+    if not keywords:
+        return ""
+    return f"{sum(1 for k in keywords if k in text) / len(keywords):.2f}"
 
 
 def parse_ids(raw: str) -> set[str]:
@@ -222,6 +240,11 @@ async def _run_with_state(state: AppState, args: argparse.Namespace) -> Path:
         "recall",
         "warnings",
         "first_attempt_violations",
+        "context_facts",
+        "context_msg_ids",
+        "context_recall",
+        "context_hit",
+        "warning_hit",
     ]
     total = len(cases) * len(args.condition_list) * args.repeat
     done = 0
@@ -237,6 +260,7 @@ async def _run_with_state(state: AppState, args: argparse.Namespace) -> Path:
             persona = build_persona(character)
             relevant = parse_ids(case.get("relevant_msg_ids", ""))
             as_of = parse_as_of(case.get("as_of", ""))
+            expected_context = parse_keywords(case.get("expected_context") or "")
             for cond in args.condition_list:
                 for rep in range(1, args.repeat + 1):
                     inp = RewriteInput(
@@ -258,6 +282,14 @@ async def _run_with_state(state: AppState, args: argparse.Namespace) -> Path:
                     retrieved_ids = sorted({mid for ex in retrieved for mid in ex.source_message_ids})
                     recall = (
                         f"{len(relevant & set(retrieved_ids)) / len(relevant):.2f}"
+                        if relevant and cond in RETRIEVAL_CONDITIONS
+                        else ""
+                    )
+                    context = [ex for ex in fit_examples(retrieved) if ex.purpose == "context"]
+                    context_ids = sorted({mid for ex in context for mid in ex.source_message_ids})
+                    context_text = " | ".join(ex.text for ex in context)
+                    context_recall = (
+                        f"{len(relevant & set(context_ids)) / len(relevant):.2f}"
                         if relevant and cond in RETRIEVAL_CONDITIONS
                         else ""
                     )
@@ -291,6 +323,11 @@ async def _run_with_state(state: AppState, args: argparse.Namespace) -> Path:
                         )
                         if result.attempt_log
                         else "",
+                        "context_facts": context_text,
+                        "context_msg_ids": ";".join(context_ids),
+                        "context_recall": context_recall,
+                        "context_hit": keyword_hit(expected_context, context_text),
+                        "warning_hit": keyword_hit(expected_context, " | ".join(result.warnings)),
                     }
                     writer.writerow(row)
                     fjs.write(

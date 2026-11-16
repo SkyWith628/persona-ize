@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, status
 
-from app.ai.style_suggest import MAX_MESSAGES, suggest_persona
+from app.ai.style_suggest import MAX_MESSAGES, Signal, suggest_persona
 from app.api.deps import AppState, State, UserId
 from app.api.schemas import (
     ContactCreate,
@@ -23,8 +24,13 @@ from app.api.schemas import (
 )
 from app.core.errors import InvalidInputError, NotFoundError
 from app.domain.contact import Contact
-from app.domain.persona import PersonaVersion, default_persona
+from app.domain.conversation import exception_kind
+from app.domain.persona import PersonaSettings, PersonaVersion, default_persona
 from app.domain.usage import QuotaExceededError
+from app.graph.episodes import DEFAULT_ME_NAME
+from app.graph.persona_signals import graph_persona_signals
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/contacts", tags=["contacts"])
 
@@ -121,12 +127,17 @@ async def suggest_persona_settings(contact_id: UUID, user_id: UserId, state: Sta
     """이 상대에게 보낸 내 과거 메시지에서 문체 수치를 규칙으로 추정한다 (모델 호출 없음, 저장하지 않음).
 
     추정하지 않는 항목은 저장된 페르소나(없으면 관계 유형 기본값)의 값이다. 성격은 추정하지 않는다.
-    내 메시지가 5건보다 적으면 추정하지 않는다: `settings`는 null, `signals`는 빈 목록이고
-    `based_on_messages`에 본 메시지 수가 나온다.
+    내 메시지가 5건보다 적으면 메시지로는 추정하지 않는다: `based_on_messages`에 본 메시지 수가 나온다.
+
+    그래프가 켜져 있으면 **관계 사실의 시간 순 변화**에서 읽은 제안을 뒤에 붙인다 (`source: "graph"`,
+    `since`: 그 값이 처음 확인된 날). 내 메시지 전체를 한 덩어리로 보는 추정과 달리 "10/17부터 존댓말",
+    "10/21부터 '파트장님'"처럼 바뀐 시점을 말한다. 같은 항목이면 그래프 쪽이 `settings`에 반영된다(뒤에 온
+    근거가 이긴다). 그래프 조회가 실패하면 메시지 근거만 돌려준다.
     """
     contact = await state.contacts.get(user_id, contact_id)
     mine: list[tuple[datetime, str]] = []
-    for conv in await state.conversations.list(user_id, contact.id):
+    convs = await state.conversations.list(user_id, contact.id)
+    for conv in convs:
         mine.extend(
             (m.sent_at, m.text)
             for m in await state.conversations.list_messages(user_id, conv.id)
@@ -138,11 +149,43 @@ async def suggest_persona_settings(contact_id: UUID, user_id: UserId, state: Sta
     base = current.settings if current else default_persona(contact.relationship_type)
     # 메시지 500건에 정규식을 여러 번 돌린다 — 이벤트 루프 밖에서 계산한다.
     settings, signals = await asyncio.to_thread(suggest_persona, texts, base, contact.alias)
+    me_names = [conv.me_name or DEFAULT_ME_NAME for conv in convs] or [DEFAULT_ME_NAME]
+    graph_signals = await _graph_signals(state, user_id, contact, me_names, settings or base)
+    if graph_signals:
+        settings = (settings or base).model_copy(update={s.field: s.value for s in graph_signals})
+        signals = [*signals, *graph_signals]
     return PersonaSuggestionOut(
         based_on_messages=len(texts),
         settings=settings,
-        signals=[PersonaSignalOut(field=s.field, value=s.value, reason=s.reason) for s in signals],
+        signals=[
+            PersonaSignalOut(field=s.field, value=s.value, reason=s.reason, source=s.source, since=s.since)  # type: ignore[arg-type]
+            for s in signals
+        ],
     )
+
+
+async def _graph_signals(
+    state: AppState, user_id: str, contact: Contact, me_names: list[str], base: PersonaSettings
+) -> list[Signal]:
+    """그래프의 나 → 상대 관계 사실에서 읽은 갱신 제안. 그래프가 없거나 노드를 못 찾으면 빈 목록."""
+    if state.graph_store is None:
+        return []
+    try:
+        center = await state.graph_store.find_entity_uuid(user_id, contact.name_in_graph)
+        if center is None:
+            return []
+        me = None
+        for name in dict.fromkeys(me_names):  # 대화방마다 내 표시 이름이 다를 수 있다 — 처음 찾은 노드
+            me = await state.graph_store.find_entity_uuid(user_id, name)
+            if me is not None:
+                break
+        if me is None or me == center:
+            return []
+        facts = await state.graph_store.relationship_facts(user_id, me, center)
+    except Exception as exc:  # noqa: BLE001 - 제안은 부가 기능이다. 그래프 장애로 화면을 막지 않는다
+        log.warning("graph persona signals failed, continuing without them: %s", exception_kind(exc))
+        return []
+    return graph_persona_signals(facts, base)
 
 
 @router.get("/{contact_id}/graph", response_model=ContactGraphOut, summary="상대 주변 맥락 그래프")
