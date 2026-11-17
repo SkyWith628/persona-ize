@@ -27,15 +27,17 @@ final class KeyboardController: UIInputViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         content.axis = .vertical
-        content.spacing = 8
+        content.spacing = Theme.Space.s
         content.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(content)
+        // 키보드는 높이가 정해져 있어, 글자 크기 설정은 따르되 가장 큰 일반 크기까지만 키운다.
+        view.maximumContentSizeCategory = .extraExtraExtraLarge
         let height = view.heightAnchor.constraint(equalToConstant: 276)
         height.priority = .init(999)
         NSLayoutConstraint.activate([
             content.leadingAnchor.constraint(equalTo: view.layoutMarginsGuide.leadingAnchor),
             content.trailingAnchor.constraint(equalTo: view.layoutMarginsGuide.trailingAnchor),
-            content.topAnchor.constraint(equalTo: view.topAnchor, constant: 8),
+            content.topAnchor.constraint(equalTo: view.topAnchor, constant: Theme.Space.s),
             content.bottomAnchor.constraint(lessThanOrEqualTo: view.bottomAnchor, constant: -6),
             height
         ])
@@ -76,67 +78,79 @@ final class KeyboardController: UIInputViewController {
         case .picking: renderPicking()
         case .loading:
             let spinner = UIActivityIndicatorView(style: .medium)
+            spinner.color = Theme.Palette.accent
             spinner.startAnimating()
-            content.addArrangedSubview(row([spinner, label("\(link?.current?.alias ?? "상대")에게 맞게 다듬는 중…")], equal: false))
+            spinner.setContentHuggingPriority(.required, for: .horizontal)
+            let waiting = row([spinner, label("\(link?.current?.alias ?? "상대")에게 맞게 다듬는 중…")], equal: false)
+            waiting.spacing = Theme.Space.s
+            content.addArrangedSubview(waiting)
             content.addArrangedSubview(row([button("취소") { [weak self] in self?.task?.cancel(); self?.phase = .idle }]))
         case .result(let rewrite): renderResult(rewrite)
         case .kept(let rewrite): renderKept(rewrite)
         case .failed(let message):
-            content.addArrangedSubview(label(message, style: .headline))
-            content.addArrangedSubview(label("입력창의 초안은 그대로 남아 있어요.", color: .secondaryLabel))
+            content.addArrangedSubview(heading(message, symbol: "exclamationmark.circle.fill", tint: Theme.Palette.warn))
+            content.addArrangedSubview(label("입력창의 초안은 그대로 남아 있어요.", color: Theme.Palette.muted))
             content.addArrangedSubview(row([button("닫기") { [weak self] in self?.phase = .idle },
-                                            button("다시 시도", primary: true) { [weak self] in self?.start() }]))
+                                            button("다시 시도", kind: .primary) { [weak self] in self?.start() }]))
         }
     }
 
     /// M1: 맨 윗줄에 호출 버튼과 상대 바꾸기.
     private func renderIdle() {
+        var canRewrite = false
         if !hasFullAccess {
-            content.addArrangedSubview(label("설정 → 일반 → 키보드 → 키보드 → Persona_ize에서 ‘전체 접근 허용’을 켜면 입력창의 초안을 여기서 바로 다듬습니다.", color: .secondaryLabel))
+            content.addArrangedSubview(notice("설정 → 일반 → 키보드 → 키보드 → Persona_ize에서 ‘전체 접근 허용’을 켜면 입력창의 초안을 여기서 바로 다듬습니다.", symbol: "lock.fill"))
         } else if let link, let person = link.current {
+            canRewrite = true
             content.addArrangedSubview(row([
-                button("✦ \(person.alias)에게 맞게", primary: true) { [weak self] in self?.start() },
+                button("\(person.alias)에게 맞게", kind: .primary, symbol: "sparkles") { [weak self] in self?.start() },
                 button("상대 바꾸기") { [weak self] in self?.phase = .picking }
             ]))
         } else if link != nil {
-            content.addArrangedSubview(label("Persona_ize 앱의 상대 탭에서 페르소나를 저장한 상대가 있어야 다듬을 수 있어요.", color: .secondaryLabel))
+            content.addArrangedSubview(notice("Persona_ize 앱의 상대 탭에서 페르소나를 저장한 상대가 있어야 다듬을 수 있어요.", symbol: "person.crop.circle.badge.plus"))
         } else {
-            content.addArrangedSubview(label("Persona_ize 앱에서 로그인하면 입력창의 초안을 여기서 바로 다듬을 수 있어요.", color: .secondaryLabel))
+            content.addArrangedSubview(notice("Persona_ize 앱에서 로그인하면 입력창의 초안을 여기서 바로 다듬을 수 있어요.", symbol: "info.circle.fill"))
         }
         if let prepared = KeyboardMessage.read(), !prepared.isEmpty {
             let preview = label("앱에서 준비한 문장: " + prepared)
             preview.numberOfLines = 2
-            content.addArrangedSubview(preview)
-            content.addArrangedSubview(row([button("준비한 문장 넣기") { [weak self] in
+            content.addArrangedSubview(panel(preview, fill: Theme.Palette.accentSoft))
+            // 다듬기 버튼이 없는 상태에서는 이 버튼이 화면의 주 행동이다.
+            content.addArrangedSubview(row([button("준비한 문장 넣기", kind: canRewrite ? .secondary : .primary) { [weak self] in
                 guard KeyboardMessage.read() == prepared else { self?.render(); return }
                 self?.textDocumentProxy.insertText(prepared)
             }]))
         }
-        let next = button("🌐") {}
+        let next = button("", kind: .key, symbol: "globe") {}
         next.accessibilityLabel = "다음 키보드"
         next.addTarget(self, action: #selector(handleInputModeList(from:with:)), for: .allTouchEvents)
         var keys = [next]
         for symbol in ["?", "!", "공백", "지우기"] {
-            keys.append(button(symbol) { [weak self] in
-                if symbol == "지우기" { self?.textDocumentProxy.deleteBackward() }
+            let erase = symbol == "지우기"
+            let key = button(erase ? "" : symbol, kind: .key, symbol: erase ? "delete.left" : nil) { [weak self] in
+                if erase { self?.textDocumentProxy.deleteBackward() }
                 else { self?.textDocumentProxy.insertText(symbol == "공백" ? " " : symbol) }
-            })
+            }
+            if erase { key.accessibilityLabel = symbol }
+            keys.append(key)
         }
         content.addArrangedSubview(row(keys))
     }
 
     /// M2: 최근 상대가 먼저 오는 가로 목록.
     private func renderPicking() {
-        let close = button("✕") { [weak self] in self?.phase = .idle }
+        let close = button("", kind: .key, symbol: "xmark") { [weak self] in self?.phase = .idle }
         close.accessibilityLabel = "닫기"
-        close.widthAnchor.constraint(equalToConstant: 48).isActive = true
+        close.widthAnchor.constraint(equalToConstant: Theme.minTouch).isActive = true
         content.addArrangedSubview(row([label("누구에게 보내나요?", style: .headline), close], equal: false))
         let chips = UIStackView()
         chips.axis = .horizontal
-        chips.spacing = 8
+        chips.spacing = Theme.Space.s
         for person in link?.ordered ?? [] {
+            let current = person.id == link?.current?.id
             let chip = button(person.ready ? person.alias : "\(person.alias) (페르소나 없음)",
-                              primary: person.id == link?.current?.id) { [weak self] in self?.choose(person.id) }
+                              kind: current ? .primary : .secondary,
+                              symbol: current ? "checkmark" : nil) { [weak self] in self?.choose(person.id) }
             chip.isEnabled = person.ready
             chips.addArrangedSubview(chip)
         }
@@ -153,7 +167,7 @@ final class KeyboardController: UIInputViewController {
             scroll.heightAnchor.constraint(equalToConstant: 48)
         ])
         content.addArrangedSubview(scroll)
-        content.addArrangedSubview(label("상대를 새로 만들거나 말투를 바꾸려면 Persona_ize 앱을 여세요.", color: .secondaryLabel))
+        content.addArrangedSubview(label("상대를 새로 만들거나 말투를 바꾸려면 Persona_ize 앱을 여세요.", style: .footnote, color: Theme.Palette.muted))
     }
 
     /// M3: 추천 문장 → 지킨 내용 → 주의 → 넣기.
@@ -164,25 +178,29 @@ final class KeyboardController: UIInputViewController {
         text.adjustsFontSizeToFitWidth = true
         text.minimumScaleFactor = 0.7
         text.accessibilityLabel = "추천 문장: " + rewrite.result.result_text
-        content.addArrangedSubview(text)
+        // 높이가 모자라면 버튼·주의가 아니라 추천 문장이 먼저 줄어든다.
+        text.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+        content.addArrangedSubview(panel(text, fill: Theme.Palette.accentSoft))
         if !rewrite.result.preserved_items.isEmpty {
-            let kept = label(rewrite.result.preserved_items.map { "✓ " + $0.text }.joined(separator: "   "),
-                             style: .footnote, color: .systemGreen)
+            let items = rewrite.result.preserved_items.map(\.text)
+            let kept = label("", style: .footnote, color: Theme.Palette.ok)
+            kept.attributedText = checked(items, font: kept.font)
+            kept.accessibilityLabel = items.map { "✓ " + $0 }.joined(separator: "   ")
             kept.numberOfLines = 2
             content.addArrangedSubview(kept)
         }
         if !rewrite.result.warnings.isEmpty {
             let warning = label("확인해 주세요 · " + rewrite.result.warnings.joined(separator: " "), style: .footnote)
             warning.numberOfLines = 3
-            warning.backgroundColor = UIColor.systemYellow.withAlphaComponent(0.25)
-            content.addArrangedSubview(warning)
+            content.addArrangedSubview(panel(warning, symbol: "exclamationmark.triangle.fill", tint: Theme.Palette.warn,
+                                             fill: Theme.Palette.warnSoft, compact: true))
         }
         content.addArrangedSubview(row([
             button("다시 만들기") { [weak self] in self?.start() },
             button("초안 그대로") { [weak self] in self?.phase = .idle },
-            button("입력창에 넣기", primary: true) { [weak self] in self?.insert(rewrite) }
+            button("입력창에 넣기", kind: .primary) { [weak self] in self?.insert(rewrite) }
         ]))
-        content.addArrangedSubview(label("넣기만 해요. 전송은 직접 누릅니다." + usageLine, style: .caption2, color: .secondaryLabel))
+        content.addArrangedSubview(label("넣기만 해요. 전송은 직접 누릅니다." + usageLine, style: .caption2, color: Theme.Palette.muted))
     }
 
     /// M4: 검증에 실패해 추천하지 않은 경우.
@@ -193,10 +211,11 @@ final class KeyboardController: UIInputViewController {
         let detail = label(reasons.isEmpty ? "사실 보존을 확인하지 못해 추천하지 않았습니다." : reasons.joined(separator: "\n"),
                            style: .footnote)
         detail.numberOfLines = 5
-        content.addArrangedSubview(detail)
+        content.addArrangedSubview(panel(detail, symbol: "exclamationmark.triangle.fill", tint: Theme.Palette.warn,
+                                         fill: Theme.Palette.warnSoft))
         content.addArrangedSubview(row([button("닫기") { [weak self] in self?.phase = .idle },
-                                        button("다시 만들기", primary: true) { [weak self] in self?.start() }]))
-        content.addArrangedSubview(label("입력창의 초안은 그대로 있어요." + usageLine, style: .caption2, color: .secondaryLabel))
+                                        button("다시 만들기", kind: .primary) { [weak self] in self?.start() }]))
+        content.addArrangedSubview(label("입력창의 초안은 그대로 있어요." + usageLine, style: .caption2, color: Theme.Palette.muted))
     }
 
     private var usageLine: String {
@@ -268,7 +287,10 @@ final class KeyboardController: UIInputViewController {
 
     // MARK: 부품
 
-    private func label(_ text: String, style: UIFont.TextStyle = .subheadline, color: UIColor = .label) -> UILabel {
+    /// primary = 화면의 주 행동(강조색 면), secondary = 보조 행동, key = 기호·공백 같은 자판 키.
+    private enum ButtonKind { case primary, secondary, key }
+
+    private func label(_ text: String, style: UIFont.TextStyle = .subheadline, color: UIColor = Theme.Palette.ink) -> UILabel {
         let label = UILabel()
         label.text = text
         label.font = .preferredFont(forTextStyle: style)
@@ -278,21 +300,127 @@ final class KeyboardController: UIInputViewController {
         return label
     }
 
-    private func button(_ title: String, primary: Bool = false, action: @escaping () -> Void) -> UIButton {
-        var configuration = primary ? UIButton.Configuration.filled() : UIButton.Configuration.gray()
-        configuration.title = title
+    private func button(_ title: String, kind: ButtonKind = .secondary, symbol: String? = nil,
+                        action: @escaping () -> Void) -> UIButton {
+        var configuration = UIButton.Configuration.plain()
+        configuration.title = title.isEmpty ? nil : title
+        configuration.image = symbol.flatMap { UIImage(systemName: $0) }
+        configuration.imagePadding = Theme.Space.xs
+        configuration.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(textStyle: .subheadline, scale: .medium)
         configuration.titleLineBreakMode = .byTruncatingTail
-        configuration.contentInsets = NSDirectionalEdgeInsets(top: 6, leading: 8, bottom: 6, trailing: 8)
+        configuration.contentInsets = NSDirectionalEdgeInsets(top: Theme.Space.xs, leading: Theme.Space.s,
+                                                              bottom: Theme.Space.xs, trailing: Theme.Space.s)
+        configuration.cornerStyle = .fixed
+        configuration.background.cornerRadius = Theme.Radius.m
+        // 글자 크기 설정이 바뀌면 다시 계산되도록 매번 글자 스타일에서 가져온다.
+        configuration.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
+            var outgoing = incoming
+            outgoing.font = Self.buttonFont(kind)
+            return outgoing
+        }
         let button = UIButton(configuration: configuration, primaryAction: UIAction { _ in action() })
-        button.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
+        // 상태별 색을 시스템 기본값 대신 Theme 색으로 직접 정한다.
+        button.automaticallyUpdatesConfiguration = false
+        button.configurationUpdateHandler = { button in
+            guard var updated = button.configuration else { return }
+            let colors = Self.buttonColors(kind, enabled: button.isEnabled)
+            updated.background.backgroundColor = colors.fill
+            updated.baseForegroundColor = colors.ink
+            button.configuration = updated
+            button.alpha = button.isHighlighted ? 0.7 : 1
+        }
+        button.titleLabel?.adjustsFontForContentSizeCategory = true
+        button.heightAnchor.constraint(greaterThanOrEqualToConstant: Theme.minTouch).isActive = true
         return button
+    }
+
+    private static func buttonColors(_ kind: ButtonKind, enabled: Bool) -> (ink: UIColor, fill: UIColor) {
+        guard enabled else { return (Theme.Palette.muted, Theme.Palette.surface2) }
+        switch kind {
+        case .primary: return (Theme.Palette.accentInk, Theme.Palette.accent)
+        case .secondary: return (Theme.Palette.accentStrong, Theme.Palette.surface2)
+        case .key: return (Theme.Palette.ink, Theme.Palette.surface2)
+        }
+    }
+
+    private static func buttonFont(_ kind: ButtonKind) -> UIFont {
+        let base = UIFont.preferredFont(forTextStyle: .subheadline)
+        guard kind != .key, let bold = base.fontDescriptor.withSymbolicTraits(.traitBold) else { return base }
+        return UIFont(descriptor: bold, size: 0)
     }
 
     private func row(_ views: [UIView], equal: Bool = true) -> UIStackView {
         let row = UIStackView(arrangedSubviews: views)
-        row.spacing = 6
+        row.spacing = Theme.Space.s
         row.alignment = .center
         row.distribution = equal ? .fillEqually : .fill
         return row
+    }
+
+    private func icon(_ symbol: String, style: UIFont.TextStyle, tint: UIColor) -> UIImageView {
+        let icon = UIImageView(image: UIImage(systemName: symbol,
+                                              withConfiguration: UIImage.SymbolConfiguration(textStyle: style)))
+        icon.tintColor = tint
+        icon.adjustsImageSizeForAccessibilityContentSizeCategory = true
+        icon.isAccessibilityElement = false
+        icon.setContentHuggingPriority(.required, for: .horizontal)
+        icon.setContentCompressionResistancePriority(.required, for: .horizontal)
+        return icon
+    }
+
+    /// 기호가 붙은 제목 줄. 상태를 색만으로 알리지 않는다.
+    private func heading(_ text: String, symbol: String, tint: UIColor) -> UIStackView {
+        let heading = row([icon(symbol, style: .headline, tint: tint), label(text, style: .headline)], equal: false)
+        heading.alignment = .firstBaseline
+        return heading
+    }
+
+    /// 테두리 없이 면 색으로만 구분하는 상자. 추천 미리보기(accentSoft)·주의(warnSoft)·안내(surface2)에 쓴다.
+    private func panel(_ body: UILabel, symbol: String? = nil, tint: UIColor = Theme.Palette.muted,
+                       fill: UIColor, compact: Bool = false) -> UIStackView {
+        let panel = UIStackView()
+        panel.axis = .horizontal
+        panel.alignment = .firstBaseline
+        panel.spacing = Theme.Space.s
+        panel.isLayoutMarginsRelativeArrangement = true
+        panel.insetsLayoutMarginsFromSafeArea = false
+        let vertical = compact ? Theme.Space.xs : Theme.Space.s
+        panel.directionalLayoutMargins = NSDirectionalEdgeInsets(top: vertical, leading: Theme.Space.m,
+                                                                 bottom: vertical, trailing: Theme.Space.m)
+        panel.backgroundColor = fill
+        panel.layer.cornerRadius = Theme.Radius.m
+        panel.layer.cornerCurve = .continuous
+        if let symbol { panel.addArrangedSubview(icon(symbol, style: body.font.textStyle, tint: tint)) }
+        panel.addArrangedSubview(body)
+        return panel
+    }
+
+    /// 다듬기를 쓸 수 없을 때의 안내 (전체 접근·로그인·상대 없음).
+    private func notice(_ text: String, symbol: String) -> UIStackView {
+        panel(label(text, style: .footnote, color: Theme.Palette.ink2), symbol: symbol, fill: Theme.Palette.surface2)
+    }
+
+    /// 지킨 내용마다 확인 기호를 붙인 한 줄.
+    private func checked(_ items: [String], font: UIFont) -> NSAttributedString {
+        let line = NSMutableAttributedString()
+        let mark = UIImage(systemName: "checkmark.circle.fill", withConfiguration: UIImage.SymbolConfiguration(font: font))
+        for (index, item) in items.enumerated() {
+            if index > 0 { line.append(NSAttributedString(string: "   ")) }
+            if let mark {
+                line.append(NSAttributedString(attachment: NSTextAttachment(image: mark)))
+                line.append(NSAttributedString(string: " "))
+            } else {
+                line.append(NSAttributedString(string: "✓ "))
+            }
+            line.append(NSAttributedString(string: item))
+        }
+        return line
+    }
+}
+
+private extension UIFont {
+    /// 이 글자가 만들어진 시스템 글자 스타일. 알 수 없으면 본문.
+    var textStyle: UIFont.TextStyle {
+        (fontDescriptor.object(forKey: .textStyle) as? String).map(UIFont.TextStyle.init(rawValue:)) ?? .body
     }
 }

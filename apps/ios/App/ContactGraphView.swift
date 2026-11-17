@@ -83,31 +83,54 @@ struct ContactGraphView: View {
         Form {
             if let graph {
                 if !graph.enabled {
-                    Text("이 서버는 맥락 그래프를 쓰지 않습니다. D 조건은 C와 같게 동작합니다.")
+                    GraphEmptyState(systemImage: "point.3.connected.trianglepath.dotted",
+                                    text: "이 서버는 맥락 그래프를 쓰지 않습니다. D 조건은 C와 같게 동작합니다.")
                 } else if graph.nodes.isEmpty {
-                    Text("아직 \(contact.alias)의 그래프가 없습니다. 과거 대화를 가져오면 서버가 수집합니다. 대화 속 이름이 상대 별칭과 같아야 이 상대의 그래프로 묶입니다.")
+                    GraphEmptyState(systemImage: "point.3.connected.trianglepath.dotted",
+                                    text: "아직 \(contact.alias)의 그래프가 없습니다. 과거 대화를 가져오면 서버가 수집합니다. 대화 속 이름이 상대 별칭과 같아야 이 상대의 그래프로 묶입니다.")
                 } else {
                     Section {
                         GraphDiagram(graph: graph, selected: $selected)
-                            .frame(height: 340)
+                            .frame(height: GraphMetrics.diagramHeight)
                             .listRowInsets(EdgeInsets())
                     } footer: {
-                        Text("● 사람 ■ 사건 · 점선은 지난 사실만 남은 연결 · 노드를 누르면 그 노드의 사실만 봅니다.")
+                        GraphLegend()
                     }
+                    .listRowBackground(Theme.surface)
                     if let node = graph.nodes.first(where: { $0.id == selected }), !node.summary.isEmpty {
-                        Section(node.name) { Text(node.summary).font(.footnote) }
+                        Section {
+                            VStack(alignment: .leading, spacing: Theme.Space.s) {
+                                HStack(spacing: Theme.Space.s) {
+                                    Text(node.name).font(.headline).foregroundStyle(Theme.ink)
+                                    Tag(text: node.kind == "event" ? "사건" : "사람",
+                                        systemImage: node.kind == "event" ? "calendar" : "person.fill")
+                                }
+                                Text(node.summary).font(.subheadline).foregroundStyle(Theme.ink2)
+                            }
+                            .card(fill: Theme.accentSoft)
+                            .listRowInsets(EdgeInsets())
+                            .listRowBackground(Color.clear)
+                        }
                     }
                     Section("사실 \(facts.count)건") {
                         ForEach(facts) { edge in
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(edge.fact).foregroundStyle(edge.current ? .primary : .secondary)
-                                Text(caption(edge, in: graph)).font(.footnote).foregroundStyle(.secondary)
+                            VStack(alignment: .leading, spacing: Theme.Space.xs) {
+                                Text(edge.fact).font(.body).foregroundStyle(edge.current ? Theme.ink : Theme.muted)
+                                Text(caption(edge, in: graph)).font(.footnote).foregroundStyle(Theme.muted)
+                                if !edge.current {
+                                    Tag(text: "지난 사실", systemImage: "clock.arrow.circlepath")
+                                }
                             }
+                            .padding(.vertical, Theme.Space.xs)
+                            .accessibilityElement(children: .combine)
                         }
                     }
+                    .listRowBackground(Theme.surface)
                 }
             }
         }
+        .screenBackground()
+        .tint(Theme.accent)
         .status(run)
         .navigationTitle("\(contact.alias) 맥락 그래프")
         .navigationBarTitleDisplayMode(.inline)
@@ -125,8 +148,89 @@ struct ContactGraphView: View {
         let name = { (id: String) in graph.nodes.first { $0.id == id }?.name ?? "?" }
         var parts = ["\(name(edge.source)) → \(name(edge.target))"]
         if let when = edge.valid_at { parts.append(Labels.date(when)) }
-        if !edge.current { parts.append("지난 사실") }
         return parts.joined(separator: " · ")
+    }
+}
+
+// MARK: - 이 파일 안에서만 쓰는 조각
+
+/// 그림에만 쓰는 크기. Theme에 없는 값이라 여기 둔다.
+private enum GraphMetrics {
+    static let diagramHeight: CGFloat = 340
+    static let contactSize: CGFloat = 32
+    static let nodeSize: CGFloat = 22
+    static let badgeWidth: CGFloat = 78
+    static let legendMark: CGFloat = 12
+    static let legendLine: CGFloat = 28
+    static let lineWidth: CGFloat = 1.5
+    static let dash: [CGFloat] = [4, 4]
+}
+
+/// 빈 상태: 큰 기호와 한 줄 안내.
+private struct GraphEmptyState: View {
+    let systemImage: String
+    let text: String
+
+    var body: some View {
+        VStack(spacing: Theme.Space.l) {
+            Image(systemName: systemImage).font(.largeTitle).imageScale(.large)
+                .foregroundStyle(Theme.muted).accessibilityHidden(true)
+            Text(text).font(.body).foregroundStyle(Theme.ink2).multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, Theme.Space.xxxl)
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
+    }
+}
+
+/// 범례: 모양과 색, 선 종류의 뜻을 그림 그대로 보여 준다.
+private struct GraphLegend: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.s) {
+            HStack(spacing: Theme.Space.m) {
+                item("상대") { Circle().fill(Theme.accent) }
+                item("사람") { Circle().fill(Theme.ink2) }
+                item("사건") { EventShape() }
+            }
+            HStack(spacing: Theme.Space.s) {
+                DashLine().stroke(Theme.muted, style: StrokeStyle(lineWidth: GraphMetrics.lineWidth, dash: GraphMetrics.dash))
+                    .frame(width: GraphMetrics.legendLine, height: GraphMetrics.legendMark)
+                Text("점선은 지난 사실만 남은 연결")
+            }
+            Text("노드를 누르면 그 노드의 사실만 봅니다.")
+        }
+        .font(.footnote).foregroundStyle(Theme.muted)
+        .padding(.top, Theme.Space.xs)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("● 사람 ■ 사건 · 점선은 지난 사실만 남은 연결 · 노드를 누르면 그 노드의 사실만 봅니다.")
+    }
+
+    private func item<Mark: View>(_ text: String, @ViewBuilder mark: () -> Mark) -> some View {
+        HStack(spacing: Theme.Space.xs) {
+            mark().frame(width: GraphMetrics.legendMark, height: GraphMetrics.legendMark)
+            Text(text)
+        }
+    }
+}
+
+/// 사건 노드: 네모난 면(surface2)에 ink2 윤곽. 사람(원)과는 모양으로도 구분된다.
+private struct EventShape: View {
+    var body: some View {
+        RoundedRectangle(cornerRadius: Theme.Space.xs, style: .continuous).fill(Theme.surface2)
+            .overlay {
+                RoundedRectangle(cornerRadius: Theme.Space.xs, style: .continuous)
+                    .strokeBorder(Theme.ink2, lineWidth: GraphMetrics.lineWidth)
+            }
+    }
+}
+
+private struct DashLine: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX, y: rect.midY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.midY))
+        return path
     }
 }
 
@@ -158,8 +262,11 @@ private struct GraphDiagram: View {
                         path.move(to: from)
                         path.addLine(to: to)
                         let touched = selected == nil || selected == link.a || selected == link.b
-                        context.stroke(path, with: .color(.secondary.opacity(touched ? 0.7 : 0.2)),
-                                       style: StrokeStyle(lineWidth: 1.5, dash: link.current ? [] : [4, 4]))
+                        // 지금도 유효한 연결은 ink2 실선, 지난 사실만 남은 연결은 muted 점선.
+                        let color = link.current ? Theme.ink2 : Theme.muted
+                        context.stroke(path, with: .color(color.opacity(touched ? 0.7 : 0.2)),
+                                       style: StrokeStyle(lineWidth: GraphMetrics.lineWidth,
+                                                          dash: link.current ? [] : GraphMetrics.dash))
                     }
                 }
                 ForEach(graph.nodes) { node in
@@ -178,20 +285,29 @@ private struct NodeBadge: View {
     let node: GraphNode
     let selected: Bool
 
-    private var color: Color { node.is_contact ? .accentColor : node.kind == "event" ? .orange : .gray }
-
     var body: some View {
-        let size: CGFloat = node.is_contact ? 30 : 22
-        VStack(spacing: 3) {
+        let size = node.is_contact ? GraphMetrics.contactSize : GraphMetrics.nodeSize
+        VStack(spacing: Theme.Space.xs) {
             Group {
-                if node.kind == "event" { RoundedRectangle(cornerRadius: 5).fill(color) } else { Circle().fill(color) }
+                if node.kind == "event" {
+                    EventShape()
+                } else {
+                    Circle().fill(node.is_contact ? Theme.accent : Theme.ink2)
+                }
             }
             .frame(width: size, height: size)
-            .overlay { if selected { Circle().stroke(Color.primary, lineWidth: 2).frame(width: size + 10, height: size + 10) } }
-            Text(node.name).font(.caption2).fontWeight(node.is_contact ? .bold : .regular)
+            .overlay {
+                if selected {
+                    Circle().stroke(Theme.accent, lineWidth: 2)
+                        .frame(width: size + Theme.Space.m, height: size + Theme.Space.m)
+                }
+            }
+            Text(node.name).font(.caption2).fontWeight(node.is_contact || selected ? .bold : .regular)
+                .foregroundStyle(Theme.ink)
                 .lineLimit(2).multilineTextAlignment(.center)
         }
-        .frame(width: 78)
+        .frame(width: GraphMetrics.badgeWidth)
+        .frame(minHeight: Theme.minTouch)
         .contentShape(Rectangle())
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(node.kind == "event" ? "사건" : "사람") \(node.name)")
