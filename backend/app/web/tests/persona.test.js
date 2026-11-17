@@ -11,6 +11,7 @@ import {
   cleanPhrases,
   describeSettings,
   evidenceText,
+  importProposal,
   isFewMessages,
   normalizeSettings,
   settingsEqual,
@@ -272,4 +273,74 @@ test("제안 값은 숫자와 글자가 섞여 온다", () => {
   }
   assert.equal(signalView({ field: "emoji", value: "none" }).usable, true);
   assert.equal(signalView({ field: "emoji", value: 0 }).usable, false);
+});
+
+test("가져오기 직후 제안: 서버가 합친 설정에서 지금 설정과 다른 항목만 보여 준다", () => {
+  const current = { ...DEFAULT_SETTINGS, friendliness: 2 };
+  const p = importProposal(SUGGESTION, current);
+  assert.equal(p.state, "ok");
+  assert.deepEqual(p.changes, [
+    { field: "formality", label: "격식", from: "3단계 · 보통 존댓말", to: "4단계 · 정중하게" },
+    { field: "address_term", label: "호칭", from: "없음", to: "팀장님" },
+  ]);
+  assert.equal(p.settings.formality, 4);
+  assert.equal(p.settings.friendliness, 2, "제안하지 않은 항목은 서버가 준 값 그대로");
+  assert.equal(p.asking, false);
+  // 지금 설정이 이미 제안과 같으면 저장할 것이 없다
+  const same = importProposal(SUGGESTION, SUGGESTION.settings);
+  assert.equal(same.state, "same");
+  assert.equal(same.settings, null);
+});
+
+test("가져오기 직후 제안: 표본이 적으면 말투 변화·그래프 신호만 지금 설정에 얹는다", () => {
+  const register = { field: "formality", value: 4, reason: "최근 2건이 합쇼체", source: "register", since: "2026-10-21" };
+  const graph = { field: "address_term", value: "파트장님", reason: "관계 사실", source: "graph" };
+  const mine = { ...DEFAULT_SETTINGS, notes: "결론부터", emoji: "rare" };
+  const p = importProposal({ based_on_messages: 4, settings: null, signals: [...SUGGESTION.signals, register, graph] }, mine);
+  assert.equal(p.state, "ok");
+  assert.deepEqual(p.changes.map((c) => c.field), ["formality", "address_term"]);
+  assert.equal(p.settings.address_term, "파트장님", "'내 메시지 전체'의 호칭(팀장님)은 쓰지 않는다");
+  assert.equal(p.settings.emoji, "rare");
+  assert.equal(p.settings.notes, "결론부터");
+});
+
+test("가져오기 직후 제안: 카드가 물으면 카드가 정해 둔 값을 얹고, 왜 묻는지 함께 준다", () => {
+  const register = [
+    { field: "formality", value: 4, reason: "최근 2건이 합쇼체", source: "register" },
+    { field: "address_term", value: "서연 파트장님", reason: "1회 관찰", source: "register" },
+  ];
+  // 서버는 묻는 항목을 settings에서 뺀다 — 저장 버튼이 그 물음의 답이므로 카드의 값을 다시 얹는다
+  const asked = importProposal({ based_on_messages: 4, settings: null, signals: register, card: CARD }, DEFAULT_SETTINGS);
+  assert.equal(asked.state, "ok");
+  assert.equal(asked.asking, true);
+  assert.equal(asked.askReason, "공식 자리에서만 쓰는 말투일 수 있습니다.");
+  assert.deepEqual(asked.changes, [
+    { field: "formality", label: "격식", from: "3단계 · 보통 존댓말", to: "4단계 · 정중하게" },
+    { field: "address_term", label: "호칭", from: "없음", to: "서연 파트장님" },
+  ]);
+  // 근거 줄에는 건수와 날짜만 — 메시지 id는 넣지 않는다
+  assert.deepEqual(asked.rows.map((r) => r.key), ["speech", "address", "trigger", "scope"]);
+  assert.equal(asked.rows[0].text, "반말 (3건) → 합쇼체 (최근 2건, 2026-10-21부터)");
+  assert.equal(asked.rows[1].text, "'서연 파트장님' (1회 관찰, 2026-10-21부터)");
+  assert.ok(!asked.rows.some((r) => r.text.includes("c3:")));
+  // 카드가 값을 정해 두지 않았으면 격식·호칭은 건드리지 않고 묻기만 한다
+  const open = { ...CARD, proposed: {} };
+  const noValue = importProposal({ based_on_messages: 4, settings: null, signals: register, card: open }, DEFAULT_SETTINGS);
+  assert.equal(noValue.state, "ask");
+  assert.equal(noValue.settings, null);
+  // 그때도 그래프 신호는 반영한다(서버와 같은 규칙)
+  const graph = { field: "address_term", value: "파트장님", reason: "관계 사실", source: "graph" };
+  const mixed = importProposal({ based_on_messages: 4, settings: null, signals: [...register, graph], card: open }, DEFAULT_SETTINGS);
+  assert.equal(mixed.state, "ok");
+  assert.deepEqual(mixed.changes, [{ field: "address_term", label: "호칭", from: "없음", to: "파트장님" }]);
+  assert.equal(mixed.settings.formality, 3);
+  // 지금 설정이 이미 카드의 값과 같으면 저장할 것이 없다
+  const done = importProposal({ based_on_messages: 4, settings: null, signals: register, card: CARD }, { ...DEFAULT_SETTINGS, formality: 4, address_term: "서연 파트장님" });
+  assert.equal(done.state, "ask");
+});
+
+test("가져오기 직후 제안: 내 메시지가 없거나 적으면 제안하지 않는다", () => {
+  assert.equal(importProposal(null, DEFAULT_SETTINGS).state, "none");
+  assert.equal(importProposal({ based_on_messages: 3, settings: null, signals: SUGGESTION.signals }, DEFAULT_SETTINGS).state, "few");
+  assert.equal(importProposal({ based_on_messages: 3, settings: null, signals: [] }, null).settings, null);
 });

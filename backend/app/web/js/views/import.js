@@ -27,8 +27,9 @@ import {
   unassignedCount,
 } from "../lib/importing.js";
 import { relLabel } from "../lib/model.js";
+import { describeSettings, importProposal } from "../lib/persona.js";
 import { buildHash } from "../lib/router.js";
-import { loadContacts } from "../session.js";
+import { invalidateContacts, loadContacts } from "../session.js";
 import { store } from "../store.js";
 import { addContactDialog } from "../ui/contact-dialog.js";
 import { busy, h, setChildren, uid } from "../ui/dom.js";
@@ -911,12 +912,123 @@ export function mountImport(root, ctx) {
    * 결과 화면을 한 번 그리고, 진행 상태만 바꿔 그리는 함수를 돌려준다.
    * 버튼은 다시 그리지 않는다 — 몇 초마다 통째로 바꾸면 누르는 순간 버튼이 사라질 수 있다.
    */
+  /**
+   * 가져온 직후의 말투 제안 상자: 방금 저장한 내 메시지에서 읽은 이 상대용 말투를 보여 주고, 한 번 누르면 설정으로 저장한다.
+   * 누르기 전에는 아무것도 저장하지 않는다. 제안을 못 읽거나 바꿀 것이 없으면 상자를 띄우지 않는다(부가 기능이다).
+   * load를 다시 부르면 새로 읽는다 — 사건 정리가 끝나면 말투가 바뀐 계기(그래프)가 근거에 붙는다.
+   */
+  function mountRegisterBox(c) {
+    const box = h("div", { class: "phase", hidden: true });
+    let settled = false; // 저장했거나 그대로 두기로 했다 — 다시 읽어 덮어쓰지 않는다
+    let token = 0;
+
+    const render = (data, persona, current) => {
+      const p = importProposal(data, current);
+      if (p.state !== "ok" && p.state !== "ask") {
+        box.hidden = true;
+        return;
+      }
+      const settingsLink = h("a", { class: "btn", href: buildHash("contact", { id: c.id }) }, p.settings ? "직접 고치기" : "말투 설정에서 고르기");
+      const save = p.settings
+        ? h(
+            "button",
+            {
+              type: "button",
+              class: "btn btn-primary",
+              onClick: (e) =>
+                busy(e.currentTarget, "저장하는 중…", async () => {
+                  try {
+                    const saved = await api.contacts.savePersona(c.id, p.settings, persona?.version ?? 0);
+                    settled = true;
+                    invalidateContacts();
+                    box.className = "phase phase-ok";
+                    setChildren(
+                      box,
+                      h("p", { class: "phase-title" }, h("span", null, h("span", { "aria-hidden": "true" }, "✓ "), `${c.alias}에게 쓰는 말투를 저장했어요 (v${saved.version})`)),
+                      h("p", { class: "phase-detail" }, describeSettings(saved.settings)),
+                    );
+                    liveEl.textContent = `${c.alias}에게 쓰는 말투를 저장했어요.`;
+                  } catch (error) {
+                    if (error.status === 401) return;
+                    toast(
+                      error.status === 409 ? "다른 곳에서 먼저 저장했어요. 상대 화면에서 확인해 주세요." : describeError(error, "저장하지 못했어요."),
+                      { kind: "error" },
+                    );
+                  }
+                }),
+            },
+            "이 말투로 저장",
+          )
+        : null;
+      const keep = h(
+        "button",
+        {
+          type: "button",
+          class: "btn btn-quiet",
+          "aria-label": "말투 제안 그대로 두기",
+          onClick: () => {
+            settled = true;
+            box.hidden = true;
+          },
+        },
+        "그대로 두기",
+      );
+      box.className = "phase";
+      setChildren(
+        box,
+        h("p", { class: "phase-title" }, `${c.alias}에게 쓰는 말투를 읽었어요`),
+        p.rows.length ? h("dl", { class: "suggestion-card-rows" }, p.rows.map((row) => [h("dt", null, row.label), h("dd", null, row.text)])) : null,
+        p.changes.length
+          ? h("p", { class: "phase-detail" }, "바뀌는 설정: ", p.changes.map((ch) => `${ch.label} ${ch.from} → ${ch.to}`).join(" · "))
+          : null,
+        p.asking
+          ? h(
+              "p",
+              { class: "phase-detail" },
+              [p.askReason, p.settings ? "맞으면 저장하고, 아니면 그대로 두거나 직접 고쳐 주세요." : "값은 정해 드리지 않았어요. 말투 설정에서 직접 골라 주세요."]
+                .filter(Boolean)
+                .join(" "),
+            )
+          : null,
+        h("p", { class: "phase-detail muted" }, "성격을 추정하지 않고 내가 보낸 메시지의 말투만 봐요. 누르기 전에는 저장되지 않아요."),
+        h("div", { class: "form-actions" }, save, settingsLink, keep),
+      );
+      box.hidden = false;
+    };
+
+    const load = async () => {
+      if (settled || destroyed) return;
+      token += 1;
+      const mine = token;
+      try {
+        const [data, persona] = await Promise.all([
+          api.contacts.personaSuggestion(c.id),
+          api.contacts.persona(c.id).catch((error) => {
+            if (error.status === 404) return null; // 저장한 말투 설정이 없다
+            throw error;
+          }),
+        ]);
+        // 저장한 설정이 없으면 서버가 제안의 기준으로 삼는 관계 기본값과 견준다
+        let current = persona?.settings ?? null;
+        if (!current) current = (await api.personaDefaults().catch(() => null))?.[c.relationship_type] ?? null;
+        if (destroyed || settled || mine !== token || st.step !== 4) return;
+        render(data, persona, current);
+      } catch {
+        // 제안은 부가 기능이다 — 못 읽으면 상자 없이 둔다(상대 화면에서 다시 볼 수 있다)
+      }
+    };
+    return { box, load };
+  }
+
   function mountProgress(job) {
     const c = contact();
     const nothingNew = (job.imported ?? 0) === 0;
     const styleBox = h("div", { class: "phase" });
     const graphBox = h("div", { class: "phase" });
+    // 새로 저장한 메시지가 있을 때만 말투를 제안한다
+    const register = c && !nothingNew ? mountRegisterBox(c) : null;
     let lastStatus;
+    let lastGraphStatus;
 
     let progress = null; // 진행 수치가 얼마나 오래 그대로인지(trackProgress)
     const update = (stats, statsMissing = false) => {
@@ -953,6 +1065,9 @@ export function mountImport(root, ctx) {
         lastStatus = statusKey;
         liveEl.textContent = `${style.title}. ${graph.title}${graph.count ? ` ${graph.count}` : ""}`;
       }
+      // 사건 정리가 방금 끝났으면 제안을 한 번 다시 읽는다 — 말투가 바뀐 계기와 범위 단서가 붙는다
+      if (register && lastGraphStatus && lastGraphStatus !== "completed" && graph.status === "completed") register.load();
+      lastGraphStatus = graph.status;
       return graph.polling || style.polling;
     };
 
@@ -971,6 +1086,7 @@ export function mountImport(root, ctx) {
           : null,
         styleBox,
         graphBox,
+        register?.box,
         h(
           "div",
           { class: "form-actions" },
@@ -993,6 +1109,7 @@ export function mountImport(root, ctx) {
       ),
     );
     update(null);
+    register?.load();
     return update;
   }
 

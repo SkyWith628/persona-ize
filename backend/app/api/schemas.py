@@ -110,6 +110,59 @@ class ContactGraphOut(BaseModel):
     center_id: str | None = Field(None, description="상대 별칭과 이름이 같은 노드. 없으면 아직 수집 전")
     nodes: list[GraphNodeOut] = Field(default_factory=list)
     edges: list[GraphEdgeOut] = Field(default_factory=list)
+    # 응답의 이름만 `register`다. 파이썬 이름까지 그러면 BaseModel(ABC)의 `register`를 가린다는 경고가 난다.
+    speech_register: ContactRegisterOut | None = Field(
+        None,
+        serialization_alias="register",
+        description=(
+            "내가 이 상대에게 쓰는 말투 — 화면에는 (나)→(상대) 간선처럼 보인다. 그래프에 저장된 값이 아니라 "
+            "메시지에서 읽을 때 계산한다(그래프가 꺼져 있어도 온다). 내 메시지가 없거나 계산이 실패하면, "
+            "또는 REGISTER_SUGGESTIONS=false인 서버에서는 응답에 이 항목이 없다 (null과 같다)"
+        ),
+    )
+
+    # 반환 주석을 달지 않는다 (`PersonaSuggestionOut`과 같은 이유: OpenAPI 응답 스키마가 빈 object가 된다).
+    @model_serializer(mode="wrap")
+    def _omit_empty_register(self, handler: SerializerFunctionWrapHandler):
+        # 말투가 없으면 예전 응답과 글자까지 같게 항목을 뺀다 (예전 클라이언트·테스트가 응답 전체를 비교한다)
+        data = handler(self)
+        for key in ("register", "speech_register"):  # 별칭으로 내보낼 때와 아닐 때
+            if key in data and data[key] is None:
+                del data[key]
+        return data
+
+
+class RegisterTriggerOut(BaseModel):
+    event: str = Field(description="그래프의 사건 이름 (예: 파트장 발령)")
+    at: date | None = Field(description="그 사건을 말한 메시지의 날짜 (한국 시간)")
+
+
+class RegisterSegmentOut(BaseModel):
+    level: Literal["hapsyo", "haeyo", "hae"] = Field(description="합쇼체 / 해요체 / 반말")
+    start: date = Field(description="이 말투가 시작된 날 (한국 시간)")
+    end: date | None = Field(description="다음 구간이 시작한 날. 현재 구간이면 null")
+    count: int = Field(description="이 구간에서 이 말투로 관찰된 내 메시지 수")
+    status: Literal["confirmed", "candidate", "previous"] = Field(
+        description="마지막 구간은 confirmed 또는 candidate(최근 메시지에 없음), 그 앞의 구간은 previous"
+    )
+    message_ids: list[str] = Field(description="근거 메시지, 최대 5개 (`c3:m08` — 대화방 키:메시지 키)")
+    trigger: RegisterTriggerOut | None = Field(
+        None, description="그래프에서 찾은 계기 사건. 말투가 바뀐 확정된 현재 구간에만 붙는다"
+    )
+
+
+class RegisterAddressOut(BaseModel):
+    term: str = Field(description="메시지에 나온 호칭 그대로")
+    count: int
+    status: Literal["confirmed", "candidate"] = Field(description="2회 이상이면 confirmed, 1회면 candidate")
+
+
+class ContactRegisterOut(BaseModel):
+    """(나 → 상대)의 말투 프로필을 간선 하나처럼 보여 주는 값. 규칙 계산이고 저장하지 않는다."""
+
+    segments: list[RegisterSegmentOut] = Field(description="시간 순 말투 구간")
+    address: RegisterAddressOut | None = Field(description="현재 호칭. 관찰된 것이 없으면 null")
+    based_on_messages: int = Field(description="본 내 메시지 수 (최근 500건까지)")
 
 
 class RewriteCreate(StoredBody):
@@ -534,3 +587,53 @@ class EvidenceOut(BaseModel):
 
 class RewritesDeletedOut(BaseModel):
     deleted: int
+
+
+# 묶음 첨삭 한 번에 받을 상대 수. 상대 1명 = 모델 호출 1번이라 요청 하나가 쓸 비용의 상한이기도 하다.
+REWRITE_BATCH_MAX_CONTACTS = 5
+
+
+class RewriteBatchCreate(StoredBody):
+    """같은 초안을 여러 상대에게 — "의미는 한 번, 말투는 상대마다".
+
+    `RewriteCreate`에서 `contact_id`만 `contact_ids`로 바뀐 본문이다. 나머지 필드는 이름·뜻이 같고 모든
+    상대에 똑같이 적용한다. `RewriteCreate`에 필드를 더하면 여기에도 더한다 (두 본문의 필드가 같은지는
+    `test_rewrites_batch_api.py`가 지킨다).
+    """
+
+    contact_ids: list[UUID] = Field(
+        min_length=1,
+        max_length=REWRITE_BATCH_MAX_CONTACTS,
+        description="첨삭할 상대들 (1~5명, 중복 불가). 응답의 items는 이 순서를 따른다",
+    )
+    draft_text: str
+    draft_version: int = Field(1, ge=1, le=INT4_MAX)
+    situation: str = ""
+    condition: RequestedCondition = Field("B", description="A~D 또는 auto. 상대마다 따로 정해진다")
+    persona_version: int | None = Field(None, ge=-INT4_MAX, le=INT4_MAX)
+    adjust: Adjust | None = Field(None, description="이번 요청만의 조정. 저장된 페르소나는 바뀌지 않는다")
+    channel: Channel = "web"
+
+    @model_validator(mode="after")
+    def _distinct_contacts(self) -> RewriteBatchCreate:
+        # 같은 상대가 두 번 있으면 한 요청이 한도를 두 번 쓰고 같은 결과를 두 건 남긴다 — 실수로 본다.
+        if len(set(self.contact_ids)) != len(self.contact_ids):
+            raise ValueError("contact_ids에 같은 상대가 두 번 들어 있습니다.")
+        return self
+
+
+class RewriteBatchErrorOut(BaseModel):
+    code: str = Field(description="단건 경로의 오류 코드와 같다 (not_found, usage_exceeded 등)")
+    message: str
+
+
+class RewriteBatchItemOut(BaseModel):
+    """상대 한 명의 결과. `rewrite`와 `error` 가운데 하나만 채워진다."""
+
+    contact_id: UUID
+    rewrite: RewriteOut | None = None
+    error: RewriteBatchErrorOut | None = None
+
+
+class RewriteBatchOut(BaseModel):
+    items: list[RewriteBatchItemOut]
