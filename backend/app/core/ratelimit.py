@@ -2,7 +2,7 @@
 
 - 미끄러지는 1분 창: 어느 60초 구간을 잡아도 허용된 요청 수가 한도를 넘지 않는다. 거절된 요청은 세지 않는다.
 - `RATE_LIMIT_PER_MINUTE`는 `/v1/*` 전체, `RATE_LIMIT_AUTH_PER_MINUTE`는 비밀번호를 확인·저장하는 경로
-  (로그인·가입·토큰 발급·비밀번호 변경·계정 삭제)에 추가로 건다. 0이면 그 한도는 끈다.
+  (로그인·가입·토큰 발급·비밀번호 변경·계정 삭제)와 소셜 로그인 시작·콜백에 추가로 건다. 0이면 그 한도는 끈다.
   `/healthz`는 쿼리가 없을 때만 세지 않는다. `/healthz?deep=true`는 `/v1/*`와 같은 한도로 센다.
 - 키는 클라이언트 주소다. IPv6는 /64로 묶는다(한 가입자가 주소를 2^64개 쓸 수 있다).
   프록시 뒤에서는 uvicorn `--proxy-headers`가 채운 주소를 쓴다 — 여기서 `X-Forwarded-For`를 직접 읽지 않는다.
@@ -30,6 +30,14 @@ AUTH_LIMITED: frozenset[tuple[str, str]] = frozenset(
         ("POST", "/v1/auth/token"),
         ("POST", "/v1/auth/password"),
         ("DELETE", "/v1/auth/me"),
+        # 이메일 가입(scrypt)과 소셜 로그인(진행 중 로그인 보관·제공자 호출·계정 생성) — 2026-11-16
+        ("POST", "/v1/auth/signup"),
+        ("GET", "/v1/auth/oauth/google/start"),
+        ("POST", "/v1/auth/oauth/google/start"),
+        ("GET", "/v1/auth/oauth/google/callback"),
+        ("GET", "/v1/auth/oauth/kakao/start"),
+        ("POST", "/v1/auth/oauth/kakao/start"),
+        ("GET", "/v1/auth/oauth/kakao/callback"),
     }
 )
 

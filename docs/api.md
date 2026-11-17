@@ -16,18 +16,30 @@
 |---|---|
 | `GET /v1/auth/config` (인증 불필요) | 가입 화면이 쓸 설정: `{allow_register, invite_required, require_consent, consent_version, app_env}` |
 | `POST /v1/auth/register` `{username, password, invite_code?, consent?}` | 가입 + 로그인. 아이디는 영문·숫자·`_`·`-` 3~32자, 대소문자만 다른 이름은 409. 비밀번호 8자 이상. 초대 코드가 틀리면 403 `invalid_invite`, 동의가 필요한데 없으면 422 `consent_required`. 운영 모드에서 관리자 이름은 화면 가입 불가(409) |
-| `POST /v1/auth/login` `{username, password}` | 로그인. 같은 곳(IP)에서 같은 아이디를 계속 틀리면 그 조합만 429 `too_many_attempts` + `Retry-After`(IP 단독·아이디 단독은 훨씬 높은 횟수에서) |
+| `GET /v1/auth/providers` (인증 불필요) | 가입 정책과 켜진 소셜 로그인: `{signup_open, requires_approval, invite_required, require_consent, google, kakao}` |
+| `POST /v1/auth/signup` `{email, password, display_name?, invite_code?, consent?}` | 이메일 가입. 문(가입 닫힘 403 → 초대 코드 → 동의)은 `register`와 같다. 이메일은 소문자로 저장, 중복 409. 아이디는 서버가 이메일 앞부분에서 만든다(응답 `username`). 응답은 `register`와 같다 |
+| `POST /v1/auth/login` `{username, password}` | 로그인. `username`에 **아이디 또는 이메일**. 비밀번호가 맞은 뒤에만 403 `account_pending`(승인 대기)·`account_suspended`(정지). 같은 곳(IP)에서 같은 아이디를 계속 틀리면 그 조합만 429 `too_many_attempts` + `Retry-After`(IP 단독·아이디 단독은 훨씬 높은 횟수에서) |
 | `POST /v1/auth/token` `{username, password, client?}` | Bearer 토큰 발급: `{access_token, token_type: "bearer", expires_at, user_id, username}`. `client`는 `mobile`·`desktop`·`api` |
+| `GET /v1/auth/oauth/{google\|kakao}/start?next=/경로` | 소셜 로그인 시작 → 제공자로 302. 링크로 바로 연다. 설정되지 않은 제공자는 404 |
+| `POST /v1/auth/oauth/{google\|kakao}/start` `{next?, consent?, invite_code?}` | 같은 시작인데 새 계정에 필요한 동의·초대 코드를 함께 보낸다 → `{authorize_url}`(그 주소로 이동). 초대 코드가 틀리면 403 `invalid_invite` |
+| `GET /v1/auth/oauth/{google\|kakao}/callback` | 제공자가 돌려보내는 곳(화면이 부르지 않는다). 성공: 세션 쿠키 + 302 → `next`. 실패: 302 → `<next>?auth_error=<코드>` |
 | `POST /v1/auth/logout` | 쿠키 세션과 Bearer 토큰을 폐기 |
 | `GET /v1/auth/me` | 내 정보 + CSRF 토큰 재조회 |
 | `POST /v1/auth/consent` `{}` (CSRF) | 현재 `CONSENT_VERSION`으로 동의 기록 |
 | `GET /v1/auth/sessions` | 로그인된 기기 목록 `[{id, created_at, expires_at, current}]` |
 | `POST /v1/auth/logout-all` (CSRF) | 지금 세션만 남기고 전부 로그아웃 → `{revoked_sessions}` |
 | `POST /v1/auth/password` `{current_password, new_password}` (CSRF) | 비밀번호 변경. 다른 세션은 모두 로그아웃 |
-| `DELETE /v1/auth/me` `{password}` (CSRF) | **계정 삭제**. 상대·대화·묶음·첨삭 이력·그래프·사용량·세션을 모두 지운다. 되돌릴 수 없다 |
+| `DELETE /v1/auth/me` `{password}` (CSRF) | **계정 삭제**. 비밀번호가 없는 소셜 전용 계정은 `{"password": ""}`. 상대·대화·묶음·첨삭 이력·그래프·사용량·세션을 모두 지운다. 되돌릴 수 없다 |
 
-로그인·가입·`me` 응답: `{user_id, username, csrf_token, expires_at, is_admin, consented_at, consent_version, consent_current}`. `is_admin`은 아이디가 `ADMIN_USERNAMES`와 대소문자까지 같을 때만 true. `consent_current`는 기록된 동의 버전이 지금 버전과 같은지.
-비밀번호를 잊은 사용자는 운영자가 서버에서 재설정한다(이메일이 없어 자가 재설정이 없다): `scripts/reset_password.py --username <이름>` (`--create`면 계정이 없을 때 만든다 — 운영에서 관리자 계정을 만드는 길).
+로그인·가입·`me` 응답: `{user_id, username, csrf_token, expires_at, is_admin, consented_at, consent_version, consent_current, email, display_name, role, status}`. `me`에는 `expires_at` 대신 `providers`(로그인 수단: `password`·`google`·`kakao`)가 있다. `is_admin`은 `role`이 `admin`이거나 아이디가 `ADMIN_USERNAMES`와 대소문자까지 같을 때 true. `consent_current`는 기록된 동의 버전이 지금 버전과 같은지.
+
+회원 상태·소셜 로그인 (2026-11-16):
+- **승인제**(`AUTH_SIGNUP_REQUIRES_APPROVAL=true`, 기본 꺼짐): `register`·`signup`이 201 대신 **202 `{status: "pending", username, email}`** 이고 쿠키를 내리지 않는다. 관리자가 승인하기 전의 로그인은 403 `account_pending`. 첫 소셜 로그인은 `auth_error=account_pending`으로 돌아온다.
+- **정지**: 로그인 403 `account_suspended`. 열려 있던 쿠키 세션·Bearer 토큰은 다음 요청부터 401.
+- **소셜 로그인**은 `GOOGLE_*`·`KAKAO_*`의 ID와 시크릿이 모두 있을 때만 켜진다(기본 꺼짐). `next`는 `/`로 시작하는 같은 출처 경로만 받는다(아니면 `/`). `auth_error` 값: `oauth_failed`(state 불일치·만료·재사용, 교환 실패) · `oauth_denied`(사용자가 취소) · `signup_closed` · `invalid_invite` · `consent_required` · `account_pending` · `account_suspended` · `email_in_use`.
+- 계정 연결: 제공자가 **확인해 준** 이메일이 기존 계정의 **확인된** 이메일(= 소셜로 만든 계정)과 같을 때만 그 계정에 묶는다. 이메일로 가입한 계정(주소 미확인)에는 묶지 않고 `email_in_use` — 비밀번호로 로그인하라고 안내한다. 확인되지 않은 이메일은 이메일 없는 새 계정이 된다.
+- 이메일 가입·소셜 시작/콜백은 `RATE_LIMIT_AUTH_PER_MINUTE`에 함께 걸린다.
+비밀번호를 잊은 사용자는 운영자가 서버에서 재설정한다(이메일이 없어 자가 재설정이 없다): `scripts/reset_password.py --username <이름>` (`--create`면 계정이 없을 때 만든다 — 운영에서 `ADMIN_USERNAMES` 관리자 계정을 만드는 길). 권한으로 관리자를 만들거나 올릴 때는 `cd backend && python -m app.tools.create_user <아이디> [--admin] [--reset-password]`.
 
 ```bash
 curl -s -c cookie.txt -X POST localhost:8000/v1/auth/register -H "Content-Type: application/json" -d '{"username":"minsu","password":"long-enough-pw","consent":true}'
@@ -108,7 +120,7 @@ settings: `formality·friendliness·directness`(1~5), `length`(shorter/same/long
 
 ## 관리자 (운영 대시보드)
 
-화면 `/admin`. API는 `GET /v1/admin/*`와 쓰기 하나(`POST /v1/admin/graph/retry-held`, 쿠키 인증이면 `X-CSRF-Token` 필수). 접근: 로그인(세션 쿠키 또는 Bearer) + 아이디가 `ADMIN_USERNAMES`에 대소문자까지 같게 있는 계정. 미로그인 401 · 관리자 아님 403 `forbidden` · `X-User-Id`만으로는 401 · 인메모리 저장소 503 `admin_unavailable`.
+화면 `/admin`. API는 `GET /v1/admin/*`와 쓰기(`POST /v1/admin/graph/retry-held`, 회원관리의 PATCH·POST·DELETE — 쿠키 인증이면 `X-CSRF-Token` 필수). 접근: 로그인(세션 쿠키 또는 Bearer) + 관리자(아이디가 `ADMIN_USERNAMES`에 대소문자까지 같게 있거나 `role`이 `admin`). 미로그인 401 · 관리자 아님 403 `forbidden` · `X-User-Id`만으로는 401 · 인메모리 저장소 503 `admin_unavailable`.
 통과한 호출은 `admin_access_log`에 남는다. **대화 원문·첨삭 문장·자유 서술 사유·편집본은 어떤 응답에도 없고**, 사용자 id는 `u_8f2…a1`로 줄인다.
 
 | 경로 | 내용 |
@@ -119,6 +131,18 @@ settings: `formality·friendliness·directness`(1~5), `length`(shorter/same/long
 | `GET /v1/admin/feedback?limit=50` | 최근 거절 피드백 (선택형 사유만) |
 | `GET /v1/admin/access-log?limit=50` | 관리자 접근 기록 |
 | `POST /v1/admin/graph/retry-held` | 본문 없음 → `{released, users, started}`. 거듭 실패해 보류된 메시지**만** 풀고(실패 횟수·보류 표시를 지운다 — 그래프와 이미 들어간 메시지는 그대로) 그 사용자들의 수집을 백그라운드로 다시 시작한다. 바로 응답하며 진행은 `overview`의 `graph.pending_messages`·`held_messages`로 본다. 메시지마다 모델 호출 비용이 들고 수집 상한을 따른다(예산이 없으면 미수집으로 남아 나중에 이어진다). 풀 것이 없으면 0건·`started=false`, 그래프가 꺼진 서버는 409 `graph_disabled`. 접근 기록에 `graph_retry_held`와 결과(`graph_retry_held_done`, `released=N users=M`)가 남는다 |
+
+회원관리 (2026-11-16) — 여기서만 사용자 id 전체와 이메일이 나간다:
+
+| 경로 | 내용 |
+|---|---|
+| `GET /v1/admin/members?query=&status=&role=&limit=50&offset=0` | `{total, counts: {active, pending, suspended}, items[]}` 최근 가입 순. `query`는 아이디·이메일·표시 이름 부분 일치. `counts`는 필터와 무관한 전체 수(승인 대기 배지). 항목: `{user_id, username, email, email_verified, display_name, role, status, is_admin, config_admin, providers[], created_at, last_login_at, consent_version}` |
+| `PATCH /v1/admin/members/{user_id}` `{status?: "active"\|"suspended", role?: "user"\|"admin"}` | 승인(pending→active)·정지·정지 해제·권한 변경 → 바뀐 항목. 정지하면 그 회원의 세션·토큰을 모두 폐기한다. 빈 본문·`pending`·모르는 필드는 422 |
+| `POST /v1/admin/members/{user_id}/revoke-sessions` | 그 회원의 세션 전부 폐기 → `{revoked_sessions}` |
+| `DELETE /v1/admin/members/{user_id}` | 계정과 자료 삭제(되돌릴 수 없다) → `{contacts, conversations, messages, graph_nodes_removed, graph_error}` |
+
+- 자기 보호: 관리자는 자기 자신을 정지·권한 내리기·삭제할 수 없다(409 `cannot_modify_self`). `ADMIN_USERNAMES`의 계정(`config_admin: true`)은 누구도 이 API로 정지·삭제할 수 없다(409 `protected_admin`) — 그래서 관리자가 0명이 되지 않는다.
+- 기록(`admin_access_log`, 바꾸기 전에 적는다): `members` · `member_approve` · `member_suspend` · `member_activate` · `member_role` · `member_revoke_sessions` · `member_delete` → `member_delete_done`. 대상은 `target=u_8f2…a1 name=<아이디>`.
 
 - 기간은 사용량과 같은 하루 경계(KST)의 달력 날짜 N일(오늘 포함). 표본이 없으면 `success_rate`·`acceptance_rate`·`latency_ms`는 null.
 - `tokens`는 `usage_counters` 기준. `estimated_cost_usd`는 `COST_*` 단가가 0이면 null(숫자를 지어내지 않는다).
@@ -133,9 +157,9 @@ settings: `formality·friendliness·directness`(1~5), `length`(shorter/same/long
 |---|---|
 | 400 | `bad_request`, `invalid_host`(허용되지 않은 Host) |
 | 401 | `unauthorized` |
-| 403 | `forbidden`(CSRF·권한), `invalid_invite` |
+| 403 | `forbidden`(CSRF·권한·가입 닫힘), `invalid_invite`, `account_pending`, `account_suspended` |
 | 404 | `not_found` (남의 것도 404) |
-| 409 | `conflict` (버전 충돌, 같은 키·다른 본문, 이미 있는 이름), `graph_disabled` (그래프가 꺼진 서버에서 보류 다시 시도) |
+| 409 | `conflict` (버전 충돌, 같은 키·다른 본문, 이미 있는 이름), `graph_disabled` (그래프가 꺼진 서버에서 보류 다시 시도), `cannot_modify_self`·`protected_admin`(회원관리) |
 | 413 | `payload_too_large` |
 | 422 | `invalid_input`(NUL·깨진 유니코드가 든 본문도 저장 전에 여기서 끝난다), `consent_required`, `quota_exceeded`(사용자별 저장 한도) |
 | 429 | `usage_exceeded`(사용자 하루 한도), `budget_exceeded`(서비스 전체 하루 한도), `rate_limited`, `too_many_attempts` — 모두 `Retry-After`가 붙는다(하루 한도는 한국 시간 자정까지 남은 초) |

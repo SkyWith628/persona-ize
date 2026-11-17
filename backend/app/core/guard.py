@@ -210,6 +210,32 @@ def inspect_production_settings(settings: Settings) -> GuardReport:
         warnings.append(
             "가입이 열려 있는데 REGISTER_INVITE_CODE가 비어 있습니다 — 주소를 아는 누구나 가입할 수 있습니다."
         )
+    if settings.oauth_provider_names:
+        base = settings.public_base_url.strip()
+        if not base.startswith("https://"):
+            errors.append(
+                "소셜 로그인이 켜져 있는데 PUBLIC_BASE_URL이 https:// 주소가 아닙니다 — redirect_uri를 "
+                "요청의 Host 헤더로 만들게 됩니다. 서비스 주소(https://도메인)를 넣으세요."
+            )
+    half = [
+        name
+        for name, pair in (
+            ("GOOGLE", (settings.google_client_id, settings.google_client_secret)),
+            ("KAKAO", (settings.kakao_client_id, settings.kakao_client_secret)),
+        )
+        if bool(pair[0].strip()) != bool(pair[1].strip())
+    ]
+    if half:
+        warnings.append(
+            f"{', '.join(half)}_CLIENT_ID·_CLIENT_SECRET 중 하나만 있습니다 — "
+            "둘 다 있어야 그 소셜 로그인이 켜집니다."
+        )
+    if settings.auth_allow_register and not settings.auth_signup_requires_approval:
+        if settings.oauth_provider_names and not settings.register_invite_code:
+            warnings.append(
+                "소셜 로그인이 켜져 있고 초대 코드·승인제가 모두 꺼져 있습니다 — 구글·카카오 계정이 있는 "
+                "누구나 가입합니다. REGISTER_INVITE_CODE나 AUTH_SIGNUP_REQUIRES_APPROVAL=true를 고려하세요."
+            )
     if settings.rate_limit_per_minute == 0 or settings.rate_limit_auth_per_minute == 0:
         warnings.append(
             "RATE_LIMIT_PER_MINUTE 또는 RATE_LIMIT_AUTH_PER_MINUTE가 0입니다 — 그 요청 제한은 꺼져 있습니다."

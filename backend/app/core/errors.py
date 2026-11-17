@@ -104,3 +104,32 @@ class InvalidInviteError(ForbiddenError):
     """`REGISTER_INVITE_CODE`가 설정돼 있는데 가입 요청의 초대 코드가 없거나 다르다."""
 
     code = "invalid_invite"
+
+
+class SignupClosedError(ForbiddenError):
+    """`AUTH_ALLOW_REGISTER=false`. 응답 코드는 예전과 같은 `forbidden`이다 (소셜 콜백만 따로 구분해 쓴다)."""
+
+
+class AccountPendingError(ForbiddenError):
+    """승인 대기 계정 (`AUTH_SIGNUP_REQUIRES_APPROVAL`). 관리자가 승인하기 전에는 로그인할 수 없다."""
+
+    code = "account_pending"
+
+
+class AccountSuspendedError(ForbiddenError):
+    """정지된 계정. 비밀번호(또는 소셜 로그인)가 맞은 뒤에만 이 응답이 나간다."""
+
+    code = "account_suspended"
+
+
+class EmailInUseError(VersionConflictError):
+    """소셜 로그인의 이메일이 **확인되지 않은** 이메일로 가입한 기존 계정과 같다 — 자동으로 묶지 않는다."""
+
+    code = "email_in_use"
+
+
+class OAuthStateError(DomainError):
+    """소셜 로그인 state가 없거나 맞지 않거나 이미 썼다."""
+
+    status_code = 400
+    code = "oauth_failed"
