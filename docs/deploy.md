@@ -2,6 +2,7 @@
 
 처음 보는 사람이 위에서부터 따라 하면 서비스가 `https://<도메인>`으로 뜨도록 쓴 문서다.
 끝의 [검증한 것과 못 한 것](#15-검증한-것과-못-한-것-2026-11-11)을 먼저 읽어 두면 어디서 막힐 수 있는지 안다.
+옛 브랜치(`design/iphone-mobile`)로 올려 둔 서버를 main으로 옮길 때는 [16장](#16-옛-브랜치로-올린-서버를-main으로-다시-올리기-db-새로-만들기).
 
 관련 파일: `docker-compose.prod.yml` · `docker/caddy/Caddyfile` · `backend/Dockerfile` · `.env.production.example` ·
 `scripts/ops/*.sh` · `scripts/smoke_test.py`
@@ -488,3 +489,415 @@ scripts/ops/compose.sh down -v              # 연습이 끝나면 볼륨까지 �
 - 무중단 배포가 아니다. backend가 다시 뜨는 10~20초 동안 요청이 502를 받는다.
 - 백업의 서버 밖 복사, 모니터링·알림은 이 저장소에 없다.
 - 의존성 버전 고정 파일이 없어 빌드 시점마다 패키지 버전이 달라질 수 있다.
+
+## 16. 옛 브랜치로 올린 서버를 main으로 다시 올리기 (DB 새로 만들기)
+
+대상은 `https://43-203-31-7.sslip.io`(AWS 서울 EC2 한 대, 4GB, 고정 IP 43.203.31.7)다. 2026-11-17 기준으로 이 서버에는
+main이 아니라 옛 브랜치 `design/iphone-mobile`의 11-16 빌드가 떠 있다. 위에서부터 따라 하면 main이 뜨도록 썼다.
+이 절에서 **main은 PR #8(`port/members-mobile` — 회원 상태·승인제·소셜 로그인, 마이그레이션 0012)이 병합된 뒤의 main**이다
+(같은 기능의 PR #7은 닫았다 — `docs/decisions.md` 2026-11-17). 계정·관리자·소셜 로그인의 일반 설명은 3장 7단계와 7-1단계에
+있고, 여기에는 이 서버에서 달라지는 것만 적는다.
+**이 절은 저장소의 파일만 읽고 썼다 — 서버에 접속해 보지 않았고, 어느 명령도 그 서버에서 돌려 보지 못했다**
+([16.11](#1611-확인한-것과-못-한-것-2026-11-17)).
+
+### 16.1 왜 DB를 새로 만드나
+- 서버 DB는 옛 브랜치의 마이그레이션 `0008_members_social_login`(revision id `"0008"`: `users.email`·`role`·`status`,
+  소셜 로그인 표)으로 만들어졌다. main의 `0008_deploy_ready`도 revision id가 `"0008"`인데 내용이 다르다
+  (`users.consented_at`·`consent_version`, `feedback.reason_code`, `admin_access_log`).
+- alembic은 번호만 본다. 그 DB에 main을 올리면 0008을 "적용됨"으로 건너뛰어 `users.consented_at`이 없는 채로 뜨고
+  (로그인 500), `0012_members_social_login`까지 가면 이미 있는 `users.email`을 다시 더하려다 실패해 backend가 재시작을
+  반복한다(0012의 첫 줄이 `users.email` 추가다. 옛 DB로 실제로 올려 본 것은 아니다).
+- 그래서 **PostgreSQL 볼륨을 새로 만든다.** 사용자 id가 전부 새로 생기므로, 그 id(`group_id`)로 묶인
+  **Neo4j 그래프도 함께 비운다.** 기존 계정·대화·첨삭 이력·그래프는 새 서버로 넘어오지 않는다. 사용자는 다시 가입한다.
+
+옛 스택과 main의 차이(옛 것은 `git show design/iphone-mobile:<파일>`로 읽은 것 — 서버에 실제로 그렇게 떠 있는지는 0단계에서 본다):
+
+| | 옛 스택 (`design/iphone-mobile`) | main |
+|---|---|---|
+| env 파일 | `.env.prod` | `.env.production` |
+| compose 프로젝트 이름 | 지정 없음 → **서버 폴더 이름**(예: 폴더가 `persona-ize`면 `persona-ize`) | `persona-ize-prod` 고정 |
+| 서비스 | `postgres` · `neo4j` · `backend` · `proxy`(caddy:2) | `postgres` · `neo4j` · `backend` · `caddy` · `backup` |
+| 볼륨 | `postgres-data` · `neo4j-data` · `hf-cache` · `caddy-data` · `caddy-config` | `postgres-data` · `neo4j-data` · `neo4j-logs` · `caddy-data` · `caddy-config` |
+| 코드 올린 방법 | rsync (서버 폴더가 git 저장소가 아닐 수 있다) | git |
+| 계정 만들기 | `python -m app.tools.create_user` | 둘 다 있다(3장 7단계): `scripts/ops/run.sh scripts/reset_password.py --username <이름> --create`(이름으로 지정한 관리자), `scripts/ops/compose.sh run --rm --no-deps backend python -m app.tools.create_user <아이디> --admin`(권한 관리자) |
+| 승인제에서 가입 응답 | (옛 서버에서 확인하지 않았다) | 202 `{"status":"pending",…}`, 세션 없음. 승인 전 로그인은 403 `account_pending` |
+
+볼륨의 실제 이름은 `<프로젝트>_<볼륨>`이다. 프로젝트 이름이 다르면(예상) **main을 올리는 것만으로 빈 DB·빈 그래프가
+새 볼륨에 만들어지고, 옛 볼륨은 손대지 않은 채 남는다** — 확인이 끝날 때까지 되돌아갈 곳으로 둔다.
+옛 폴더 이름이 `persona-ize-prod`였다면 이름이 겹친다 → 3단계의 "이름이 겹칠 때".
+
+### 16.2 0단계 — 시작 전 확인
+
+**(내 PC에서) 올릴 코드**
+- [ ] PR #8(`port/members-mobile` — 회원 상태·소셜 로그인, 마이그레이션 0012)이 main에 병합됐고 CI가 통과했다.
+      **병합 전의 main을 올리지 않는다** — `AUTH_SIGNUP_REQUIRES_APPROVAL`을 모르는 코드라 승인제가 조용히 꺼진 채 가입이 열린다.
+      닫힌 PR #7의 브랜치(`feat/members-social-login`)도 올리지 않는다 — 0012가 번호만 같고 스키마가 다르다. 서버에서
+      받은 코드가 PR #8의 것인지는 16.6의 확인 줄로 본다.
+- [ ] 올릴 커밋을 정했다. 태그를 붙이면(지금 있는 태그는 `v0.1.0`뿐. 예: `git tag v0.2.0 && git push origin v0.2.0`)
+      `release.yml`이 GHCR에 이미지도 올린다. 태그 없이 main의 커밋 해시로 올려도 된다.
+- [ ] 아이폰 앱·웹 사용자에게 "계정과 데이터가 초기화되고 다시 가입해야 한다"를 알렸다.
+
+**(서버에서) 지금 무엇이 떠 있나** — 옛 스택의 폴더·프로젝트·컨테이너·볼륨 이름은 **모른다.** 아래로 찾아 적어 둔다:
+```bash
+docker version --format '{{.Server.Version}}' && docker compose version   # Engine 25 이상, Compose 2.24 이상이어야 한다(3장 1단계)
+docker compose ls -a          # 프로젝트 이름(NAME)과 compose 파일 경로(CONFIG FILES) → <옛 프로젝트>, <옛 폴더>
+docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}'      # postgres 컨테이너 이름 → <옛 postgres>
+docker volume ls              # <옛 프로젝트>_postgres-data, _neo4j-data, _hf-cache, _caddy-data, _caddy-config 가 보일 것이다
+df -h / && docker system df   # 새 이미지(약 3GB)와 빌드 캐시가 들어갈 자리. 여유가 8GB 아래면 4단계 전에 정리한다
+free -h                       # 스왑 2GB가 있는지 (3장 1단계)
+```
+옛 스택은 Ubuntu 패키지(`docker.io`·`docker-compose-v2`)로 Docker를 깔았다(옛 `ec2_bootstrap.sh`). 버전이 모자라면
+`deploy.sh`의 `up --wait`·`start_interval`이 안 된다 — 3장 1단계 방식으로 올리되, 그 전에 아래 백업을 서버 밖에 둔다
+(패키지를 바꾸는 절차는 확인하지 못했다).
+
+**지킬 데이터가 있는지 본다** (읽기만 한다):
+```bash
+docker exec <옛 postgres> sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "select version_num from alembic_version"'
+#   → 0008 이면 이 절의 전제(옛 브랜치 스키마)가 맞다. 아래 열 목록에 email·role·status가 있고 consented_at이 없으면 확실하다
+docker exec <옛 postgres> sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "select column_name from information_schema.columns where table_name = '"'"'users'"'"' order by 1"'
+docker exec <옛 postgres> sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "select relname, n_live_tup from pg_stat_user_tables order by 2 desc"'
+#   → 표별 행 수(어림값). users·messages·rewrite_requests 가 시험 계정뿐인지, 남의 실제 대화가 있는지 본다
+docker exec <옛 postgres> sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "select username, created_at from users order by created_at"'
+```
+`alembic_version`이 0008이 아니거나 `users`에 `consented_at`이 있으면 **멈춘다** — 전제가 다르다(누가 이미 다른 코드를
+올렸다). 실제 사용자의 대화가 있으면 그 사용자에게 먼저 알리고, 필요하면 옛 화면에서 내보내게 한 뒤 진행한다.
+
+### 16.3 1단계 — 백업 (지킬 것이 없어 보여도 뜬다)
+새 스택의 `scripts/ops/backup.sh`는 옛 스택을 모른다. 옛 컨테이너에서 직접 뜬다:
+```bash
+mkdir -p ~/pz-old && chmod 700 ~/pz-old
+docker exec <옛 postgres> sh -c 'pg_dump -U "$POSTGRES_USER" --format=custom "$POSTGRES_DB"' > ~/pz-old/pz-old-0008-$(date -u +%Y%m%dT%H%M%SZ).dump
+ls -lh ~/pz-old/ && docker exec -i <옛 postgres> pg_restore --list < ~/pz-old/pz-old-0008-*.dump | head -5    # 읽히는 덤프인지
+cp <옛 폴더>/.env.prod ~/pz-old/env.prod.bak && chmod 600 ~/pz-old/*      # 옛 설정(API 키·옛 DB 비밀번호). 되돌릴 때 쓴다
+```
+- 덤프에는 대화 원문이, `env.prod.bak`에는 API 키가 들어 있다. 서버 밖에 둘 때는 암호화한다(6장).
+- **이 덤프는 옛 브랜치 코드로만 읽힌다.** main 스택에 `scripts/ops/restore.sh`로 넣으면 16.1과 같은 이유로 backend가 뜨지 않는다.
+- Neo4j는 덤프하지 않는다. 옛 볼륨을 남겨 두는 동안은 그 볼륨이 백업이고, 지운 뒤에는 PostgreSQL 원문에서 다시 만든다(비용 — 6장).
+
+### 16.4 2단계 — 인증서를 어떻게 할지 정한다
+새 스택의 인증서 볼륨은 `persona-ize-prod_caddy-data`로, 옛 것(`<옛 프로젝트>_caddy-data`)과 다른 볼륨이다. 아무것도 하지
+않으면 Caddy가 같은 이름(`43-203-31-7.sslip.io`)의 인증서를 **새로 받는다.**
+
+Let's Encrypt 발급 한도(https://letsencrypt.org/docs/rate-limits/ — 수치는 바뀔 수 있으니 그 문서가 기준이다): 같은 이름
+묶음의 인증서는 7일에 5장, 등록 도메인 하나에 7일 50장. `sslip.io`는 여러 사람이 함께 쓰는 도메인이라 뒤쪽 한도가
+남의 발급에 영향을 받는지는 **확인하지 못했다.**
+
+- **(권장) 옛 인증서를 새 볼륨으로 옮긴다** — 발급 자체를 하지 않는다. 3단계에서 옛 스택을 내린 직후에 한다:
+  ```bash
+  docker volume create persona-ize-prod_caddy-data
+  docker run --rm --entrypoint sh -v <옛 프로젝트>_caddy-data:/from:ro -v persona-ize-prod_caddy-data:/to \
+    caddy:2-alpine -c 'cp -a /from/. /to/ && ls /to/caddy/certificates/*/'
+  ```
+  마지막 `ls`에 `43-203-31-7.sslip.io` 폴더가 보이면 됐다. 나중에 compose가 "이 볼륨은 Compose가 만든 것이 아니다"라고
+  경고할 수 있다(그대로 쓴다). **이 복사는 해 보지 못했다** — 안 되면 아래로 간다.
+- **새로 받아도 되는 조건**: 최근 7일 동안 이 이름으로 발급된 인증서가 4장 이하다. 브라우저에서
+  `https://crt.sh/?q=43-203-31-7.sslip.io`를 열어 날짜를 센다(11-16에 처음 올렸으니 보통 1~2장이다). 조건이 맞으면 옮기지
+  않고 그냥 올려도 된다. 발급이 거절되면 `scripts/ops/compose.sh logs caddy | grep -i -E "acme|obtain|rate"`에 사유가
+  남고, 한도가 풀릴 때까지 **반복해서 재시작하지 않는다.**
+- 어느 쪽이든 **옛 `caddy-data` 볼륨은 새 서버가 https로 열리는 것을 본 뒤에 지운다.**
+- 고정 IP와 `SITE_ADDRESS`는 그대로다. DNS·보안 그룹(80·443, SSH는 내 IP)은 바꿀 것이 없다.
+
+### 16.5 3단계 — 옛 스택 내리기
+여기서부터 서비스가 끊긴다(새 스택이 뜰 때까지 — 서버에서 빌드하면 10분 안팎으로 본다. 4GB 서버의 빌드 시간은 재지 못했다).
+옛 스택이 80·443을 잡고 있어서 내리지 않으면 새 Caddy가 뜨지 못한다.
+```bash
+cd <옛 폴더>
+docker compose --env-file .env.prod -f docker-compose.prod.yml down        # -v 를 붙이지 않는다: 볼륨(데이터)은 남는다
+docker ps        # 옛 컨테이너가 없어야 한다
+```
+옛 폴더의 compose 파일이 없거나 깨졌으면 `docker compose -p <옛 프로젝트> down`(파일 없이 프로젝트 이름으로 내린다 — 해 보지 못했다).
+인증서를 옮기기로 했으면 지금 16.4의 복사를 한다.
+
+**볼륨 — 무엇을 남기고 무엇을 지우나**
+
+| 볼륨 | 처리 |
+|---|---|
+| `<옛 프로젝트>_postgres-data` · `_neo4j-data` | **확인이 끝날 때까지(16.9) 남긴다** — 되돌아갈 곳이다. 새 스택은 이 볼륨을 쓰지 않는다 |
+| `<옛 프로젝트>_caddy-data` | 새 서버가 https로 열린 뒤에 지운다 |
+| `<옛 프로젝트>_hf-cache` · `_caddy-config` | 지금 지워도 된다(모델 캐시 — main 이미지는 모델을 안에 담는다 / Caddy 자동 저장 설정). 디스크가 모자랄 때 먼저 지운다 |
+
+```bash
+docker volume rm <옛 프로젝트>_hf-cache <옛 프로젝트>_caddy-config        # 되돌릴 때 옛 backend가 모델을 다시 받는다(수 분)
+```
+옛 이미지(`<옛 프로젝트>-backend`)도 확인이 끝날 때까지 지우지 않는다(되돌릴 때 다시 빌드하지 않으려고).
+
+**이름이 겹칠 때**(`docker volume ls`에 이미 `persona-ize-prod_postgres-data`가 있다 = 옛 폴더 이름이 `persona-ize-prod`):
+새 스택이 옛 DB를 그대로 물고 떠서 16.1의 문제가 난다. 이때만 올리기 전에 지운다.
+```bash
+# ⚠ 되돌릴 수 없다. 1단계의 덤프가 읽히는 것을 확인한 뒤에만. 지우면 되돌아갈 곳은 그 덤프뿐이고 그래프는 사라진다.
+docker volume rm persona-ize-prod_postgres-data persona-ize-prod_neo4j-data
+```
+`persona-ize-prod_caddy-data`는 **지우지 않는다** — 새 스택이 그대로 이어 쓴다(인증서 복사가 필요 없다).
+
+### 16.6 4단계 — 코드 올리기 (rsync가 아니라 git)
+옛 폴더는 지우지 않고 이름만 바꿔 둔다(되돌릴 때 쓴다. 폴더 이름을 바꿔도 볼륨 이름은 그대로다 — 그래서 되돌릴 때
+`-p <옛 프로젝트>`를 준다). 새 폴더는 git으로 받는다. 저장소는 비공개다.
+```bash
+cd ~ && mv <옛 폴더> ~/pz-old/code          # 옛 폴더가 ~/persona-ize 가 아니면 생략해도 된다
+```
+**서버에 저장소 접근 권한이 없을 때 — 배포 키(읽기 전용)**:
+```bash
+ssh-keygen -t ed25519 -f ~/.ssh/pz_deploy -N '' -C pz-ec2-deploy && cat ~/.ssh/pz_deploy.pub
+#   → GitHub 저장소 Settings → Deploy keys → Add deploy key (Allow write access 는 끈다)
+GIT_SSH_COMMAND='ssh -i ~/.ssh/pz_deploy -o IdentitiesOnly=yes' git clone git@github.com:SkyWith628/persona-ize.git ~/persona-ize
+cd ~/persona-ize && git config core.sshCommand 'ssh -i ~/.ssh/pz_deploy -o IdentitiesOnly=yes'      # 이후의 git pull·fetch 용
+```
+(https로 받을 수 있는 계정이 서버에 있으면 3장 2단계의 `git clone https://…` 그대로.)
+
+올릴 커밋으로 맞춘다:
+```bash
+cd ~/persona-ize
+git checkout v0.2.0                 # 0단계에서 정한 태그. 태그 없이 main 이면 이 줄을 건너뛴다(clone 직후가 main이다)
+git log --oneline -1 && ls backend/migrations/versions | tail -1        # 0012_members_social_login.py 여야 한다
+grep -c email_verified backend/migrations/versions/0012_members_social_login.py     # 1 이상이어야 한다
+ls backend/app/tools/create_user.py                                     # 있어야 한다
+grep -c AUTH_SIGNUP_REQUIRES_APPROVAL .env.production.example           # 1 이상이어야 한다
+```
+**넷 중 하나라도 어긋나면 멈춘다.** 0012 파일이 없거나 마지막 줄이 0이면 PR #8 이전의 main이다. 0012는 있는데
+`email_verified`가 0이거나 `create_user.py`가 없으면 PR #8이 아닌 다른 0012다(`users.email_verified`와 `create_user`는
+PR #8에만 있다 — `docs/decisions.md` 2026-11-17).
+- 태그를 체크아웃하면 브랜치 위가 아니라서 `deploy.sh`의 `git pull --ff-only`가 실패한다 → 이 절은 전부 `--no-pull`로 돈다.
+- 서버가 GitHub에 닿지 못할 때만: 내 PC에서 `git bundle create pz-main.bundle main` → `scp`로 서버에 → 서버에서
+  `git clone -b main pz-main.bundle ~/persona-ize`. 이력과 커밋 해시가 그대로 온다(해 보지 못했다). rsync로 파일만 덮는
+  방식은 쓰지 않는다 — 서버에 어느 커밋이 떠 있는지 알 수 없게 된다.
+
+### 16.7 5단계 — 환경 파일
+옛 `.env.prod`를 복사해 쓰지 않는다(이름·항목이 다르고, main의 `.env.production.example`에 운영 권장값이 들어 있다).
+```bash
+cd ~/persona-ize && cp .env.production.example .env.production && chmod 600 .env.production && nano .env.production
+```
+예시 파일에서 **이 서버에 맞게 바꿀 값**(나머지는 예시 그대로):
+
+| 설정 | 이 서버의 값 | 이유 |
+|---|---|---|
+| `SITE_ADDRESS` | `43-203-31-7.sslip.io` | `https://` 없이 |
+| `TRUSTED_HOSTS` | 비워 둔다 | compose가 `SITE_ADDRESS`를 넣는다 |
+| `HSTS_MAX_AGE` | `300` 그대로 | 옛 Caddyfile은 1년(31536000)을 보냈다. 새 서버가 며칠 안정된 뒤 올린다 |
+| `POSTGRES_PASSWORD` · `NEO4J_PASSWORD` | 각각 `openssl rand -base64 32 \| tr -d '/+='` 로 **새로** | 새 볼륨이라 이 값으로 초기화된다. 옛 값을 다시 쓰지 않는다. 개발용 기본값·8자 미만(Neo4j)은 거부된다 |
+| `ANTHROPIC_API_KEY` | Console의 키 | `~/pz-old/env.prod.bak`의 키를 옮겨 적거나 새로 발급. Console 월 한도가 걸려 있는지 본다 |
+| `ADMIN_USERNAMES` | 관리자 아이디 **하나** | 대소문자까지 같아야 한다. 이 이름은 화면 가입으로 만들 수 없다(7단계에서 서버에서 만든다). 이 계정은 회원 관리에서 정지·삭제되지 않는다(409 `protected_admin`). 비워 두고 권한(role) 관리자만 두는 길은 3장 7단계 |
+| `AUTH_ALLOW_REGISTER` | `true` | 가입 열림 |
+| `REGISTER_INVITE_CODE` | **6단계: 임시 코드(`openssl rand -hex 6`) → 8단계: 빈 값** | 아이폰 앱(`apps/ios/App/API.swift`)은 `POST /v1/auth/register`에 초대 코드를 보내지 않는다. 처음 올릴 때만 스모크용으로 잠근다 |
+| `AUTH_SIGNUP_REQUIRES_APPROVAL` | **6단계: `false` → 8단계: `true`** | 목표는 승인제. `true`면 화면·앱·소셜 가입이 전부 승인 대기(`pending`)로 만들어지고, 관리자가 승인하기 전에는 로그인할 수 없다. 서버에서 만든 계정(7단계)은 바로 `active`다. 6단계에서 끄는 이유는 아래 |
+| `REQUIRE_CONSENT` | `false` | 가입(`auth_service.signup`)은 `REQUIRE_CONSENT=true`인데 요청에 `consent: true`가 없으면 422 `consent_required`다. 앱은 `consent`를 보내지 않으므로 `true`면 **앱 가입이 전부 막힌다** |
+| `GOOGLE_CLIENT_ID` · `KAKAO_CLIENT_ID` (+`_SECRET`) | 비워 둔다 | 소셜 로그인을 켤 때만(3장 7-1단계). 켜면 `PUBLIC_BASE_URL`이 `https://43-203-31-7.sslip.io`(경로 없이)가 아니면 시작을 거부한다 |
+| `PUBLIC_BASE_URL` | 비워 둔다(소셜을 켜면 위 값) | |
+| `USAGE_GLOBAL_DAILY_REWRITE_LIMIT` · `_TOKEN_LIMIT` | **0이 아닌 값**(예시 2000 / 4000000을 예산에 맞게 낮춘다) | 초대 코드 없이 가입이 열리면 둘 다 0일 때 시작을 거부한다 |
+| `GRAPH_INGEST_DAILY_GLOBAL_CAP` · `GRAPH_INGEST_USER_MESSAGE_CAP` | **0이 아닌 값**(예시 1000 / 300, 하루 최악 약 US$30~40 — 8장) | 초대 코드 없이 가입이 열리면 하루 전체 상한이 0일 때 시작을 거부한다 |
+| `USAGE_DAILY_REWRITE_LIMIT` · `_TOKEN_LIMIT` | 예시 200 / 400000 (옛 서버는 50 / 150000이었다) | 사용자 한 명의 하루 한도 |
+| `ALLOW_UNCAPPED_COSTS` | `false` 그대로 | |
+| `LLM_PROVIDER` · `LLM_MODEL` · `GRAPH_LLM_MODEL` | 예시 그대로(`anthropic` · `claude-opus-5-5` · `claude-haiku-4-5`) | 모델을 바꾸면 `COST_*`도 함께 |
+
+운영 모드(`backend/app/core/guard.py`)가 **시작을 거부**하는 것 — 위 표대로면 걸리지 않는다:
+`AUTH_ALLOW_HEADER_STUB=true` · `SESSION_COOKIE_SECURE=false` · 개발용 DB/Neo4j 비밀번호 · LangSmith 추적 변수(10장) ·
+그래프 상한이 둘 다 0, 또는 (초대 코드 없는 열린 가입 + 그래프 하루 상한 0)인데 API 키가 있음 ·
+(실제 모델 + 초대 코드 없는 열린 가입 + 전체 차단기 둘 다 0) · 소셜 로그인을 켰는데 `PUBLIC_BASE_URL`이 `https://도메인` 꼴이 아님.
+**승인제는 이 검사에서 "가입자 수를 묶는 장치"로 쳐 주지 않는다**(검사는 가입 열림과 초대 코드만 본다) — 승인제를 켜도
+차단기와 그래프 상한은 0이 아니어야 한다. `REQUIRE_CONSENT`는 이 검사에 없다(`false`여도 뜬다).
+
+목표 설정에서 **남는 것이 정상인 경고**: backend 시작 로그와 `deploy.sh`의 "가입이 열려 있는데 REGISTER_INVITE_CODE가 비어
+있습니다 …"(둘 다 승인제가 켜져 있는지는 보지 않고 낸다). 7단계 전에는 "관리자 계정이 아직 없습니다"도 나온다.
+
+**왜 두 번에 나눠 올리나**: `scripts/smoke_test.py`는 임의 계정(`smoke-<16진수 8자>`)으로 가입한 뒤 상대 생성·첨삭까지 간다.
+가입 단계는 201과 세션 쿠키를 기대하는데, 승인제가 켜진 서버는 202(세션 없음)를 준다 → "가입"에서 실패하고 `deploy.sh`가
+"실패: 스모크"로 끝난다. PR #8은 스모크 테스트와 `deploy.sh`의 스모크 부분을 고치지 않았다(가입이 닫힌 서버만
+`--health-only`로 바꿔 준다 — 승인제는 보지 않는다). 게다가 그 계정은 `pending`으로 **남는다**(스모크는 가입에 성공했을 때만
+계정을 지운다). 코드로 읽은 것이다 — 돌려 보지 못했다. 그래서 처음에는 **초대 코드로 잠그고 승인제를 끈 채** 전체 흐름(실제
+모델 첨삭 1회 포함)을 확인하고, 그다음 목표 설정으로 바꾼다. 스모크는 가입할 때 `consent: true`와 초대 코드(컨테이너의
+`REGISTER_INVITE_CODE`)를 스스로 보내므로 `REQUIRE_CONSENT`는 처음부터 `false`여도 된다.
+
+### 16.8 6~8단계 — 올리기, 관리자 계정, 목표 설정으로 바꾸기
+
+**6단계 — 올리기** (`REGISTER_INVITE_CODE=<임시 코드>`, `AUTH_SIGNUP_REQUIRES_APPROVAL=false`인 상태로)
+```bash
+cd ~/persona-ize
+grep -n CHANGE_ME .env.production          # 아무것도 나오지 않아야 한다
+scripts/ops/deploy.sh --no-pull            # 설정 점검 → (새 DB라 백업 건너뜀) → 빌드 → 기동 → healthy 대기 → 스모크(--no-import: 첨삭 1회 비용)
+```
+- 빌드가 메모리 부족으로 죽으면(`Killed`, 종료 코드 137): 스왑을 확인하고(3장 1단계), 그래도 안 되면 태그로 올라간
+  GHCR 이미지를 쓴다 — `.env.production`의 `BACKEND_IMAGE=ghcr.io/skywith628/persona-ize/backend:<태그>`,
+  `docker login ghcr.io`, `scripts/ops/deploy.sh --no-pull --no-build`(4장. 서버에서 받아 띄워 보는 것은 아직 해 보지 못했다).
+- backend가 `Restarting`이면 `scripts/ops/compose.sh logs --tail 50 backend`. `CRITICAL … 서버를 시작하지 않습니다` 아래에
+  고칠 설정 이름이 나온다(12장).
+
+마이그레이션이 0012까지 올라갔는지:
+```bash
+scripts/ops/compose.sh exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "select version_num from alembic_version"'
+#   → 0012
+scripts/ops/compose.sh exec -T backend alembic current        # 0012 (head)  — 같은 것을 alembic으로
+scripts/ops/compose.sh exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "select count(*) from information_schema.columns where table_name = '"'"'users'"'"' and column_name in ('"'"'consented_at'"'"','"'"'consent_version'"'"','"'"'email'"'"','"'"'email_verified'"'"','"'"'role'"'"','"'"'status'"'"')" -c "select to_regclass('"'"'admin_access_log'"'"'), to_regclass('"'"'user_identities'"'"')"'
+#   → 6, 그리고 두 표 이름이 그대로 나온다(빈 칸이면 그 표가 없다). main의 0008과 PR #8의 0012가 둘 다 실제로 적용됐다는 뜻이다
+#     (5면 email_verified가 없다 = 다른 0012다)
+```
+이 세 줄이 "DB가 코드와 맞는가"의 손 검사다(저장소에 이것을 대신하는 스크립트는 없다). 0단계의 같은 조회와 짝이다.
+
+**7단계 — 관리자 계정** — 3장 7단계와 같은 명령이다. `ADMIN_USERNAMES`에 적은 그 아이디로 만든다. 비밀번호는 물어본다
+(8자 이상). 서버에서 만든 계정은 승인제와 상관없이 바로 `active`다(`auth_service.create_account`).
+```bash
+scripts/ops/run.sh scripts/reset_password.py --username <관리자 아이디> --create
+scripts/ops/compose.sh logs --since 10m backend | grep "관리자 계정"      # 다음 재시작부터 이 경고가 사라진다
+```
+- 이 계정은 `ADMIN_USERNAMES`에 이름이 있어서 관리자다(`users.role`은 `user`로 남는다 — 그래도 `is_admin`은 true다).
+  `python -m app.tools.create_user <아이디> --admin`은 **권한**(role=admin)으로 관리자를 만드는 다른 길이다(3장 7단계).
+  이 서버는 이름 쪽 하나만 쓴다 — 시작 로그의 "관리자 계정이 아직 없습니다" 경고가 안내하는 명령이 이것이다.
+  관리자를 더 둘 때는 `/admin`의 회원 관리에서 권한을 올린다.
+- 둘 다 스택이 떠 있어야 한다(PostgreSQL에 붙는다). `run.sh`가 운영 컨테이너에서 이 스크립트를 돌리는 것은 11-11에 로컬
+  운영 구성에서 확인했다(15장). 이 서버에서는 아직이다.
+
+브라우저로 `https://43-203-31-7.sslip.io`에 로그인해 `/admin`이 열리고 "회원 관리" 구획이 보이는지 본다.
+
+**8단계 — 목표 설정으로 바꾼다** (`.env.production`에서 두 줄)
+```
+REGISTER_INVITE_CODE=
+AUTH_SIGNUP_REQUIRES_APPROVAL=true
+```
+```bash
+scripts/ops/compose.sh up -d --no-build --wait        # 값이 바뀐 backend만 다시 만든다(10~20초 끊김)
+scripts/ops/compose.sh exec -T backend python - --base-url https://43-203-31-7.sslip.io --connect-to caddy:443 --health-only < scripts/smoke_test.py
+curl -s https://43-203-31-7.sslip.io/v1/auth/providers
+#   → {"signup_open":true,"requires_approval":true,"invite_required":false,"require_consent":false,"google":false,"kakao":false}
+#   (승인제 여부는 /v1/auth/providers 에만 있다. /v1/auth/config 에는 requires_approval 이 없다)
+```
+
+**승인 흐름 확인** (가입 → 202 `pending` → 승인 전 로그인 403 → 관리자 승인 → 로그인 200). 승인제에서는 가입이 세션을
+주지 않는다 — "가입한 세션으로 API를 불러 본다"는 확인은 성립하지 않고, **로그인이 되는가**로 본다.
+
+화면으로 하는 것이 기본이다: 다른 브라우저(또는 시크릿 창)에서 시험 계정으로 가입 → "승인 대기" 안내가 나오고 로그인되지
+않는다 → 관리자로 `/admin` → 회원 관리 → 그 계정 "승인" → 시험 계정으로 로그인된다 → 회원 관리에서 시험 계정 삭제.
+(회원 관리 화면은 PR #8에 들어 있다. 이 서버에서 눌러 본 것은 아니다.)
+
+같은 것을 API로 볼 때(어디서 돌려도 된다). 요청·응답 모양은 `backend/app/api/routes/auth.py`·`routes/admin.py`·
+`docs/api.md`를 읽고 적었고 **실제로 돌려 보지 못했다.**
+```bash
+BASE=https://43-203-31-7.sslip.io
+# ① 시험 계정으로 가입 — 앱과 똑같이 초대 코드·동의 없이. 202 와 {"status":"pending","username":"approval-check","email":null}
+curl -s -w '\n%{http_code}\n' -X POST "$BASE/v1/auth/register" -H 'Content-Type: application/json' \
+  -d '{"username":"approval-check","password":"<시험용 8자 이상>"}'
+# ② 승인 전 로그인은 403, 본문의 code 가 account_pending (비밀번호가 틀리면 401 이다 — 같은 비밀번호로)
+curl -s -w '\n%{http_code}\n' -X POST "$BASE/v1/auth/login" -H 'Content-Type: application/json' \
+  -d '{"username":"approval-check","password":"<시험용 8자 이상>"}'
+# ③ 관리자 토큰 (비밀번호에 " 나 \ 가 있으면 이 줄이 깨진다 — 그때는 위의 화면으로 한다)
+read -rsp '관리자 비밀번호: ' PW; echo
+TOKEN=$(curl -s -X POST "$BASE/v1/auth/token" -H 'Content-Type: application/json' \
+  -d "{\"username\":\"<관리자 아이디>\",\"password\":\"$PW\",\"client\":\"api\"}" \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])'); unset PW
+# ④ 대기 목록(items[].user_id)에서 user_id 를 찾아 승인한다. 응답의 "status" 가 "active"
+curl -s "$BASE/v1/admin/members?status=pending" -H "Authorization: Bearer $TOKEN"
+curl -s -X PATCH "$BASE/v1/admin/members/<user_id>" -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' -d '{"status":"active","expected_status":"pending"}'
+# ⑤ 승인 뒤에는 ②와 같은 로그인이 200
+curl -s -o /dev/null -w '%{http_code}\n' -X POST "$BASE/v1/auth/login" -H 'Content-Type: application/json' \
+  -d '{"username":"approval-check","password":"<시험용 8자 이상>"}'
+# ⑥ 정리: 시험 계정 삭제(세션도 함께 지워진다), 관리자 토큰 폐기(204)
+curl -s -X DELETE "$BASE/v1/admin/members/<user_id>" -H "Authorization: Bearer $TOKEN"
+curl -s -o /dev/null -w '%{http_code}\n' -X POST "$BASE/v1/auth/logout" -H "Authorization: Bearer $TOKEN"; unset TOKEN
+```
+- Bearer 토큰으로 부르는 쓰기에는 `X-CSRF-Token`이 필요 없다(쿠키 인증일 때만 검사한다).
+- ④의 PATCH 본문에 모르는 필드가 있거나 `status`가 `pending`이면 422다. `expected_status`가 지금 상태와 다르면 409 `member_changed`.
+- 로그인 시도는 제한이 있다(`RATE_LIMIT_AUTH_PER_MINUTE`, 같은 아이디를 거듭 틀리면 429) — 위 순서대로 한 번씩이면 걸리지 않는다.
+
+**아이폰 앱** — 코드로 읽은 것이다(`apps/ios/App/API.swift`의 `signIn`). 앱은 가입 응답(2xx)의 본문에서 `csrf_token`을
+읽는데, 승인제의 202 본문에는 그 값이 없다. 그래서 **계정은 승인 대기로 만들어지지만 앱의 가입 화면은 오류로 끝난다**
+(승인 대기 안내가 아니다). 승인 뒤에는 "가입"이 아니라 **"로그인"**으로 들어가야 한다(같은 아이디로 다시 가입하면 409).
+승인 전에 로그인하면 403 `account_pending`이다. 앱에서 한 번 해 본다: 새 아이디로 가입(오류 문구를 적어 둔다) → `/admin`에서
+승인 → 앱에서 로그인 → 첨삭이 되는지. **앱이 이 두 경우에 실제로 무엇을 보여 주는지는 확인하지 못했다** — 사용자에게는
+"가입 뒤 승인되면 로그인으로 들어온다"를 따로 알린다. 앱이 202를 알게 고치는 것은 이 절의 범위 밖이다(16.12).
+
+### 16.9 올린 뒤 확인표
+`BASE=https://43-203-31-7.sslip.io`. 서버 밖(내 PC)에서 본다 — 닫힌 포트는 밖에서 봐야 뜻이 있다.
+
+| 확인 | 명령 | 기대 |
+|---|---|---|
+| 서비스 상태 | (서버) `scripts/ops/compose.sh ps` | 다섯 서비스 모두 `(healthy)`, 포트가 보이는 것은 caddy뿐 |
+| 깊은 헬스 | `curl -s "$BASE/healthz?deep=true"` | `"status":"ok"`, postgres·neo4j ok (503 `degraded`면 실패) |
+| 가입 설정 | `curl -s "$BASE/v1/auth/providers"` | `signup_open: true`, `requires_approval: true`, `invite_required: false`, `require_consent: false`, `google`·`kakao: false` |
+| http → https | `curl -sI http://43-203-31-7.sslip.io/ \| head -3` | 308, `Location: https://…` |
+| 인증서 | `curl -sI "$BASE/" \| grep -i strict-transport` + 브라우저 자물쇠 | HSTS 있음, 인증서 경고 없음 |
+| 닫힌 포트 | `for p in 5432 7474 7687 8000; do nc -z -w 3 43.203.31.7 $p && echo "$p 열림(문제)" \|\| echo "$p 닫힘"; done` | 넷 다 닫힘 |
+| 문서 화면 꺼짐 | `curl -s -o /dev/null -w '%{http_code}\n' "$BASE/docs"` (`/redoc`, `/openapi.json`도) | 404 |
+| 헤더 인증 거부 | `curl -s -o /dev/null -w '%{http_code}\n' -H 'X-User-Id: demo' "$BASE/v1/contacts"` | 401 |
+| 마이그레이션 | 16.8의 세 줄 | `0012`, 6, 두 표 있음 |
+| 스모크(전체 흐름) | 6단계의 `deploy.sh` 출력 | "스모크 통과 — …" — 승인제를 켜기 **전**에 통과한 것 |
+| 스모크(지금 상태) | `python3 scripts/smoke_test.py --base-url "$BASE" --health-only` | 통과. 승인제가 켜진 뒤에는 `--health-only`만 통과한다(전체를 돌리면 "가입"에서 실패하고 `smoke-…` 계정이 승인 대기로 남는다) |
+| 승인 흐름 | 16.8의 화면 또는 ①~⑥ | 가입 202 `pending` → 로그인 403 `account_pending` → 승인 → 로그인 200 |
+| 관리자 | 브라우저 `$BASE/admin` → 회원 관리 | 관리자 한 명(`ADMIN_USERNAMES`의 그 아이디), 승인 대기 0, 시험 계정(`approval-check`·`smoke-…`) 없음 |
+| 백업 | (서버) `scripts/ops/backup.sh && scripts/ops/backup.sh --list` | 새 덤프 하나 |
+| 배포 기록 | (서버) `tail -2 .deploy/history.log` | 올린 커밋, "성공" |
+
+전부 맞으면 10장의 점검표를 본다. 이 서버에서 **일부러 어긋나게 둔 두 줄**: "`REGISTER_INVITE_CODE`가 있거나 가입이 닫혀
+있다"(→ 승인제로 대신한다), "동의를 받는다(`REQUIRE_CONSENT=true`)"(→ 앱이 동의 값을 보내게 고친 뒤 켠다).
+
+**정리 — 확인이 끝난 뒤, 며칠 써 보고**
+```bash
+# ⚠ 되돌릴 수 없다. 이 줄 뒤에는 옛 서버로 돌아갈 방법이 1단계의 덤프뿐이고, 옛 그래프는 영영 없다.
+docker volume rm <옛 프로젝트>_postgres-data <옛 프로젝트>_neo4j-data <옛 프로젝트>_caddy-data
+docker image ls | grep <옛 프로젝트>      # 옛 backend 이미지 이름을 보고 → docker image rm <이름>
+```
+`~/pz-old`(덤프·옛 env·옛 코드)는 서버 밖으로 암호화해 옮긴 뒤 지운다. 옛 env의 API 키를 새로 발급한 키로 바꿨다면 옛 키는 Console에서 폐기한다.
+
+### 16.10 되돌리기
+새 스택이 뜨지 않거나 확인표에서 막혔을 때, **돌아갈 수 있는 곳은 옛 브랜치 빌드뿐이다**(옛 DB는 옛 코드로만 읽힌다).
+`scripts/ops/rollback.sh`는 여기서 쓸 수 없다 — 직전 이미지(`:previous`)가 없는 첫 배포다.
+
+**옛 볼륨을 아직 지우지 않았을 때** (16.5에서 남겨 둔 경우 — 데이터가 내린 순간 그대로 돌아온다):
+```bash
+cd ~/persona-ize && scripts/ops/compose.sh down            # 새 스택만 내린다. -v 를 붙이지 않는다
+cd ~/pz-old/code                                           # 옛 폴더 (옮기지 않았으면 <옛 폴더>)
+docker compose -p <옛 프로젝트> --env-file .env.prod -f docker-compose.prod.yml up -d
+curl -s "https://43-203-31-7.sslip.io/healthz?deep=true"
+```
+`-p <옛 프로젝트>`를 빼면 폴더 이름(`code`)이 프로젝트 이름이 되어 **빈 볼륨이 새로 생긴다.** `hf-cache`를 지웠으면 옛
+backend가 e5 모델을 다시 받느라 첫 요청이 늦다. 그 사이 새 스택에 쌓인 가입·데이터는 옛 서버에 없다.
+(이 되돌리기는 해 보지 못했다.)
+
+**옛 볼륨을 지웠을 때** (이름이 겹쳤거나 정리 뒤): 1단계의 덤프를 옛 스택에 넣는다. 그래프는 돌아오지 않는다.
+```bash
+cd ~/persona-ize && scripts/ops/compose.sh down
+cd ~/pz-old/code && P="docker compose -p <옛 프로젝트> --env-file .env.prod -f docker-compose.prod.yml"
+$P up -d postgres            # 빈 DB가 옛 .env.prod 의 비밀번호로 만들어진다
+$P exec -T postgres sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --no-owner' < ~/pz-old/pz-old-0008-<시각>.dump
+$P up -d                     # 옛 backend 가 뜨면서 alembic 이 이미 0008 임을 보고 넘어간다
+```
+이름이 겹친 경우에는 그 전에 새 스택의 볼륨을 비워야 옛 비밀번호로 초기화된다(`docker volume rm persona-ize-prod_postgres-data
+persona-ize-prod_neo4j-data` — ⚠ 새 스택의 데이터가 사라진다). 이 복원도 해 보지 못했다.
+
+**옛 덤프의 내용을 main으로 옮기는 길은 없다.** 필요하면 옛 스택을 잠깐 띄워 사용자가 화면에서 내보내고, 새 서버에서 다시 가져온다.
+
+### 16.11 확인한 것과 못 한 것 (2026-11-17)
+- **파일을 읽어 확인한 것** — PR #8(`port/members-mobile`, `39eda7b`)의 코드:
+  - `docker-compose.prod.yml`·`docker/caddy/Caddyfile`·`.env.production.example`·`scripts/ops/*.sh`·`scripts/reset_password.py`.
+  - 승인제: 가입은 202 `{"status":"pending",…}`에 세션·쿠키가 없고, 승인 전 로그인·토큰 발급은 비밀번호가 맞은 뒤 403
+    `account_pending`이다(`backend/app/api/routes/auth.py`·`backend/app/services/auth_service.py`). 서버에서 만든 계정
+    (`reset_password.py --create`·`create_user`)은 승인제여도 `active`다.
+  - 관리자: `backend/app/tools/create_user.py`의 인자는 `<아이디>`·`--admin`·`--reset-password`뿐이고 비밀번호는 물어보거나
+    표준입력으로 받는다. 승인은 `PATCH /v1/admin/members/{user_id}` `{"status":"active"}`(`routes/admin.py`).
+  - 운영 검사(`backend/app/core/guard.py`)가 거부하는 조합은 16.7에 적은 그대로이고, 승인제·`REQUIRE_CONSENT`는 거부 조건에
+    들어 있지 않다. 소셜 로그인을 켜면 `PUBLIC_BASE_URL`이 경로 없는 `https://도메인`이어야 한다.
+  - 스모크: `scripts/smoke_test.py`의 가입 단계는 201만 받는다. `scripts/ops/deploy.sh`는 승인제를 보지 않는다. → 승인제가
+    켜진 서버에서 전체 스모크는 실패한다(PR #8이 고치지 않았다).
+  - 0012(`backend/migrations/versions/0012_members_social_login.py`): `users.email`·`email_verified`·`display_name`·`role`·
+    `status`·`last_login_at`, `user_identities`. `/v1/auth/providers`의 응답 필드.
+  - 아이폰 앱이 가입에 `username`·`password`만 보내고, 응답에서 `csrf_token`을 읽는다는 것(`apps/ios/App/API.swift`).
+  - 옛 브랜치(`design/iphone-mobile`, `c001cbb`)의 compose·Caddyfile·`.env.prod.example`·`0008`·배포 문서는 이 절을 처음 쓸 때
+    읽은 것이다(이번에 다시 읽지 않았다).
+- **못 한 것 — 서버에서 해 봐야 아는 것**: 서버 접속(옛 스택의 실제 폴더·프로젝트·볼륨 이름, Docker 버전, 디스크, 데이터 양을
+  모른다). 이 절의 명령을 어디서도 실행하지 않았다 — 인증서 볼륨 복사, 프로젝트 이름으로 내리기, 승인 흐름의 화면과 curl,
+  두 가지 되돌리기, 4GB 서버에서의 빌드, GHCR 이미지로 띄우기. 옛 DB에 main을 올렸을 때의 실제 실패 모습(16.1).
+  `sslip.io`의 Let's Encrypt 한도 적용 방식. 승인제 서버에서 아이폰 앱의 가입·로그인 화면이 실제로 보여 주는 것.
+  PR #8의 pytest·CI 결과는 여기서 다시 돌리지 않았다.
+- **이 절이 바뀌어야 하는 때**: PR #8이 병합 전에 마이그레이션 번호·환경변수 이름을 바꾸면 16.6의 확인 줄과 16.7의 표를
+  고친다. 스모크 테스트가 승인제를 알게 되면 16.7의 "두 번에 나눠 올리기"와 16.12의 마지막 줄을 지운다. 앱이 202를 알게 되면
+  16.8의 아이폰 앱 문단을 고친다.
+
+### 16.12 앞으로
+- **이미 어딘가에 적용된 마이그레이션은 고치지 않는다.** 바꿀 것이 있으면 새 번호로 더한다.
+- **같은 번호(revision id)를 두 브랜치에서 쓰지 않는다.** 브랜치에서 마이그레이션을 만들었으면 병합 직전에 main의 마지막
+  번호 다음으로 다시 매긴다(`down_revision`도). 번호가 겹친 브랜치는 운영 DB에 닿기 전에 고친다.
+- **배포는 main(태그)에서만 한다.** 브랜치 빌드를 운영 서버에 올리지 않는다 — 시험은 14장의 로컬 구성이나 따로 띄운 서버에서.
+- **코드는 git으로만 올린다**(rsync 금지). 서버에서 `git status`가 깨끗하고 `.deploy/history.log`에 커밋이 남아야 한다.
+- 이 서버의 다음 업데이트: 승인제가 켜져 있는 동안 `scripts/ops/deploy.sh`의 스모크는 실패로 끝나고, 돌릴 때마다
+  `smoke-…` 계정이 승인 대기로 하나씩 남는다(16.7). 스모크 테스트가 승인제를 알기 전까지는 `scripts/ops/deploy.sh --no-smoke`
+  (태그 배포면 `git fetch --tags && git checkout <태그>` 뒤 `--no-pull --no-smoke`) 다음에 16.8의 `--health-only` 스모크와
+  16.9의 표를 본다. 실수로 돌렸으면 `/admin`의 회원 관리에서 `smoke-…` 계정을 지운다.
+- 남은 일(이 절의 범위 밖): 스모크 테스트가 승인제를 알게 하기, 아이폰 앱이 가입 응답 202(승인 대기)를 안내로 보여 주고
+  `consent`를 보내게 하기(그 뒤 `REQUIRE_CONSENT=true`).
