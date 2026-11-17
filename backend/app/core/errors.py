@@ -118,6 +118,22 @@ class AccountPendingError(ForbiddenError):
     code = "account_pending"
 
 
+class AccountExistsError(VersionConflictError):
+    """소셜 로그인의 확인된 이메일이 **비밀번호로 만든** 기존 계정과 같다. 자동으로 연결하지 않는다.
+
+    이메일 가입은 주소 소유를 확인하지 않으므로, 남의 주소로 먼저 가입해 둔 계정에 주인의 소셜 로그인이
+    붙으면 계정을 가로챌 수 있다 (2026-11-17 검토).
+    """
+
+    code = "account_exists"
+
+
+class ConsentMissingError(ForbiddenError):
+    """`REQUIRE_CONSENT` 서버에서 한 번도 동의하지 않은 계정(소셜 가입 등)이 `/v1/auth/*` 밖을 불렀다."""
+
+    code = "consent_required"
+
+
 class AccountSuspendedError(ForbiddenError):
     """정지된 계정. 로그인할 수 없다."""
 

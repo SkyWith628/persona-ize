@@ -54,6 +54,10 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # Before downgrading on a live server: status/role disappear, so suspended and pending accounts
+    # become usable again under the old code. Lock them first (see docs/deploy.md).
+    op.execute("UPDATE users SET password_hash = '!' WHERE status <> 'active'")
+    op.execute("DELETE FROM sessions WHERE user_id IN (SELECT id FROM users WHERE status <> 'active')")
     op.drop_index("ix_user_identities_user", table_name="user_identities")
     op.drop_table("user_identities")
     op.drop_constraint("uq_users_email", "users", type_="unique")

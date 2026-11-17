@@ -27,6 +27,7 @@ AUTH_LIMITED: frozenset[tuple[str, str]] = frozenset(
     {
         ("POST", "/v1/auth/login"),
         ("POST", "/v1/auth/register"),
+        ("POST", "/v1/auth/signup"),
         ("POST", "/v1/auth/token"),
         ("POST", "/v1/auth/password"),
         ("DELETE", "/v1/auth/me"),

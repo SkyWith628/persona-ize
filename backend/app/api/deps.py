@@ -32,7 +32,7 @@ from app.ai.retrieval.composite import CompositeRetriever
 from app.ai.retrieval.vector import VectorStyleRetriever
 from app.ai.workflow import RewriteWorkflow
 from app.core.config import Settings
-from app.core.errors import AccountPendingError, AccountSuspendedError
+from app.core.errors import AccountPendingError, AccountSuspendedError, ConsentMissingError
 from app.domain.auth import Session
 from app.repositories.auth import AuthRepo, InMemoryAuthRepo
 from app.repositories.base import ContactRepo, ConversationRepo, RewriteRepo
@@ -279,10 +279,12 @@ def require_csrf(request: Request, state: AppState, session: Session) -> None:
         raise ForbiddenError("CSRF 토큰이 없거나 맞지 않습니다 (X-CSRF-Token).")
 
 
-async def _require_usable_account(state: AppState, session: Session) -> None:
+async def require_usable_account(state: AppState, session: Session) -> None:
     """승인 대기(pending)·정지(suspended) 계정은 `/v1/auth/*` 밖의 API를 쓸 수 없다 (403).
 
-    `current_user_id`를 거치는 모든 라우트에 걸린다. 정지 때 세션을 폐기하지만 한 번 더 막는다.
+    `current_user_id`를 거치는 모든 라우트와 관리자 API(`require_admin`)에 걸린다. 정지 때 세션을 폐기하지만
+    한 번 더 막는다. `REQUIRE_CONSENT` 서버에서는 한 번도 동의하지 않은 계정도 막는다 — 소셜 가입은 가입
+    때 동의를 받지 않으므로, 화면을 거치지 않고 API를 직접 부르는 길을 닫는다 (동의 API는 열려 있다).
     헤더 스텁 사용자는 계정이 없으므로 이 검사가 없다.
     """
     user = await state.auth_service.me(session)
@@ -290,6 +292,8 @@ async def _require_usable_account(state: AppState, session: Session) -> None:
         raise AccountPendingError("관리자 승인을 기다리는 계정입니다.")
     if user.status == "suspended":
         raise AccountSuspendedError("정지된 계정입니다. 관리자에게 문의하세요.")
+    if state.settings.require_consent and user.consented_at is None:
+        raise ConsentMissingError("약관과 개인정보 처리 안내에 동의한 뒤 쓸 수 있습니다.")
 
 
 async def current_user_id(
@@ -302,7 +306,7 @@ async def current_user_id(
         if session is None:
             raise _bearer_rejected()
         request.state.auth_via = AUTH_VIA_BEARER
-        await _require_usable_account(state, session)
+        await require_usable_account(state, session)
         return str(session.user_id)
     token = request.cookies.get(SESSION_COOKIE)
     if token:
@@ -314,7 +318,7 @@ async def current_user_id(
         ):
             raise ForbiddenError("CSRF 토큰이 없거나 맞지 않습니다 (X-CSRF-Token).")
         request.state.auth_via = AUTH_VIA_COOKIE
-        await _require_usable_account(state, session)
+        await require_usable_account(state, session)
         return str(session.user_id)
     stub = (x_user_id or "").strip()
     # user_id 열은 128자다 — 그보다 긴 값은 DB에 넣다가 500이 되므로 스텁으로 받지 않는다.

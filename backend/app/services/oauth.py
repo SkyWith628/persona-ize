@@ -111,7 +111,10 @@ async def _exchange(provider: str, token_url: str, form: dict[str, str], userinf
                     "oauth token exchange failed provider=%s status=%s", provider, token_response.status_code
                 )
                 raise OAuthError("토큰 교환에 실패했습니다.")
-            access_token = token_response.json().get("access_token")
+            payload = token_response.json()
+            if not isinstance(payload, dict):  # 배열·문자열이 오면 .get에서 죽는다
+                raise OAuthError("토큰 응답을 읽지 못했습니다.")
+            access_token = payload.get("access_token")
             if not isinstance(access_token, str) or not access_token:
                 raise OAuthError("토큰 응답에 access_token이 없습니다.")
             info_response = await client.get(

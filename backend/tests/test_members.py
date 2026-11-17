@@ -362,7 +362,7 @@ def test_oauth_callback_rejects_bad_state_missing_cookie_denial_and_provider_fai
     assert client.get("/v1/auth/me").status_code == 401
 
 
-def test_oauth_links_by_verified_email_but_never_by_unverified_email() -> None:
+def test_oauth_never_links_to_a_password_account_or_by_unverified_email() -> None:
     client = _client()
     owner = _signup(client, "minsu@example.com").json()
 
@@ -374,12 +374,83 @@ def test_oauth_links_by_verified_email_but_never_by_unverified_email() -> None:
     assert other["user_id"] != owner["user_id"] and other["email"] is None
     assert other["username"] == "kakao" and other["providers"] == ["kakao"]
 
-    # 확인된 같은 이메일: 기존 계정에 연결된다
-    linked = _client_sharing(client)
-    _fake(linked, "google", GOOGLE_MINSU)
-    _social_login(linked, "google")
-    me = linked.get("/v1/auth/me").json()
-    assert me["user_id"] == owner["user_id"] and me["providers"] == ["password", "google"]
+    # 확인된 같은 이메일이어도 **비밀번호로 만든 계정**에는 붙이지 않는다 — 이메일 가입은 주소 소유를 확인하지
+    # 않으므로, 남의 주소로 먼저 가입해 둔 사람이 주인의 소셜 로그인을 자기 계정으로 끌어올 수 있다
+    victim = _client_sharing(client)
+    _fake(victim, "google", GOOGLE_MINSU)
+    r = _social_login(victim, "google", "/app")
+    assert r.headers["location"] == "/app?auth_error=account_exists"
+    assert (
+        "pi_session" not in r.headers.get("set-cookie", "") and victim.get("/v1/auth/me").status_code == 401
+    )
+    assert client.get("/v1/auth/me").json()["providers"] == ["password"]  # 먼저 가입한 계정에 연결되지 않았다
+
+
+def test_oauth_links_a_second_provider_to_a_social_only_account_by_verified_email() -> None:
+    client = _client()
+    _fake(client, "google", GOOGLE_MINSU)
+    _social_login(client, "google")
+    first = client.get("/v1/auth/me").json()
+    # 다른 제공자가 같은 이메일을 확인해 주면 소셜 전용 계정에는 연결한다 (양쪽 모두 확인된 이메일)
+    again = _client_sharing(client)
+    kakao = OAuthProfile(subject="k-1", email="minsu@example.com", email_verified=True)
+    _fake(again, "kakao", kakao)
+    assert _social_login(again, "kakao").headers["location"] == "/"
+    me = again.get("/v1/auth/me").json()
+    assert me["user_id"] == first["user_id"] and me["providers"] == ["google", "kakao"]
+
+
+def test_login_failures_are_counted_per_account_not_per_typed_name() -> None:
+    client = _client(auth_max_failures=3, auth_ip_failure_factor=0, auth_name_failure_factor=0)
+    assert _signup(client, "minsu@example.com").json()["username"] == "minsu"
+    fresh = _client_sharing(client)
+
+    def attempt(name: str, password: str = "wrong-password") -> int:
+        return fresh.post("/v1/auth/login", json={"username": name, "password": password}).status_code
+
+    # 아이디와 이메일을 번갈아 틀려도 같은 계정의 실패로 센다 (한도가 두 배가 되지 않는다)
+    assert [attempt("minsu"), attempt("minsu@example.com"), attempt("MINSU@example.com")] == [401, 401, 401]
+    assert attempt("minsu") == 429 and attempt("minsu@example.com", PW) == 429
+
+
+def test_signup_is_rate_limited_like_register() -> None:
+    from app.core.ratelimit import AUTH_LIMITED
+
+    assert ("POST", "/v1/auth/signup") in AUTH_LIMITED and ("POST", "/v1/auth/register") in AUTH_LIMITED
+
+
+def test_social_account_must_consent_before_using_the_api_when_consent_is_required() -> None:
+    client = _client(require_consent=True, auth_allow_header_stub=False)
+    _fake(client, "google", GOOGLE_MINSU)
+    _social_login(client, "google")  # 소셜 가입은 가입 때 동의를 받지 않는다
+    me = client.get("/v1/auth/me").json()
+    assert me["consented_at"] is None and me["consent_current"] is False
+    r = client.get("/v1/contacts")
+    assert (r.status_code, _code(r)) == (403, "consent_required")
+    done = client.post("/v1/auth/consent", json={}, headers={"X-CSRF-Token": me["csrf_token"]})
+    # 동의 응답에도 로그인 수단이 실린다 (빠지면 화면이 비밀번호 계정을 소셜 전용으로 오해한다)
+    assert done.status_code == 200 and done.json()["providers"] == ["google"]
+    assert client.get("/v1/contacts").status_code == 200
+    # 동의를 요구하지 않는 서버에서는 막지 않는다
+    plain = _client(auth_allow_header_stub=False)
+    _fake(plain, "google", GOOGLE_MINSU)
+    _social_login(plain, "google")
+    assert plain.get("/v1/contacts").status_code == 200
+
+
+def test_consent_response_keeps_password_in_providers() -> None:
+    client = _client(require_consent=True)
+    body = client.post(
+        "/v1/auth/register", json={"username": "minsu", "password": PW, "consent": True}
+    ).json()
+    done = client.post("/v1/auth/consent", json={}, headers={"X-CSRF-Token": body["csrf_token"]})
+    assert done.json()["providers"] == ["password"]
+
+
+def test_token_response_that_is_not_an_object_is_an_oauth_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    _mock_http(monkeypatch, lambda _: httpx.Response(200, json=["not", "an", "object"]))
+    with pytest.raises(OAuthError):
+        asyncio.run(GoogleProvider("gid", "s").fetch_profile(code="c", redirect_uri="r", code_verifier=None))
 
 
 def test_new_social_accounts_follow_signup_policy_but_existing_ones_still_log_in() -> None:
@@ -491,7 +562,32 @@ def test_member_service_approves_suspends_promotes_and_deletes() -> None:
     asyncio.run(scenario())
     actions = [action for action, _ in log.lines]
     assert actions.count("member_update") == 4 and actions[-2:] == ["member_revoke_sessions", "member_delete"]
-    assert ("member_delete", f"target={'wait'}") in log.lines
+    assert any(a == "member_delete" and d.startswith("target=wait id=u_") for a, d in log.lines)
+
+
+def test_configured_admin_cannot_be_suspended_demoted_or_deleted_from_the_screen() -> None:
+    client = _client(admin_usernames="boss")
+    state = _state(client)
+    log = _Log()
+    service = MemberAdminService(state.auth, state.auth_service, state.deletion_service, log)
+
+    async def scenario() -> None:
+        boss = await state.auth_service.create_account("boss", PW)
+        other = await state.auth_service.create_account("helper", PW)
+        await state.auth.update_user(other.id, role="admin")  # role로 관리자가 된 사람
+        for kwargs in ({"status": "suspended", "role": None}, {"status": None, "role": "user"}):
+            with pytest.raises(InvalidInputError):
+                await service.update_member(other.id, boss.id, **kwargs)
+        with pytest.raises(InvalidInputError):
+            await service.delete_member(other.id, boss.id)
+        assert (await state.auth.get_user(boss.id)).status == "active"
+        # 거부한 요청은 기록에도 남기지 않는다 (바꾼 것이 없다)
+        assert log.lines == []
+        # 설정 관리자는 role 관리자를 내릴 수 있다
+        demoted = await service.update_member(boss.id, other.id, status=None, role="user")
+        assert demoted.is_admin is False
+
+    asyncio.run(scenario())
 
 
 # ---------- 제공자 HTTP (모의 전송) ----------
@@ -644,6 +740,12 @@ def test_admin_members_api_approves_promotes_and_records(pg_client: TestClient) 
         ).status_code
         == 403
     )
+
+    # 승인 대기 계정은 role=admin을 받아도 관리자 API를 쓰지 못한다 (스스로를 승인하지 못하게)
+    client.portal.call(functools.partial(_state(client).auth.update_user, UUID(member_id), role="admin"))  # type: ignore[union-attr]
+    r = client.get("/v1/admin/members")
+    assert (r.status_code, _code(r)) == (403, "account_pending")
+    client.portal.call(functools.partial(_state(client).auth.update_user, UUID(member_id), role="user"))  # type: ignore[union-attr]
 
     boss = _login(client, "mboss")
     page = client.get("/v1/admin/members", params={"status": "pending", "query": f"M{tag}@"})

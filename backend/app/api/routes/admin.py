@@ -20,7 +20,14 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request, Response
 
-from app.api.deps import SAFE_METHODS, AppState, State, current_session, require_csrf
+from app.api.deps import (
+    SAFE_METHODS,
+    AppState,
+    State,
+    current_session,
+    require_csrf,
+    require_usable_account,
+)
 from app.api.schemas_auth import AccountDeletionOut, MemberOut, MemberPage, MemberPatch, RevokeSessionsOut
 from app.domain.auth import UserStatus
 from app.services.admin_service import (
@@ -89,6 +96,9 @@ async def require_admin(request: Request, state: State) -> AdminAccess:
             " (ADMIN_USERNAMES와 대소문자만 다른 이름)" if near else "",
         )
         raise AdminForbiddenError("관리자만 볼 수 있습니다.")
+    # 관리자여도 승인 대기·정지 계정은 관리자 API를 쓰지 못한다
+    # (role만 받은 pending 계정이 스스로를 승인하지 못하게).
+    await require_usable_account(state, session)
     if request.method not in SAFE_METHODS:  # 쓰기(보류 다시 시도)는 쿠키 인증이면 CSRF 토큰이 맞아야 한다
         require_csrf(request, state, session)
     if state.engine is None:

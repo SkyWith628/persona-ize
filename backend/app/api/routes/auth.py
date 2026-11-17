@@ -35,7 +35,13 @@ from app.api.schemas_auth import (
     TokenIn,
     TokenOut,
 )
-from app.core.errors import AccountSuspendedError, DomainError, NotFoundError, SignupClosedError
+from app.core.errors import (
+    AccountExistsError,
+    AccountSuspendedError,
+    DomainError,
+    NotFoundError,
+    SignupClosedError,
+)
 from app.core.security import tokens_equal
 from app.domain.auth import AuthResult, User
 from app.services.oauth import OAuthError, OAuthProvider, new_pkce_verifier, pkce_challenge
@@ -276,6 +282,8 @@ async def oauth_callback(
         return _fail("oauth_failed", saved)
     except SignupClosedError:
         return _fail("signup_closed", saved)
+    except AccountExistsError:
+        return _fail("account_exists", saved)  # 같은 이메일의 비밀번호 계정이 있다
     except AccountSuspendedError:
         return _fail("account_suspended", saved)
     except DomainError as exc:
@@ -347,7 +355,12 @@ async def consent(request: Request, state: State, body: ConsentIn | None = None)
     session = await current_session(request, state)
     require_csrf(request, state, session)
     user = await state.auth_service.record_consent(session)
-    return MeOut(**_account(state, user), csrf_token=session.csrf_token)
+    return MeOut(
+        **_account(state, user),
+        csrf_token=session.csrf_token,
+        # 빼면 기본값 []가 내려가 화면이 비밀번호 계정을 소셜 전용으로 오해한다
+        providers=await state.auth_service.providers_of(user),  # type: ignore[arg-type]
+    )
 
 
 @router.delete("/me", response_model=AccountDeletionOut)

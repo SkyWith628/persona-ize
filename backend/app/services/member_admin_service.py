@@ -4,6 +4,8 @@
   승인·정지할 대상을 가리켜야 하기 때문이다. 대화 원문·첨삭 문장은 여전히 없다.
 - 모든 호출은 자료를 읽거나 바꾸기 **전에** `admin_access_log`에 남긴다 (기록에 실패하면 멈춘다).
 - 자기 자신은 정지·강등·삭제할 수 없다 (마지막 관리자가 스스로를 잠그는 것을 막는다).
+- `ADMIN_USERNAMES`로 지정된 초기 관리자는 누구도 정지·권한 변경·삭제할 수 없다 — 그 권한은 설정 파일이
+  정하고(role을 바꿔도 관리자다), 정지되면 서버에서 DB를 고쳐야만 풀린다.
 - 정지하면 그 사용자의 세션을 모두 폐기한다. pending → active가 승인이다.
 """
 
@@ -17,6 +19,7 @@ from uuid import UUID
 from app.core.errors import InvalidInputError
 from app.domain.auth import Role, User, UserStatus
 from app.repositories.auth import AuthRepo
+from app.services.admin_service import short_user_id
 from app.services.auth_service import AuthService
 from app.services.deletion_service import AccountDeletion, DeletionService
 
@@ -39,6 +42,11 @@ class MemberAdminService:
         self._auth_service = auth_service
         self._deletion = deletion
         self._record = record
+
+    @staticmethod
+    def _target(user: User) -> str:
+        """기록에 남기는 대상: 이름과 줄인 id (같은 이름이 지워졌다 다시 만들어져도 구분된다)."""
+        return f"target={user.username} id={short_user_id(str(user.id))}"
 
     async def _view(self, user: User) -> MemberView:
         return MemberView(
@@ -75,8 +83,12 @@ class MemberAdminService:
         target = await self._auth.get_user(user_id)  # 없으면 404
         if user_id == admin_id and (status == "suspended" or role == "user"):
             raise InvalidInputError("자기 자신을 정지하거나 관리자에서 내릴 수 없습니다.")
+        if self._auth_service.is_config_admin(target) and (status == "suspended" or role is not None):
+            raise InvalidInputError(
+                "설정(ADMIN_USERNAMES)으로 지정된 관리자는 여기서 정지하거나 권한을 바꿀 수 없습니다."
+            )
         await self._record(
-            "member_update", f"target={target.username} status={status or '-'} role={role or '-'}"
+            "member_update", f"{self._target(target)} status={status or '-'} role={role or '-'}"
         )
         updated = await self._auth.update_user(user_id, status=status, role=role)
         if status == "suspended":
@@ -85,12 +97,14 @@ class MemberAdminService:
 
     async def revoke_sessions(self, user_id: UUID) -> int:
         target = await self._auth.get_user(user_id)
-        await self._record("member_revoke_sessions", f"target={target.username}")
+        await self._record("member_revoke_sessions", self._target(target))
         return await self._auth.revoke_all_sessions(user_id, datetime.now(UTC))
 
     async def delete_member(self, admin_id: UUID, user_id: UUID) -> AccountDeletion:
         if user_id == admin_id:
             raise InvalidInputError("자기 자신은 여기서 지울 수 없습니다 (내 계정 삭제를 쓰세요).")
         target = await self._auth.get_user(user_id)
-        await self._record("member_delete", f"target={target.username}")
+        if self._auth_service.is_config_admin(target):
+            raise InvalidInputError("설정(ADMIN_USERNAMES)으로 지정된 관리자는 여기서 지울 수 없습니다.")
+        await self._record("member_delete", self._target(target))
         return await self._deletion.delete_account_as_admin(user_id)

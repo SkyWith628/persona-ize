@@ -26,6 +26,7 @@ from datetime import UTC, datetime, timedelta
 
 from app.core.config import Settings
 from app.core.errors import (
+    AccountExistsError,
     AccountSuspendedError,
     ConsentRequiredError,
     ForbiddenError,
@@ -374,20 +375,30 @@ class AuthService:
         # 없는 이름·비밀번호 없는(소셜 전용) 계정이어도 해시 한 번을 똑같이 계산한다 —
         # 응답 시간으로 가입 여부를 알아낼 수 없게.
         real_hash = found[1] if found is not None else None
+        # 실패는 **계정 기준**으로 센다: 같은 계정을 아이디와 이메일로 번갈아 틀려도 한도가 늘지 않게.
+        # 없는 계정은 입력한 문자열로 센다 (밖에서는 같은 횟수에 같은 잠금이라 가입 여부가 드러나지 않는다).
+        key = found[0].username.lower() if found is not None else name
+        wait = self._login_limits.retry_after(key, ip, now) if key != name else None
         password_ok = await verify_password_async(password, real_hash or _DECOY_HASH)
+        if wait is not None:
+            raise TooManyAttemptsError(
+                f"로그인 시도가 너무 많습니다. {wait}초 뒤에 다시 시도하세요.", retry_after=wait
+            )
         if found is None or real_hash is None or not password_ok:
-            self._login_limits.record_failure(name, ip, now)
+            self._login_limits.record_failure(key, ip, now)
             raise UnauthorizedError("이름 또는 비밀번호가 맞지 않습니다.")
-        self._login_limits.record_success(name, ip)
+        self._login_limits.record_success(key, ip)
         self._require_not_suspended(found[0])
         return await self._open_session(found[0])
 
     # ---- 소셜 로그인 ----
 
     async def login_with_identity(self, provider: str, profile: OAuthProfile) -> AuthResult:
-        """소셜 로그인. 연결된 계정 → **확인된** 이메일이 같은 기존 계정에 연결 → 새 계정 순.
+        """소셜 로그인. 연결된 계정 → **확인된** 이메일이 같은 **소셜 전용** 계정에 연결 → 새 계정 순.
 
-        확인되지 않은 이메일로는 절대 연결하지 않는다 (남의 주소를 적어 계정을 가로채는 것을 막는다).
+        연결은 양쪽 이메일이 모두 확인된 경우에만 한다: 제공자가 확인하지 않은 이메일로는 연결하지 않고,
+        비밀번호로 만든 계정(이메일 가입 — 주소 소유를 확인한 적이 없다)에도 자동으로 붙이지 않는다
+        (`AccountExistsError`). 남의 주소로 먼저 가입해 둔 계정에 주인의 소셜 로그인이 붙는 것을 막는다.
         """
         identity = await self._repo.find_identity(provider, profile.subject)
         if identity is not None:
@@ -402,6 +413,10 @@ class AuthService:
         if verified_email is not None:
             found = await self._repo.find_user_by_email(verified_email)
             if found is not None:
+                if found[1] is not None:  # 비밀번호 계정 — 그 이메일은 우리 쪽에서 확인된 적이 없다
+                    raise AccountExistsError(
+                        "같은 이메일로 가입한 계정이 있습니다. 그 계정의 비밀번호로 로그인하세요."
+                    )
                 return await self._attach(found[0], provider, profile, created=False)
         self._require_social_signup_open()
         # 확인되지 않은 이메일은 계정의 이메일로 삼지 않는다 (연결 기록에만 참고로 남긴다).
@@ -511,6 +526,10 @@ class AuthService:
     def is_admin(self, user: User) -> bool:
         """역할이 admin이거나 `ADMIN_USERNAMES`에 적힌 이름(초기 관리자, 대소문자까지 일치)."""
         return user.role == "admin" or self._settings.is_admin_name(user.username)
+
+    def is_config_admin(self, user: User) -> bool:
+        """`ADMIN_USERNAMES`로 지정된 초기 관리자인가. 이 계정은 화면에서 정지·강등·삭제할 수 없다."""
+        return self._settings.is_admin_name(user.username)
 
     async def providers_of(self, user: User) -> list[str]:
         """로그인 수단: 비밀번호가 있으면 password, 그리고 연결된 소셜 제공자."""
