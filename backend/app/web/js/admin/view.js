@@ -26,6 +26,7 @@ import {
   num,
   percent,
   providersText,
+  roleText,
   share,
   usd,
 } from "./format.js";
@@ -560,6 +561,7 @@ export function renderMembers(root, page, actions = {}) {
           type: "button",
           class: a.danger ? "btn small danger" : "btn small ghost",
           "aria-label": `${m.username} ${a.label}`,
+          "data-user-id": m.user_id,
           text: a.label,
         });
         button.addEventListener("click", () => actions.onAction?.(a, m, button));
@@ -585,7 +587,7 @@ export function renderMembers(root, page, actions = {}) {
             return tag(s.kind, s.text);
           },
         },
-        { title: "권한", cell: (m) => (m.is_admin ? tag("ok", "관리자") : "일반") },
+        { title: "권한", cell: (m) => (m.is_admin ? tag("ok", roleText(m)) : roleText(m)) },
         { title: "로그인 수단", cell: (m) => providersText(m.providers) },
         { title: "가입", cell: (m) => timeCell(m.created_at) },
         { title: "마지막 로그인", cell: (m) => timeCell(m.last_login_at) },

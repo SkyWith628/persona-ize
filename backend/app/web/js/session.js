@@ -55,7 +55,10 @@ export async function signupEmail(payload) {
 
 export async function acceptConsent() {
   const me = await api.consent();
-  entered({ ...me, csrf_token: me.csrf_token || store.csrf });
+  // 옛 서버는 동의 응답에 providers를 싣지 않는다(빈 목록) — 그대로 받으면 비밀번호 계정이 소셜 전용으로
+  // 보여 비밀번호 변경 폼이 사라진다. 응답에 값이 있을 때만 바꾸고 아니면 알고 있던 값을 지킨다.
+  const providers = Array.isArray(me.providers) && me.providers.length ? me.providers : (store.me?.providers ?? undefined);
+  entered({ ...me, providers, csrf_token: me.csrf_token || store.csrf });
   store.emit("session");
 }
 

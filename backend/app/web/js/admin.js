@@ -49,6 +49,8 @@ const state = {
   membersStatus: "", // "" | "pending" | "suspended"
   membersQuery: "",
   membersSeq: 0,
+  membersShownOffset: 0, // 지금 화면에 그려진 쪽 (넘기다 실패하면 여기로 되돌린다)
+  membersHasNext: false,
   selfId: null, // 지금 관리자의 사용자 id (자기 자신에게는 정지·삭제 버튼을 내지 않는다)
   loadedOnce: false,
   pending: 0, // 진행 중인 불러오기 수 (0이 되면 '바쁨' 표시를 뗀다)
@@ -179,44 +181,93 @@ function renderMembersPager(page) {
   $("members-next").disabled = to >= page.total;
 }
 
+/** 입력 칸에 지금 적힌 검색어를 쓴다 (칸을 비웠는데 예전 검색어로 계속 걸러지지 않게). */
+function syncMembersQuery() {
+  state.membersQuery = $("members-query").value.trim();
+}
+
+/**
+ * 회원 목록을 읽어 그린다. 그 사이 더 새로운 요청이 나갔으면 성공이든 실패든 버린다
+ * (늦게 실패한 옛 요청이 최신 표를 '불러오지 못했습니다'로 덮지 않게).
+ */
 async function loadMembers() {
   const seq = ++state.membersSeq;
+  const shown = state.membersShownOffset; // 지금 화면에 그려진 쪽
   $("members-prev").disabled = true;
   $("members-next").disabled = true;
   const params = new URLSearchParams({ limit: String(MEMBERS_PAGE), offset: String(state.membersOffset) });
   if (state.membersStatus) params.set("status", state.membersStatus);
   if (state.membersQuery) params.set("query", state.membersQuery);
-  const page = await getJson(`/v1/admin/members?${params}`);
+  let page;
+  try {
+    page = await getJson(`/v1/admin/members?${params}`);
+  } catch (error) {
+    if (seq !== state.membersSeq) return; // 옛 요청의 실패는 버린다
+    // 넘기려던 쪽으로 가지 못했다 — 보이는 쪽으로 되돌리고 쪽 넘김 버튼을 다시 켠다
+    state.membersOffset = shown;
+    $("members-prev").disabled = shown <= 0;
+    $("members-next").disabled = !state.membersHasNext;
+    throw error;
+  }
   if (seq !== state.membersSeq) return;
+  // 마지막 쪽의 마지막 회원을 지웠거나 필터에서 빠졌다 — 남은 마지막 쪽으로 물러난다
+  if (!page.items.length && page.total > 0 && state.membersOffset > 0) {
+    state.membersOffset = Math.floor((page.total - 1) / MEMBERS_PAGE) * MEMBERS_PAGE;
+    await loadMembers();
+    return;
+  }
+  state.membersShownOffset = state.membersOffset;
+  state.membersHasNext = state.membersOffset + page.items.length < page.total;
   renderMembers($("t-members"), page, { selfId: state.selfId, onAction: memberAction });
   renderMembersPager(page);
+}
+
+/** 표를 다시 그린 뒤 포커스를 돌려놓는다: 같은 회원 줄의 첫 버튼, 없으면 결과 안내. */
+function restoreMembersFocus(userId) {
+  const buttons = [...$("t-members").querySelectorAll("button[data-user-id]")];
+  const target = buttons.find((b) => b.dataset.userId === userId);
+  if (target) {
+    target.focus();
+    return;
+  }
+  const note = $("members-status");
+  note.setAttribute("tabindex", "-1");
+  note.focus();
 }
 
 /** 회원 한 줄의 버튼: 확인 → 보내기 → 결과 안내 → 목록과 접근 기록을 새로 읽는다. */
 async function memberAction(action, member, button) {
   if (!window.confirm(action.confirm)) return;
   const note = $("members-status");
-  button.disabled = true;
+  // 같은 줄의 다른 버튼도 함께 잠근다 (삭제가 가는 동안 정지를 눌러 겹쳐 보내지 않게)
+  const row = [...(button.closest(".row-actions")?.querySelectorAll("button") ?? [button])];
+  for (const b of row) b.disabled = true;
   busy(+1);
   note.classList.remove("error");
   note.textContent = "처리하는 중입니다…";
+  let failed = null;
   try {
     // 토큰은 누를 때마다 새로 읽는다 (다른 탭에서 다시 로그인했을 수 있다)
     const me = await getJson("/v1/auth/me");
     const result = await writeJson(action.method, action.path, me.csrf_token, action.body);
     note.textContent = memberResultText(action, member, result);
   } catch (error) {
-    button.disabled = false;
-    if (gateFor(error)) handleError(error);
-    else {
-      note.classList.add("error");
-      note.textContent = `처리하지 못했습니다. ${error.message}`;
-    }
-    return;
+    failed = error;
   } finally {
     busy(-1);
   }
+  if (failed) {
+    if (gateFor(failed)) {
+      handleError(failed);
+      return;
+    }
+    note.classList.add("error");
+    note.textContent = `처리하지 못했습니다. ${failed.message}`;
+    // 이미 지워졌거나 상태가 바뀐 회원일 수 있다(404·422) — 아래에서 목록을 다시 읽어 낡은 줄을 없앤다
+  }
   if (await loadInto($("t-members"), loadMembers)) return;
+  restoreMembersFocus(member.user_id);
+  if (failed) return;
   await loadInto($("t-access"), async () =>
     renderAccess($("t-access"), await getJson(`/v1/admin/access-log?limit=${ACCESS_LIMIT}`)),
   );
@@ -225,6 +276,7 @@ async function memberAction(action, member, button) {
 async function changeMembersFilter(status) {
   state.membersStatus = status;
   state.membersOffset = 0;
+  syncMembersQuery();
   for (const chip of document.querySelectorAll("[data-member-status]")) {
     chip.setAttribute("aria-pressed", String(chip.dataset.memberStatus === status));
   }
@@ -330,7 +382,13 @@ for (const chip of document.querySelectorAll("[data-member-status]")) {
 }
 $("members-search").addEventListener("submit", (e) => {
   e.preventDefault();
-  state.membersQuery = $("members-query").value.trim();
+  syncMembersQuery();
+  state.membersOffset = 0;
+  loadInto($("t-members"), loadMembers);
+});
+$("members-query").addEventListener("search", () => {
+  if ($("members-query").value.trim() || !state.membersQuery) return;
+  state.membersQuery = "";
   state.membersOffset = 0;
   loadInto($("t-members"), loadMembers);
 });

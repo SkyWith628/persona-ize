@@ -173,6 +173,17 @@ export function providersText(providers) {
   return list.length ? list.map((p) => PROVIDER_LABEL[p] ?? p).join(" · ") : "–";
 }
 
+/** 설정(ADMIN_USERNAMES)으로 지정된 관리자인가: 관리자인데 역할(role)은 admin이 아니다. */
+export function isConfigAdmin(member) {
+  return member.is_admin === true && member.role !== "admin";
+}
+
+/** '권한' 칸의 문구. */
+export function roleText(member) {
+  if (isConfigAdmin(member)) return "관리자 (설정으로 지정)";
+  return member.is_admin ? "관리자" : "일반";
+}
+
 /**
  * 회원 한 줄에서 할 수 있는 일. 자기 자신에게는 정지·강등·삭제를 내지 않는다(서버도 거부한다).
  * 각 항목: { key, label, method, path, body?, confirm, danger? } — confirm은 누르기 전에 받는 확인 문장.
@@ -181,6 +192,8 @@ export function memberActions(member, selfId) {
   const base = `/v1/admin/members/${encodeURIComponent(member.user_id)}`;
   const who = member.email ? `${member.username}(${member.email})` : member.username;
   const isSelf = member.user_id === selfId;
+  // 설정(ADMIN_USERNAMES)으로 지정된 관리자: 권한은 설정 파일이 정하고, 서버가 정지·권한 변경·삭제를 거부한다
+  const fixedAdmin = isConfigAdmin(member);
   const actions = [];
   if (member.status === "pending") {
     actions.push({ key: "approve", label: "승인", method: "PATCH", path: base, body: { status: "active" }, confirm: `${who} 님의 가입을 승인할까요? 승인하면 바로 서비스를 쓸 수 있습니다.` });
@@ -189,6 +202,10 @@ export function memberActions(member, selfId) {
     actions.push({ key: "restore", label: "정지 풀기", method: "PATCH", path: base, body: { status: "active" }, confirm: `${who} 님의 정지를 풀까요?` });
   }
   if (isSelf) return actions;
+  if (fixedAdmin) {
+    actions.push({ key: "logout", label: "강제 로그아웃", method: "POST", path: `${base}/revoke-sessions`, confirm: `${who} 님을 모든 기기에서 로그아웃시킬까요?` });
+    return actions;
+  }
   if (member.status !== "suspended") {
     actions.push({ key: "suspend", label: "정지", method: "PATCH", path: base, body: { status: "suspended" }, confirm: `${who} 님을 정지할까요? 모든 기기에서 로그아웃되고 다시 로그인할 수 없습니다.` });
   }

@@ -234,7 +234,7 @@ test("쓰기 요청에만 CSRF 토큰을 싣는다", () => {
 
 // ---------- 회원관리 ----------
 
-const { memberActions, memberResultText, providersText } = await import("../js/admin/format.js");
+const { isConfigAdmin, memberActions, memberResultText, providersText, roleText } = await import("../js/admin/format.js");
 
 const member = (over = {}) => ({
   user_id: "11111111-2222-3333-4444-555555555555",
@@ -279,3 +279,17 @@ test("로그인 수단과 결과 문장", () => {
   assert.equal(memberResultText(suspend, member(), {}), "minsu 님: 정지했습니다.");
   assert.equal(memberResultText(logout, member(), { revoked: 2 }), "minsu 님을 로그아웃시켰습니다 (세션 2개).");
 });
+
+test("설정으로 지정된 관리자에게는 강제 로그아웃만 낸다 (정지·권한·삭제는 서버가 거부한다)", () => {
+  const boss = member({ username: "boss", is_admin: true, role: "user" });
+  assert.equal(isConfigAdmin(boss), true);
+  assert.equal(roleText(boss), "관리자 (설정으로 지정)");
+  assert.deepEqual(memberActions(boss, "someone-else").map((a) => a.key), ["logout"]);
+  // 역할로 관리자가 된 사람은 내릴 수 있다
+  const helper = member({ is_admin: true, role: "admin" });
+  assert.equal(isConfigAdmin(helper), false);
+  assert.equal(roleText(helper), "관리자");
+  assert.equal(roleText(member({ is_admin: false })), "일반");
+  assert.ok(memberActions(helper, "x").some((a) => a.key === "demote"));
+});
+

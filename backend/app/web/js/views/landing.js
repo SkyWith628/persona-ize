@@ -17,6 +17,7 @@ const AUTH_ERROR_TEXT = {
   oauth_failed: "소셜 로그인을 끝내지 못했어요. 다시 시도해 주세요.",
   signup_closed: "지금은 이 방법으로 새로 가입할 수 없어요. 이미 계정이 있으면 그 계정으로 로그인해 주세요.",
   account_suspended: "정지된 계정이에요. 관리자에게 문의해 주세요.",
+  account_exists: "같은 이메일로 가입한 계정이 이미 있어요. 그 계정의 비밀번호로 로그인해 주세요.",
 };
 const SOCIAL = [
   ["google", "Google로 계속하기"],
