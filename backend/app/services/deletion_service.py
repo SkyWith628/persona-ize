@@ -15,7 +15,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 from app.core.security import verify_password_async
-from app.domain.auth import Session
+from app.domain.auth import Session, User
 from app.domain.conversation import exception_kind
 from app.repositories.auth import AuthRepo
 from app.repositories.base import ContactRepo, ConversationRepo, RewriteRepo
@@ -88,8 +88,18 @@ class DeletionService:
         user = await self._auth.get_user(session.user_id)
         found = await self._auth.find_user_by_username(user.username)
         # 비밀번호 해시(scrypt)는 수십 ms짜리 CPU 작업이다 — 이벤트 루프 밖에서 확인한다.
-        if found is None or not await verify_password_async(password, found[1]):
+        if found is None:
             raise UnauthorizedError("비밀번호가 맞지 않습니다.")
+        # 소셜 전용 계정(비밀번호 없음)은 세션·CSRF만으로 지운다 — 재확인할 비밀번호가 없다.
+        if found[1] is not None and not await verify_password_async(password, found[1]):
+            raise UnauthorizedError("비밀번호가 맞지 않습니다.")
+        return await self._wipe(user)
+
+    async def delete_account_as_admin(self, user_id: UUID) -> AccountDeletion:
+        """관리자가 지운다 (비밀번호 없이). 권한 검사·기록은 호출하는 쪽(`MemberAdminService`)이 맡는다."""
+        return await self._wipe(await self._auth.get_user(user_id))
+
+    async def _wipe(self, user: User) -> AccountDeletion:
         user_id = str(user.id)
         result = AccountDeletion(user_id=user_id, contacts=0, conversations=0, messages=0)
         # 그래프가 있으면 이 사용자의 것을 아래에서 통째로 지운다 — 대화방마다 에피소드를 하나씩 지우지 않는다
@@ -107,5 +117,5 @@ class DeletionService:
                 result.graph_error = exception_kind(exc)
                 log.warning("graph group removal failed user=%s: %s", user_id, result.graph_error)
         await self._usage.delete_user(user_id)
-        await self._auth.delete_user(user.id)  # 세션은 CASCADE
+        await self._auth.delete_user(user.id)  # 세션·소셜 연결은 CASCADE
         return result

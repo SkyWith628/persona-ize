@@ -16,10 +16,13 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request, Response
 
 from app.api.deps import SAFE_METHODS, AppState, State, current_session, require_csrf
+from app.api.schemas_auth import AccountDeletionOut, MemberOut, MemberPage, MemberPatch, RevokeSessionsOut
+from app.domain.auth import UserStatus
 from app.services.admin_service import (
     AccessLogOut,
     AdminForbiddenError,
@@ -31,9 +34,9 @@ from app.services.admin_service import (
     RejectedFeedbackOut,
     RetryHeldOut,
     UsersPage,
-    is_admin_username,
     short_user_id,
 )
+from app.services.member_admin_service import MemberAdminService, MemberView
 
 log = logging.getLogger(__name__)
 
@@ -55,6 +58,7 @@ class AdminAccess:
 
     admin: AdminIdentity
     service: AdminService
+    members: MemberAdminService
 
 
 def _admin_repo(request: Request, state: AppState):  # noqa: ANN202 - AdminRepo (db extra가 있을 때만 import)
@@ -74,7 +78,8 @@ def _admin_repo(request: Request, state: AppState):  # noqa: ANN202 - AdminRepo 
 async def require_admin(request: Request, state: State) -> AdminAccess:
     session = await current_session(request, state)  # 세션이 없으면 401
     user = await state.auth_service.me(session)
-    if not is_admin_username(user.username, state.settings):
+    # 관리자: 역할이 admin이거나 `ADMIN_USERNAMES`의 이름 (`AuthService.is_admin` 한 곳에서 판정).
+    if not state.auth_service.is_admin(user):
         # 대소문자만 다른 이름이면 운영자가 설정을 의심할 수 있게 로그에 남긴다 (응답에는 알리지 않는다).
         near = user.username.lower() in state.settings.admin_username_set
         log.warning(
@@ -88,11 +93,16 @@ async def require_admin(request: Request, state: State) -> AdminAccess:
         require_csrf(request, state, session)
     if state.engine is None:
         raise AdminUnavailableError("관리자 화면은 PostgreSQL 저장소에서만 볼 수 있습니다.")
+    admin = AdminIdentity(user_id=str(user.id), username=user.username)
+    service = AdminService(state.settings, _admin_repo(request, state), state.graph_store, state.graph_ingest)
+
+    async def record(action: str, detail: str) -> None:
+        await service.record(admin, action, detail)
+
     return AdminAccess(
-        admin=AdminIdentity(user_id=str(user.id), username=user.username),
-        service=AdminService(
-            state.settings, _admin_repo(request, state), state.graph_store, state.graph_ingest
-        ),
+        admin=admin,
+        service=service,
+        members=MemberAdminService(state.auth, state.auth_service, state.deletion_service, record),
     )
 
 
@@ -136,3 +146,62 @@ async def retry_held_graph(access: Admin) -> RetryHeldOut:
     그래프가 꺼진 서버는 409 `graph_disabled`.
     """
     return await access.service.retry_held(access.admin)
+
+
+# ---------- 회원관리 (승인·정지·권한·강제 로그아웃·삭제) ----------
+
+
+def _member_out(view: MemberView) -> MemberOut:
+    u = view.user
+    return MemberOut(
+        user_id=str(u.id),
+        username=u.username,
+        email=u.email,
+        display_name=u.display_name,
+        role=u.role,
+        status=u.status,
+        is_admin=view.is_admin,
+        providers=view.providers,  # type: ignore[arg-type]
+        created_at=u.created_at,
+        last_login_at=u.last_login_at,
+    )
+
+
+@router.get("/members", response_model=MemberPage, summary="회원 목록·검색 (최근 가입 순, 이메일 포함)")
+async def list_members(
+    access: Admin,
+    query: Annotated[str, Query(max_length=100, description="아이디·이메일·표시 이름 부분 일치")] = "",
+    status: UserStatus | None = None,
+    limit: Limit = 50,
+    offset: Annotated[int, Query(ge=0, le=MAX_OFFSET)] = 0,
+) -> MemberPage:
+    """`status=pending`으로 승인 대기 계정만 볼 수 있다."""
+    total, views = await access.members.list_members(query=query, status=status, limit=limit, offset=offset)
+    return MemberPage(total=total, items=[_member_out(v) for v in views])
+
+
+@router.patch("/members/{user_id}", response_model=MemberOut, summary="승인·정지·권한 변경")
+async def patch_member(user_id: UUID, body: MemberPatch, access: Admin) -> MemberOut:
+    """pending → active가 승인. 정지하면 그 사용자의 세션이 모두 폐기된다. 자기 자신의 정지·강등은 422."""
+    view = await access.members.update_member(
+        UUID(access.admin.user_id), user_id, status=body.status, role=body.role
+    )
+    return _member_out(view)
+
+
+@router.post("/members/{user_id}/revoke-sessions", response_model=RevokeSessionsOut, summary="강제 로그아웃")
+async def revoke_member_sessions(user_id: UUID, access: Admin) -> RevokeSessionsOut:
+    return RevokeSessionsOut(revoked=await access.members.revoke_sessions(user_id))
+
+
+@router.delete("/members/{user_id}", response_model=AccountDeletionOut, summary="계정과 모든 데이터 삭제")
+async def delete_member(user_id: UUID, access: Admin) -> AccountDeletionOut:
+    """상대·대화·첨삭 이력·그래프·사용량·세션을 지운다 (되돌릴 수 없다). 자기 자신은 422."""
+    d = await access.members.delete_member(UUID(access.admin.user_id), user_id)
+    return AccountDeletionOut(
+        contacts=d.contacts,
+        conversations=d.conversations,
+        messages=d.messages,
+        graph_nodes_removed=d.graph_nodes_removed,
+        graph_error=d.graph_error,
+    )

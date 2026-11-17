@@ -452,3 +452,11 @@
 - 평가(`suggestion_accuracy.py`): 묻는 카드(`ask`)는 경계 채점에서 맞음이 아니다 — 정답이 혼용이면 `correct`, 한 단계면 `asked`(정밀도에서 뺌). 호칭만 제안하는 카드의 '지금 말투'는 말투 제안으로 읽지 않는다. 해요/합쇼 구분은 정답이 해요체·합쇼체인 줄만. `--segment-k`로 K=1/2/3 표를 낸다. 예시 정답(그래프 없음): register 경계 2 맞음/0 틀림/0 놓침/2 물음, 호칭 4/0/2, 해요/합쇼 4/4 (문턱 5였다면 경계 0/0/2/2, 호칭 2/0/4).
 - 테스트 누출: `test_register_wiring`이 graphiti_core를 보호 없이 import해 `.env`가 `os.environ`에 올라갔고, 뒤따르는 테스트가 개발 DB에 붙었다. import 구간을 `deps._build_graph`처럼 감쌌고, `conftest`의 autouse 픽스처가 테스트 뒤에 DATABASE_URL·NEO4J_URI·ANTHROPIC_API_KEY·LLM_PROVIDER가 새로 생기면 그 테스트를 실패시키고 지운다.
 - 구현하지 않은 것(설계 3.1·3.2에서 '나중에'로 내림): 이모지·ㅋㅋ 수·글자 수 관찰, 단체방 구분(대화방에 종류 표시가 없다 — 지금은 상대의 모든 대화방을 합친다), 연락 빈도 표시. 어느 것도 슬롯을 움직이지 않는다.
+
+## 2026-11-17 회원 상태·소셜 로그인을 main 구조 위에 다시 얹음 — 브랜치 `design/iphone-mobile`의 미병합 2커밋 정리 ①
+- 배경: 그 브랜치의 `daf505f`(모바일 웹·EC2 배포)·`c001cbb`(회원관리·소셜 로그인)는 main과 27개 파일이 충돌하고 서로 다른 마이그레이션 `0008`을 갖는다. 그대로 병합하지 않고 main을 기준으로 필요한 것만 옮긴다(`feat/members-social-login`).
+- 옮긴 것: 이메일 가입(`POST /v1/auth/signup`), 아이디·이메일 로그인, Google·Kakao 로그인(`services/oauth.py` 그대로), 승인제(`AUTH_SIGNUP_REQUIRES_APPROVAL`), pending·suspended 차단(`current_user_id`, 쿠키·Bearer 모두), 소셜 전용 계정 삭제, 회원관리 API(`/v1/admin/members`), 설계 문서 `extension-design.md`. 스키마는 `0012`(users 5열 + `user_identities`).
+- main에 맞춰 바꾼 것: 승인제 기본값은 false(기존 동작 유지). 이메일 가입도 초대 코드·동의를 거친다. 초대 코드 서버는 승인제일 때만 소셜 신규 가입을 받는다(초대 코드를 건너뛰는 길을 막음). 관리자 작업 기록은 새 표 대신 `admin_access_log`에 남긴다. 관리자 판정은 `role=admin` 또는 `ADMIN_USERNAMES`. 운영 검사는 소셜 로그인에 https `PUBLIC_BASE_URL`을 요구한다.
+- 옮기지 않은 것: 브랜치의 모바일 웹(`mobile.*`)·관리자 화면·`check_prod_env.py`·`create_user` 도구·`ec2_bootstrap.sh`(main에 같은 역할이 있다 — 필요한 것만 ②에서 판단), 로그인·가입 화면의 소셜 버튼과 관리자 화면의 회원관리 탭(백로그 A10).
+- 확인 못 한 것: 실제 Google·Kakao 왕복(가짜 제공자·모의 HTTP로만 확인). EC2의 DB는 브랜치의 `0008`로 만들어졌을 가능성이 높아 main의 `0008`(동의 열·`admin_access_log`)이 빠져 있다 — 재배포 전에 DB를 새로 만들지 정한다. 위험(11-16과 같음): 가입 때 이메일 소유를 확인하지 않는다 — 승인 때 이메일을 본다.
+

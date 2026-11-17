@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from urllib.parse import unquote, urlsplit
@@ -95,6 +96,9 @@ def _tracing_problem(names: tuple[str, ...]) -> str:
         "초안·대화 원문이 외부(LangSmith)로 나가고, 켜지지 않는 값이어도 첨삭 워크플로가 오류로 멈출 수 "
         "있습니다. 이 변수를 환경에서 지우세요(.env 파일과 compose의 environment 모두)."
     )
+
+
+SOCIAL_BASE_URL = re.compile(r"https://[^/\s]+")  # 소셜 로그인 redirect_uri의 앞부분 (경로 없이)
 
 
 def _uncapped_costs(settings: Settings) -> tuple[list[str], list[str]]:
@@ -209,6 +213,22 @@ def inspect_production_settings(settings: Settings) -> GuardReport:
     if settings.auth_allow_register and not settings.register_invite_code:
         warnings.append(
             "가입이 열려 있는데 REGISTER_INVITE_CODE가 비어 있습니다 — 주소를 아는 누구나 가입할 수 있습니다."
+            + (
+                " (승인제라 새 계정은 관리자가 승인해야 API를 씁니다.)"
+                if settings.auth_signup_requires_approval
+                else " AUTH_SIGNUP_REQUIRES_APPROVAL=true로 승인제를 켤 수 있습니다."
+            )
+        )
+    # 소셜 로그인: 제공자 콘솔에 등록한 Redirect URI와 같아야 하므로 요청 주소에서 추측하지 않는다.
+    social_on = bool(settings.google_client_id or settings.kakao_client_id)
+    if social_on and not SOCIAL_BASE_URL.fullmatch(settings.public_base_url.rstrip("/")):
+        errors.append(
+            "소셜 로그인(GOOGLE_CLIENT_ID·KAKAO_CLIENT_ID)을 켰으면 PUBLIC_BASE_URL에 https://도메인 을"
+            " 넣어야 합니다 — 제공자 콘솔의 Redirect URI와 같은 주소입니다."
+        )
+    if settings.google_client_id and not settings.google_client_secret:
+        warnings.append(
+            "GOOGLE_CLIENT_ID가 있는데 GOOGLE_CLIENT_SECRET이 비어 있습니다 — Google 로그인이 꺼집니다."
         )
     if settings.rate_limit_per_minute == 0 or settings.rate_limit_auth_per_minute == 0:
         warnings.append(

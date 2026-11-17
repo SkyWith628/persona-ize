@@ -26,11 +26,13 @@ from datetime import UTC, datetime, timedelta
 
 from app.core.config import Settings
 from app.core.errors import (
+    AccountSuspendedError,
     ConsentRequiredError,
     ForbiddenError,
     InvalidInputError,
     InvalidInviteError,
     NotFoundError,
+    SignupClosedError,
     TooManyAttemptsError,
     UnauthorizedError,
     VersionConflictError,
@@ -45,8 +47,9 @@ from app.core.security import (
     tokens_equal,
     verify_password_async,
 )
-from app.domain.auth import AuthResult, Session, User
-from app.repositories.auth import AuthRepo
+from app.domain.auth import MAX_DISPLAY_NAME, MAX_EMAIL, AuthResult, Session, User, UserStatus
+from app.repositories.auth import EMAIL_TAKEN, USERNAME_TAKEN, AuthRepo
+from app.services.oauth import OAuthProfile
 
 # 예전에는 UnauthorizedError·ForbiddenError를 이 모듈에서 정의했다. 정의는 core/errors.py로 옮겼고,
 # `from app.services.auth_service import ForbiddenError` 같은 기존 import는 그대로 동작한다.
@@ -60,6 +63,24 @@ _USERNAME_RE = re.compile(r"[A-Za-z0-9_-]{3,32}")
 _DECOY_HASH = hash_password(secrets.token_urlsafe(16))
 
 PRUNE_THRESHOLD = 1000  # 이 수를 넘으면 실패 기록 때마다 빈 키를 정리한다
+GENERATED_USERNAME_TRIES = 8
+MIN_USERNAME = 3
+SEED_CHARS = 24  # 만든 아이디의 앞부분 길이 (겹치면 붙이는 꼬리 7자를 더해도 32자 안)
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def normalize_email(raw: str) -> str:
+    """앞뒤 공백을 떼고 소문자로. 형식·길이가 맞지 않으면 InvalidInputError."""
+    email = raw.strip().lower()
+    if not email or len(email) > MAX_EMAIL or not _EMAIL_RE.fullmatch(email):
+        raise InvalidInputError("이메일 형식이 올바르지 않습니다.")
+    return email
+
+
+def username_seed(text: str) -> str:
+    """이메일 앞부분·제공자 이름에서 아이디 후보를 만든다 (영문 소문자·숫자·_·-, 3~24자)."""
+    seed = re.sub(r"[^a-z0-9_-]", "_", text.lower()).strip("_-")[:SEED_CHARS].rstrip("_-")
+    return seed if len(seed) >= MIN_USERNAME else "user"
 
 
 class LoginThrottle:
@@ -191,7 +212,41 @@ class AuthService:
         self._check_invite(invite_code, username, client_ip)
         if self._settings.require_consent and not consent:
             raise ConsentRequiredError("약관과 개인정보 처리 안내에 동의해야 가입할 수 있습니다.")
-        user = await self._create_user(username, password, consent=consent, public=True)
+        user = await self._create_user(
+            username, password, consent=consent, public=True, status=self._new_status
+        )
+        return await self._open_session(user)
+
+    async def signup_email(
+        self,
+        email: str,
+        password: str,
+        display_name: str | None = None,
+        *,
+        invite_code: str | None = None,
+        consent: bool = False,
+        client_ip: str | None = None,
+    ) -> AuthResult:
+        """이메일 가입(API). 가입 정책은 아이디 가입(`signup`)과 같은 순서다 — 닫힘 403 `signup_closed` →
+        초대 코드 → 동의 → 형식 422 → 이메일 중복 409. 아이디는 이메일 앞부분에서 만든다."""
+        if not self._settings.auth_allow_register:
+            raise SignupClosedError("회원가입이 닫혀 있습니다.")
+        self._check_invite(invite_code, email, client_ip)
+        if self._settings.require_consent and not consent:
+            raise ConsentRequiredError("약관과 개인정보 처리 안내에 동의해야 가입할 수 있습니다.")
+        email = normalize_email(email)
+        name = " ".join((display_name or "").split()) or None
+        if name is not None and len(name) > MAX_DISPLAY_NAME:
+            raise InvalidInputError(f"표시 이름은 {MAX_DISPLAY_NAME}자까지입니다.")
+        if len(password) < MIN_PASSWORD:
+            raise InvalidInputError(f"비밀번호는 {MIN_PASSWORD}자 이상이어야 합니다.")
+        user = await self._create_with_generated_username(
+            email.partition("@")[0],
+            await hash_password_async(password),
+            email=email,
+            display_name=name,
+            consent=consent,
+        )
         return await self._open_session(user)
 
     async def register(self, username: str, password: str, *, consent: bool = False) -> AuthResult:
@@ -205,8 +260,54 @@ class AuthService:
         """운영자가 서버에서 직접 만드는 계정 (가입이 닫혀 있어도, 초대 코드 없이). 세션은 열지 않는다."""
         return await self._create_user(username, password, consent=False)
 
+    @property
+    def _new_status(self) -> UserStatus:
+        """공개 가입(아이디·이메일·소셜)으로 만든 계정의 첫 상태. 승인제면 pending."""
+        return "pending" if self._settings.auth_signup_requires_approval else "active"
+
+    async def _create_with_generated_username(
+        self,
+        seed: str,
+        password_hash: str | None,
+        *,
+        email: str | None,
+        display_name: str | None,
+        consent: bool = False,
+    ) -> User:
+        """아이디를 만들어 계정을 넣는다(이메일·소셜 가입). 겹치면 짧은 무작위 꼬리를 붙여 다시 시도한다.
+
+        `ADMIN_USERNAMES`의 이름(대소문자 무시)은 후보에서 뺀다 — 이메일 앞부분으로 관리자가 되지 않게.
+        """
+        base = username_seed(seed)
+        reserved = self._settings.admin_username_set
+        now = datetime.now(UTC)
+        for attempt in range(GENERATED_USERNAME_TRIES):
+            candidate = base if attempt == 0 else f"{base}_{secrets.token_hex(3)}"
+            if candidate in reserved or await self._repo.username_exists(candidate):
+                continue
+            try:
+                return await self._repo.create_user(
+                    candidate,
+                    password_hash,
+                    consented_at=now if consent else None,
+                    consent_version=self._settings.consent_version if consent else None,
+                    email=email,
+                    display_name=display_name,
+                    status=self._new_status,
+                )
+            except VersionConflictError as exc:
+                if exc.message == EMAIL_TAKEN:
+                    raise
+        raise VersionConflictError("아이디를 만들지 못했습니다. 잠시 뒤 다시 시도하세요.")
+
     async def _create_user(
-        self, username: str, password: str, *, consent: bool, public: bool = False
+        self,
+        username: str,
+        password: str,
+        *,
+        consent: bool,
+        public: bool = False,
+        status: UserStatus = "active",
     ) -> User:
         username = username.strip()
         if not _USERNAME_RE.fullmatch(username) or not any(ch.isalnum() for ch in username):
@@ -222,13 +323,14 @@ class AuthService:
             public and self._settings.is_production and username.lower() in self._settings.admin_username_set
         )
         if taken or reserved:
-            raise VersionConflictError("이미 사용 중인 이름입니다.")
+            raise VersionConflictError(USERNAME_TAKEN)
         now = datetime.now(UTC)
         return await self._repo.create_user(
             username,
             await hash_password_async(password),
             consented_at=now if consent else None,
             consent_version=self._settings.consent_version if consent else None,
+            status=status,
         )
 
     def _check_invite(self, invite_code: str | None, username: str, client_ip: str | None) -> None:
@@ -251,7 +353,11 @@ class AuthService:
     # ---- 로그인·세션 ----
 
     async def login(self, username: str, password: str, client_ip: str | None = None) -> AuthResult:
-        """이름·비밀번호 확인 뒤 새 세션. 쿠키 로그인과 Bearer 토큰 발급이 함께 쓴다."""
+        """이름(또는 이메일)·비밀번호 확인 뒤 새 세션. 쿠키 로그인과 Bearer 토큰 발급이 함께 쓴다.
+
+        `@`가 들어 있으면 이메일로 찾는다(아이디에는 `@`가 들어갈 수 없다). 없는 계정·틀린 비밀번호·비밀번호가
+        없는 소셜 전용 계정은 모두 같은 401이다. 정지 계정은 비밀번호를 맞힌 뒤에만 403 `account_suspended`.
+        """
         username = username.strip()
         name = username.lower()
         ip = client_key(client_ip) if client_ip else None
@@ -261,15 +367,81 @@ class AuthService:
             raise TooManyAttemptsError(
                 f"로그인 시도가 너무 많습니다. {wait}초 뒤에 다시 시도하세요.", retry_after=wait
             )
-        found = await self._repo.find_user_by_username(username)
-        # 없는 이름이어도 해시 한 번을 똑같이 계산한다 — 응답 시간으로 가입 여부를 알아낼 수 없게.
-        stored = found[1] if found is not None else _DECOY_HASH
-        password_ok = await verify_password_async(password, stored)
-        if found is None or not password_ok:
+        if "@" in username:
+            found = await self._repo.find_user_by_email(name)
+        else:
+            found = await self._repo.find_user_by_username(username)
+        # 없는 이름·비밀번호 없는(소셜 전용) 계정이어도 해시 한 번을 똑같이 계산한다 —
+        # 응답 시간으로 가입 여부를 알아낼 수 없게.
+        real_hash = found[1] if found is not None else None
+        password_ok = await verify_password_async(password, real_hash or _DECOY_HASH)
+        if found is None or real_hash is None or not password_ok:
             self._login_limits.record_failure(name, ip, now)
             raise UnauthorizedError("이름 또는 비밀번호가 맞지 않습니다.")
         self._login_limits.record_success(name, ip)
+        self._require_not_suspended(found[0])
         return await self._open_session(found[0])
+
+    # ---- 소셜 로그인 ----
+
+    async def login_with_identity(self, provider: str, profile: OAuthProfile) -> AuthResult:
+        """소셜 로그인. 연결된 계정 → **확인된** 이메일이 같은 기존 계정에 연결 → 새 계정 순.
+
+        확인되지 않은 이메일로는 절대 연결하지 않는다 (남의 주소를 적어 계정을 가로채는 것을 막는다).
+        """
+        identity = await self._repo.find_identity(provider, profile.subject)
+        if identity is not None:
+            user = await self._repo.get_user(identity.user_id)
+        else:
+            user = await self._link_or_create(provider, profile)
+        self._require_not_suspended(user)
+        return await self._open_session(user)
+
+    async def _link_or_create(self, provider: str, profile: OAuthProfile) -> User:
+        verified_email = profile.email if profile.email and profile.email_verified else None
+        if verified_email is not None:
+            found = await self._repo.find_user_by_email(verified_email)
+            if found is not None:
+                return await self._attach(found[0], provider, profile, created=False)
+        self._require_social_signup_open()
+        # 확인되지 않은 이메일은 계정의 이메일로 삼지 않는다 (연결 기록에만 참고로 남긴다).
+        user = await self._create_with_generated_username(
+            (verified_email or "").partition("@")[0] or provider,
+            None,
+            email=verified_email,
+            display_name=profile.name,
+        )
+        return await self._attach(user, provider, profile, created=True)
+
+    def _require_social_signup_open(self) -> None:
+        """소셜 로그인으로 **새 계정**을 만들 수 있는가. 기존 계정 로그인·연결은 이 검사를 거치지 않는다.
+
+        소셜 가입은 초대 코드를 낼 자리가 없다. 초대 코드를 요구하는 서버에서는 승인제일 때만 새 계정을
+        (pending으로) 받는다 — 아니면 초대 코드를 건너뛰는 길이 된다.
+        """
+        s = self._settings
+        if not s.auth_allow_register:
+            raise SignupClosedError("회원가입이 닫혀 있습니다.")
+        if s.register_invite_code.strip() and not s.auth_signup_requires_approval:
+            raise SignupClosedError("초대 코드가 필요한 서버입니다. 아이디나 이메일로 가입하세요.")
+
+    async def _attach(self, user: User, provider: str, profile: OAuthProfile, *, created: bool) -> User:
+        """소셜 계정을 사용자에 묶는다. 같은 로그인이 동시에 두 번 들어와 먼저 묶였으면 그쪽 사용자를 쓴다."""
+        try:
+            await self._repo.add_identity(user.id, provider, profile.subject, profile.email)
+        except VersionConflictError:
+            if created:
+                await self._repo.delete_user(user.id)  # 방금 만든 빈 계정을 남기지 않는다
+            identity = await self._repo.find_identity(provider, profile.subject)
+            if identity is None:
+                raise
+            return await self._repo.get_user(identity.user_id)
+        return user
+
+    @staticmethod
+    def _require_not_suspended(user: User) -> None:
+        if user.status == "suspended":
+            raise AccountSuspendedError("정지된 계정입니다. 관리자에게 문의하세요.")
 
     async def change_password(self, session: Session, current_password: str, new_password: str) -> int:
         """현재 비밀번호 확인 → 새 해시 저장 → 다른 세션 전부 폐기. 폐기한 세션 수를 돌려준다."""
@@ -277,7 +449,8 @@ class AuthService:
             raise InvalidInputError(f"비밀번호는 {MIN_PASSWORD}자 이상이어야 합니다.")
         user = await self._repo.get_user(session.user_id)
         found = await self._repo.find_user_by_username(user.username)
-        if found is None or not await verify_password_async(current_password, found[1]):
+        stored = found[1] if found is not None else None  # 소셜 전용 계정은 비밀번호가 없다
+        if stored is None or not await verify_password_async(current_password, stored):
             raise UnauthorizedError("현재 비밀번호가 맞지 않습니다.")
         if current_password == new_password:
             raise InvalidInputError("새 비밀번호가 현재 비밀번호와 같습니다.")
@@ -336,7 +509,13 @@ class AuthService:
         )
 
     def is_admin(self, user: User) -> bool:
-        return self._settings.is_admin_name(user.username)
+        """역할이 admin이거나 `ADMIN_USERNAMES`에 적힌 이름(초기 관리자, 대소문자까지 일치)."""
+        return user.role == "admin" or self._settings.is_admin_name(user.username)
+
+    async def providers_of(self, user: User) -> list[str]:
+        """로그인 수단: 비밀번호가 있으면 password, 그리고 연결된 소셜 제공자."""
+        linked = (await self._repo.list_providers([user.id])).get(user.id, [])
+        return (["password"] if user.has_password else []) + linked
 
     def consent_current(self, user: User) -> bool:
         """기록된 동의 버전이 지금 버전과 같은가 (동의한 적 없으면 False)."""
@@ -358,6 +537,10 @@ class AuthService:
             expires_at=now + timedelta(days=self._settings.session_ttl_days),
         )
         await self._repo.create_session(session)
+        await self._repo.touch_login(user.id, now)
         return AuthResult(
-            user=user, session_token=token, csrf_token=session.csrf_token, expires_at=session.expires_at
+            user=user.model_copy(update={"last_login_at": now}),
+            session_token=token,
+            csrf_token=session.csrf_token,
+            expires_at=session.expires_at,
         )

@@ -269,11 +269,40 @@ class UserRow(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
     username: Mapped[str] = mapped_column(String(32), nullable=False, unique=True)
-    password_hash: Mapped[str] = mapped_column(String(256), nullable=False)
+    # 소셜 전용 계정은 비밀번호가 없다 (0012).
+    password_hash: Mapped[str | None] = mapped_column(String(256), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     # 약관·개인정보 안내 동의 (0008). 동의한 적 없으면 둘 다 NULL.
     consented_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     consent_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # 회원 상태·소셜 로그인 (0012). email은 소문자로 저장한다.
+    email: Mapped[str | None] = mapped_column(String(254), nullable=True)
+    display_name: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    role: Mapped[str] = mapped_column(String(16), nullable=False, default="user", server_default="user")
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="active", server_default="active")
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (UniqueConstraint("email", name="uq_users_email"),)
+
+
+class UserIdentityRow(Base):
+    """소셜 계정 연결 (0012). 같은 제공자의 같은 subject는 한 사용자에게만 묶인다."""
+
+    __tablename__ = "user_identities"
+
+    id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    provider: Mapped[str] = mapped_column(String(16), nullable=False)
+    subject: Mapped[str] = mapped_column(String(128), nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    email: Mapped[str | None] = mapped_column(String(254), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("provider", "subject", name="uq_user_identities_provider_subject"),
+        Index("ix_user_identities_user", "user_id"),
+    )
 
 
 class AdminAccessLogRow(Base):

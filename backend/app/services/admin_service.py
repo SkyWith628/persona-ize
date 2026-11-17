@@ -571,5 +571,9 @@ class AdminService:
         await self._log(admin, "graph_retry_held_done", f"released={out.released} users={out.users}")
         return out
 
+    async def record(self, admin: AdminIdentity, action: str, detail: str) -> None:
+        """관리자 호출 한 건을 접근 기록에 남긴다 (회원관리 서비스가 같은 기록을 쓴다)."""
+        await self._log(admin, action, detail)
+
     async def _log(self, admin: AdminIdentity, action: str, detail: str) -> None:
         await self._repo.log_access(admin.user_id, admin.username, action, detail)

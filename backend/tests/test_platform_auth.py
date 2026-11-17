@@ -56,6 +56,9 @@ def test_auth_config_reflects_settings_without_leaking_the_invite_code() -> None
         "require_consent": False,
         "consent_version": "2026-11-14",
         "app_env": "development",
+        "requires_approval": False,
+        "google": False,
+        "kakao": False,
     }
     strict = _client(
         auth_allow_register=False,
@@ -72,6 +75,9 @@ def test_auth_config_reflects_settings_without_leaking_the_invite_code() -> None
         "require_consent": True,
         "consent_version": "2026-12-01",
         "app_env": "development",
+        "requires_approval": False,
+        "google": False,
+        "kakao": False,
     }
 
 

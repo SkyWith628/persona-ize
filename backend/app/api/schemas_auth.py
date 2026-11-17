@@ -11,12 +11,30 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from app.domain.auth import Role, UserStatus
+
+LoginMethod = Literal["password", "google", "kakao"]
 TokenClient = Literal["mobile", "desktop", "api"]
 
 
 class Credentials(BaseModel):
     username: str = Field(min_length=3, max_length=32)
     password: str = Field(min_length=1, max_length=128)
+
+
+class LoginIn(BaseModel):
+    username: str = Field(min_length=3, max_length=254, description="아이디 또는 이메일")
+    password: str = Field(min_length=1, max_length=128)
+
+
+class SignupEmailIn(BaseModel):
+    """이메일 가입. 초대 코드·동의 규칙은 아이디 가입(`RegisterIn`)과 같다. 아이디는 서버가 만든다."""
+
+    email: str = Field(min_length=3, max_length=254)
+    password: str = Field(min_length=1, max_length=128)
+    display_name: str | None = Field(None, max_length=40)
+    invite_code: str | None = Field(None, max_length=128)
+    consent: bool | None = False
 
 
 class RegisterIn(Credentials):
@@ -37,6 +55,12 @@ class AccountFields(BaseModel):
     consented_at: datetime | None = Field(None, description="약관·개인정보 안내에 동의한 시각")
     consent_version: str | None = Field(None, description="동의한 안내의 버전")
     consent_current: bool = Field(False, description="동의한 버전이 지금 버전(CONSENT_VERSION)과 같은가")
+    email: str | None = None
+    display_name: str | None = None
+    role: Role = "user"
+    status: UserStatus = Field(
+        "active", description="pending이면 관리자 승인 전 — /v1/auth/* 밖의 API는 403 account_pending"
+    )
 
 
 class AuthOut(AccountFields):
@@ -46,6 +70,7 @@ class AuthOut(AccountFields):
 
 class MeOut(AccountFields):
     csrf_token: str
+    providers: list[LoginMethod] = Field(default_factory=list, description="이 계정의 로그인 수단")
 
 
 class AuthConfigOut(BaseModel):
@@ -56,6 +81,9 @@ class AuthConfigOut(BaseModel):
     require_consent: bool
     consent_version: str
     app_env: Literal["development", "production"]
+    requires_approval: bool = Field(False, description="새 계정이 관리자 승인을 기다리는가")
+    google: bool = Field(False, description="Google 로그인이 켜져 있는가")
+    kakao: bool = Field(False, description="Kakao 로그인이 켜져 있는가")
 
 
 class ConsentIn(BaseModel):
@@ -82,7 +110,7 @@ class PasswordChangeOut(BaseModel):
     revoked_sessions: int = Field(description="함께 로그아웃된 다른 세션 수")
 
 
-class TokenIn(Credentials):
+class TokenIn(LoginIn):
     client: TokenClient = Field("api", description="토큰을 쓸 곳 (기록용)")
 
 
@@ -94,8 +122,39 @@ class TokenOut(BaseModel):
     username: str
 
 
+class MemberOut(BaseModel):
+    """회원관리 목록의 한 줄. 대화 원문·첨삭 문장은 없다. `user_id`는 승인·정지 대상을 가리키는 전체 id."""
+
+    user_id: str
+    username: str
+    email: str | None
+    display_name: str | None
+    role: Role
+    status: UserStatus
+    is_admin: bool
+    providers: list[LoginMethod]
+    created_at: datetime
+    last_login_at: datetime | None
+
+
+class MemberPage(BaseModel):
+    total: int
+    items: list[MemberOut]
+
+
+class MemberPatch(BaseModel):
+    status: Literal["active", "suspended"] | None = Field(None, description="pending → active가 승인")
+    role: Role | None = None
+
+
+class RevokeSessionsOut(BaseModel):
+    revoked: int
+
+
 class AccountDeleteIn(BaseModel):
-    password: str = Field(min_length=1, max_length=128)
+    password: str = Field(
+        max_length=128, description="비밀번호 재확인. 비밀번호가 없는 소셜 전용 계정은 빈 문자열"
+    )
 
 
 class AccountDeletionOut(BaseModel):

@@ -9,11 +9,19 @@ user_id는 users.id(UUID 문자열). 다른 모든 테이블의 user_id가 이 �
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
 
 SESSION_ID_CHARS = 12  # 세션 목록에 보여 주는 id = 토큰 해시 앞 12자 (토큰을 되살릴 수 없다)
+
+Role = Literal["user", "admin"]
+UserStatus = Literal["active", "pending", "suspended"]
+ProviderName = Literal["google", "kakao"]
+
+MAX_EMAIL = 254
+MAX_DISPLAY_NAME = 40
 
 
 class User(BaseModel):
@@ -23,6 +31,23 @@ class User(BaseModel):
     # 약관·개인정보 안내 동의 (0008). 동의한 적 없으면 둘 다 None.
     consented_at: datetime | None = None
     consent_version: str | None = None
+    # 회원 상태·소셜 로그인 (0012). email은 소문자·유일. 소셜 전용 계정은 has_password가 False.
+    email: str | None = None
+    display_name: str | None = None
+    role: Role = "user"
+    status: UserStatus = "active"
+    last_login_at: datetime | None = None
+    has_password: bool = True
+
+
+class Identity(BaseModel):
+    """소셜 계정 연결. (provider, subject)가 유일하다. email은 제공자가 알려 준 값(참고용)."""
+
+    provider: ProviderName
+    subject: str
+    user_id: UUID
+    email: str | None = None
+    created_at: datetime
 
 
 class Session(BaseModel):

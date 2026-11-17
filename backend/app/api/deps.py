@@ -5,6 +5,8 @@
 `pi_session`(HttpOnly) → 유효하면 그 사용자. 쓰기 요청(POST/PUT/PATCH/DELETE)은 `X-CSRF-Token` 헤더가
 세션의 토큰과 같아야 한다(403). ③ 둘 다 없고 `AUTH_ALLOW_HEADER_STUB`이면 `X-User-Id` 헤더를 그대로
 사용자 id로 쓴다 — 개발·테스트·평가 스크립트용이며 배포에서는 끈다(운영 모드는 켜진 채로 시작하지 않는다).
+회원 상태: 승인 대기(pending)·정지(suspended) 계정은 ①②를 통과해도 `/v1/auth/*` 밖에서는 403이다
+(`account_pending`·`account_suspended`).
 CSRF를 건너뛰는 것은 **세션을 Bearer 헤더로 찾았을 때뿐**이다 — Bearer 헤더가 있으면 쿠키는 보지 않는다.
 어디서도 요청 본문의 user_id를 신뢰하지 않는다 — 항상 이 의존성에서 받은 값을 쓴다.
 
@@ -17,7 +19,7 @@ from __future__ import annotations
 import asyncio
 import os
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
@@ -30,6 +32,7 @@ from app.ai.retrieval.composite import CompositeRetriever
 from app.ai.retrieval.vector import VectorStyleRetriever
 from app.ai.workflow import RewriteWorkflow
 from app.core.config import Settings
+from app.core.errors import AccountPendingError, AccountSuspendedError
 from app.domain.auth import Session
 from app.repositories.auth import AuthRepo, InMemoryAuthRepo
 from app.repositories.base import ContactRepo, ConversationRepo, RewriteRepo
@@ -38,6 +41,7 @@ from app.repositories.usage import InMemoryUsageRepo, UsageRepo
 from app.services.auth_service import AuthService, ForbiddenError, UnauthorizedError
 from app.services.deletion_service import DeletionService
 from app.services.import_service import ImportService
+from app.services.oauth import OAuthProvider, build_oauth_providers
 from app.services.rewrite_service import RewriteService
 
 SESSION_COOKIE = "pi_session"
@@ -69,6 +73,8 @@ class AppState:
     engine: Any = None  # sqlalchemy AsyncEngine | None — db extra 없이도 import되게 느슨히 둔다
     graph_store: Any = None  # app.graph.store.GraphStore | None — NEO4J_URI가 있을 때만
     graph_ingest: Any = None  # app.graph.ingest.GraphIngestService | None
+    # 설정된 소셜 로그인 제공자 (google·kakao). 테스트는 여기에 가짜 제공자를 끼운다.
+    oauth_providers: dict[str, OAuthProvider] = field(default_factory=dict)
 
     @property
     def graph_enabled(self) -> bool:
@@ -221,6 +227,7 @@ def build_state(settings: Settings) -> AppState:
         engine=engine,
         graph_store=graph_store,
         graph_ingest=graph_ingest,
+        oauth_providers=build_oauth_providers(settings),
     )
 
 
@@ -272,6 +279,19 @@ def require_csrf(request: Request, state: AppState, session: Session) -> None:
         raise ForbiddenError("CSRF 토큰이 없거나 맞지 않습니다 (X-CSRF-Token).")
 
 
+async def _require_usable_account(state: AppState, session: Session) -> None:
+    """승인 대기(pending)·정지(suspended) 계정은 `/v1/auth/*` 밖의 API를 쓸 수 없다 (403).
+
+    `current_user_id`를 거치는 모든 라우트에 걸린다. 정지 때 세션을 폐기하지만 한 번 더 막는다.
+    헤더 스텁 사용자는 계정이 없으므로 이 검사가 없다.
+    """
+    user = await state.auth_service.me(session)
+    if user.status == "pending":
+        raise AccountPendingError("관리자 승인을 기다리는 계정입니다.")
+    if user.status == "suspended":
+        raise AccountSuspendedError("정지된 계정입니다. 관리자에게 문의하세요.")
+
+
 async def current_user_id(
     request: Request, state: State, x_user_id: Annotated[str | None, Header()] = None
 ) -> str:
@@ -282,6 +302,7 @@ async def current_user_id(
         if session is None:
             raise _bearer_rejected()
         request.state.auth_via = AUTH_VIA_BEARER
+        await _require_usable_account(state, session)
         return str(session.user_id)
     token = request.cookies.get(SESSION_COOKIE)
     if token:
@@ -293,6 +314,7 @@ async def current_user_id(
         ):
             raise ForbiddenError("CSRF 토큰이 없거나 맞지 않습니다 (X-CSRF-Token).")
         request.state.auth_via = AUTH_VIA_COOKIE
+        await _require_usable_account(state, session)
         return str(session.user_id)
     stub = (x_user_id or "").strip()
     # user_id 열은 128자다 — 그보다 긴 값은 DB에 넣다가 500이 되므로 스텁으로 받지 않는다.

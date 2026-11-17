@@ -8,9 +8,14 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
+import json
 import logging
+import secrets
 
 from fastapi import APIRouter, Request, Response, status
+from fastapi.responses import RedirectResponse
 
 from app.api.deps import SESSION_COOKIE, AppState, State, bearer_token, current_session, require_csrf
 from app.api.schemas_auth import (
@@ -19,21 +24,30 @@ from app.api.schemas_auth import (
     AuthConfigOut,
     AuthOut,
     ConsentIn,
-    Credentials,
+    LoginIn,
     LogoutAllOut,
     MeOut,
     PasswordChange,
     PasswordChangeOut,
     RegisterIn,
     SessionOut,
+    SignupEmailIn,
     TokenIn,
     TokenOut,
 )
+from app.core.errors import AccountSuspendedError, DomainError, NotFoundError, SignupClosedError
+from app.core.security import tokens_equal
 from app.domain.auth import AuthResult, User
+from app.services.oauth import OAuthError, OAuthProvider, new_pkce_verifier, pkce_challenge
 
 log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/auth", tags=["auth"])
+
+OAUTH_COOKIE = "pi_oauth"
+OAUTH_COOKIE_PATH = "/v1/auth/oauth"
+OAUTH_COOKIE_SECONDS = 600
+MAX_NEXT = 512
 
 
 def _set_cookie(response: Response, result: AuthResult, state: AppState) -> None:
@@ -62,6 +76,10 @@ def _account(state: AppState, user: User) -> dict[str, object]:
         "consented_at": user.consented_at,
         "consent_version": user.consent_version,
         "consent_current": state.auth_service.consent_current(user),
+        "email": user.email,
+        "display_name": user.display_name,
+        "role": user.role,
+        "status": user.status,
     }
 
 
@@ -84,6 +102,9 @@ async def auth_config(state: State) -> AuthConfigOut:
         require_consent=s.require_consent,
         consent_version=s.consent_version,
         app_env=s.app_env,
+        requires_approval=s.auth_signup_requires_approval,
+        google="google" in state.oauth_providers,
+        kakao="kakao" in state.oauth_providers,
     )
 
 
@@ -101,8 +122,24 @@ async def register(body: RegisterIn, request: Request, response: Response, state
     return _auth_out(state, result)
 
 
+@router.post("/signup", response_model=AuthOut, status_code=status.HTTP_201_CREATED)
+async def signup_email(body: SignupEmailIn, request: Request, response: Response, state: State) -> AuthOut:
+    """이메일 가입. 닫혀 있으면 403 `signup_closed`, 이메일 중복 409. 승인제면 `status`가 pending."""
+    result = await state.auth_service.signup_email(
+        body.email,
+        body.password,
+        body.display_name,
+        invite_code=body.invite_code,
+        consent=bool(body.consent),
+        client_ip=_client_ip(request),
+    )
+    _set_cookie(response, result, state)
+    return _auth_out(state, result)
+
+
 @router.post("/login", response_model=AuthOut)
-async def login(body: Credentials, request: Request, response: Response, state: State) -> AuthOut:
+async def login(body: LoginIn, request: Request, response: Response, state: State) -> AuthOut:
+    """`username`에 아이디 또는 이메일. 정지 계정은 403 `account_suspended`."""
     result = await state.auth_service.login(body.username, body.password, _client_ip(request))
     _set_cookie(response, result, state)
     return _auth_out(state, result)
@@ -119,6 +156,135 @@ async def issue_token(body: TokenIn, request: Request, state: State) -> TokenOut
         user_id=str(result.user.id),
         username=result.user.username,
     )
+
+
+def safe_next(raw: str | None) -> str:
+    """로그인 뒤 돌아갈 곳. `/`로 시작하는 같은 출처 경로만 — 아니면 `/` (오픈 리다이렉트 방지)."""
+    if not raw or len(raw) > MAX_NEXT or not raw.startswith("/") or raw.startswith("//"):
+        return "/"
+    if "\\" in raw or any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in raw):  # noqa: PLR2004
+        return "/"
+    return raw
+
+
+def _redirect_uri(request: Request, state: AppState, provider: str) -> str:
+    base = state.settings.public_base_url.rstrip("/") or str(request.base_url).rstrip("/")
+    return f"{base}/v1/auth/oauth/{provider}/callback"
+
+
+def _provider(state: AppState, name: str) -> OAuthProvider:
+    provider = state.oauth_providers.get(name)
+    if provider is None:
+        raise NotFoundError("지원하지 않거나 설정되지 않은 로그인 방식입니다.")
+    return provider
+
+
+def _pack(data: dict[str, str]) -> str:
+    return base64.urlsafe_b64encode(json.dumps(data, separators=(",", ":")).encode()).decode("ascii")
+
+
+def _unpack(raw: str | None) -> dict[str, str]:
+    if not raw:
+        return {}
+    try:
+        data = json.loads(base64.urlsafe_b64decode(raw.encode("ascii")))
+    except (ValueError, binascii.Error, UnicodeError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {str(k): v for k, v in data.items() if isinstance(v, str)}
+
+
+def _clear_oauth_cookie(response: Response) -> None:
+    response.delete_cookie(OAUTH_COOKIE, path=OAUTH_COOKIE_PATH)
+
+
+def with_auth_error(next_path: str, code: str) -> str:
+    """돌아갈 경로에 `auth_error=<code>`를 붙인다 (기존 쿼리는 유지, #조각 앞에 넣는다)."""
+    path, hash_mark, fragment = next_path.partition("#")
+    joined = f"{path}{'&' if '?' in path else '?'}auth_error={code}"
+    return f"{joined}{hash_mark}{fragment}"
+
+
+def _fail(code: str, saved: dict[str, str] | None = None) -> RedirectResponse:
+    """실패는 시작할 때 저장한 `next`로 돌려보낸다. 상태 쿠키가 없거나 깨졌으면 `/`."""
+    target = with_auth_error(safe_next((saved or {}).get("n")), code)
+    response = RedirectResponse(target, status_code=status.HTTP_302_FOUND)
+    _clear_oauth_cookie(response)
+    return response
+
+
+@router.get("/oauth/{provider}/start", summary="소셜 로그인 시작 (제공자 로그인으로 302)")
+async def oauth_start(provider: str, request: Request, state: State, next: str | None = None) -> Response:  # noqa: A002
+    """provider = google | kakao. 설정되지 않은 제공자는 404.
+
+    무작위 `state`(+ Google은 PKCE verifier, 돌아갈 `next`)를 10분짜리 HttpOnly 쿠키 `pi_oauth`에 넣는다.
+    """
+    impl = _provider(state, provider)
+    oauth_state = secrets.token_urlsafe(32)
+    verifier = new_pkce_verifier() if impl.uses_pkce else ""
+    url = impl.authorize_url(
+        redirect_uri=_redirect_uri(request, state, provider),
+        state=oauth_state,
+        code_challenge=pkce_challenge(verifier) if verifier else None,
+    )
+    response = RedirectResponse(url, status_code=status.HTTP_302_FOUND)
+    response.set_cookie(
+        key=OAUTH_COOKIE,
+        value=_pack({"p": provider, "s": oauth_state, "n": safe_next(next), "v": verifier}),
+        httponly=True,
+        secure=state.settings.session_cookie_secure,
+        samesite="lax",
+        max_age=OAUTH_COOKIE_SECONDS,
+        path=OAUTH_COOKIE_PATH,
+    )
+    return response
+
+
+@router.get("/oauth/{provider}/callback", summary="소셜 로그인 콜백 (세션 쿠키 설정 뒤 302)")
+async def oauth_callback(
+    provider: str,
+    request: Request,
+    state: State,
+    code: str | None = None,
+    error: str | None = None,
+) -> Response:
+    """성공: 세션 쿠키 + 302 → next. 실패: 302 → `<next>?auth_error=<code>` (상태 쿠키가 없으면 `/`로).
+
+    쿠키의 state와 쿼리의 state를 상수 시간으로 비교한다. 코드·토큰은 주소에 싣지 않는다.
+    """
+    impl = _provider(state, provider)
+    # `state`는 앱 상태 의존성 이름과 겹쳐 쿼리에서 직접 읽는다.
+    returned_state = request.query_params.get("state")
+    saved = _unpack(request.cookies.get(OAUTH_COOKIE))
+    if saved.get("p") != provider:
+        return _fail("oauth_failed")  # 쿠키 없음·만료·다른 브라우저·다른 제공자로 시작한 흐름
+    if not tokens_equal(saved.get("s"), returned_state):
+        return _fail("oauth_failed", saved)  # 위조된 요청이거나 state가 빠졌다
+    if error:
+        return _fail("oauth_denied", saved)
+    if not code:
+        return _fail("oauth_failed", saved)
+    try:
+        profile = await impl.fetch_profile(
+            code=code,
+            redirect_uri=_redirect_uri(request, state, provider),
+            code_verifier=saved.get("v") or None,
+        )
+        result = await state.auth_service.login_with_identity(provider, profile)
+    except OAuthError:
+        return _fail("oauth_failed", saved)
+    except SignupClosedError:
+        return _fail("signup_closed", saved)
+    except AccountSuspendedError:
+        return _fail("account_suspended", saved)
+    except DomainError as exc:
+        log.warning("oauth login failed provider=%s code=%s", provider, exc.code)
+        return _fail("oauth_failed", saved)
+    response = RedirectResponse(safe_next(saved.get("n")), status_code=status.HTTP_302_FOUND)
+    _clear_oauth_cookie(response)
+    _set_cookie(response, result, state)
+    return response
 
 
 @router.post("/password", response_model=PasswordChangeOut)
@@ -168,7 +334,11 @@ async def list_sessions(request: Request, state: State) -> list[SessionOut]:
 async def me(request: Request, state: State) -> MeOut:
     session = await current_session(request, state)
     user = await state.auth_service.me(session)
-    return MeOut(**_account(state, user), csrf_token=session.csrf_token)
+    return MeOut(
+        **_account(state, user),
+        csrf_token=session.csrf_token,
+        providers=await state.auth_service.providers_of(user),  # type: ignore[arg-type]
+    )
 
 
 @router.post("/consent", response_model=MeOut)
@@ -184,7 +354,10 @@ async def consent(request: Request, state: State, body: ConsentIn | None = None)
 async def delete_me(
     body: AccountDeleteIn, request: Request, response: Response, state: State
 ) -> AccountDeletionOut:
-    """계정 삭제 (비밀번호 확인 + CSRF). 상대·대화·첨삭 이력·그래프·사용량·세션을 지운다. 되돌릴 수 없다."""
+    """계정 삭제 (비밀번호 확인 + CSRF). 상대·대화·첨삭 이력·그래프·사용량·세션을 지운다. 되돌릴 수 없다.
+
+    비밀번호가 없는 소셜 전용 계정은 `{"password": ""}`로 보낸다.
+    """
     session = await current_session(request, state)
     require_csrf(request, state, session)
     d = await state.deletion_service.delete_account(session, body.password)

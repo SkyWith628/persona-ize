@@ -14,9 +14,12 @@
 
 | 메서드·경로 | 내용 |
 |---|---|
-| `GET /v1/auth/config` (인증 불필요) | 가입 화면이 쓸 설정: `{allow_register, invite_required, require_consent, consent_version, app_env}` |
+| `GET /v1/auth/config` (인증 불필요) | 가입 화면이 쓸 설정: `{allow_register, invite_required, require_consent, consent_version, app_env, requires_approval, google, kakao}`. `google`·`kakao`는 서버에 클라이언트 설정이 있을 때만 true |
 | `POST /v1/auth/register` `{username, password, invite_code?, consent?}` | 가입 + 로그인. 아이디는 영문·숫자·`_`·`-` 3~32자, 대소문자만 다른 이름은 409. 비밀번호 8자 이상. 초대 코드가 틀리면 403 `invalid_invite`, 동의가 필요한데 없으면 422 `consent_required`. 운영 모드에서 관리자 이름은 화면 가입 불가(409) |
-| `POST /v1/auth/login` `{username, password}` | 로그인. 같은 곳(IP)에서 같은 아이디를 계속 틀리면 그 조합만 429 `too_many_attempts` + `Retry-After`(IP 단독·아이디 단독은 훨씬 높은 횟수에서) |
+| `POST /v1/auth/signup` `{email, password, display_name?, invite_code?, consent?}` | 이메일 가입 + 로그인. 아이디는 이메일 앞부분에서 서버가 만든다(겹치면 꼬리가 붙는다). 초대 코드·동의 규칙은 `register`와 같다. 가입이 닫혀 있으면 403 `signup_closed`, 이메일 중복 409 |
+| `GET /v1/auth/oauth/{google\|kakao}/start?next=/경로` | 소셜 로그인 시작 → 제공자로 302. 설정되지 않은 제공자는 404. `next`는 `/`로 시작하는 같은 출처 경로만 |
+| `GET /v1/auth/oauth/{provider}/callback` | 제공자가 돌려보내는 곳. 성공하면 세션 쿠키 + `next`로 302, 실패하면 `<next>?auth_error=oauth_failed\|oauth_denied\|signup_closed\|account_suspended`로 302 |
+| `POST /v1/auth/login` `{username, password}` | 로그인. `username`에 아이디 또는 이메일. 정지 계정은 403 `account_suspended`. 같은 곳(IP)에서 같은 아이디를 계속 틀리면 그 조합만 429 `too_many_attempts` + `Retry-After`(IP 단독·아이디 단독은 훨씬 높은 횟수에서) |
 | `POST /v1/auth/token` `{username, password, client?}` | Bearer 토큰 발급: `{access_token, token_type: "bearer", expires_at, user_id, username}`. `client`는 `mobile`·`desktop`·`api` |
 | `POST /v1/auth/logout` | 쿠키 세션과 Bearer 토큰을 폐기 |
 | `GET /v1/auth/me` | 내 정보 + CSRF 토큰 재조회 |
@@ -24,9 +27,11 @@
 | `GET /v1/auth/sessions` | 로그인된 기기 목록 `[{id, created_at, expires_at, current}]` |
 | `POST /v1/auth/logout-all` (CSRF) | 지금 세션만 남기고 전부 로그아웃 → `{revoked_sessions}` |
 | `POST /v1/auth/password` `{current_password, new_password}` (CSRF) | 비밀번호 변경. 다른 세션은 모두 로그아웃 |
-| `DELETE /v1/auth/me` `{password}` (CSRF) | **계정 삭제**. 상대·대화·묶음·첨삭 이력·그래프·사용량·세션을 모두 지운다. 되돌릴 수 없다 |
+| `DELETE /v1/auth/me` `{password}` (CSRF) | **계정 삭제**. 비밀번호가 없는 소셜 전용 계정은 `{"password": ""}`. 상대·대화·묶음·첨삭 이력·그래프·사용량·세션을 모두 지운다. 되돌릴 수 없다 |
 
-로그인·가입·`me` 응답: `{user_id, username, csrf_token, expires_at, is_admin, consented_at, consent_version, consent_current}`. `is_admin`은 아이디가 `ADMIN_USERNAMES`와 대소문자까지 같을 때만 true. `consent_current`는 기록된 동의 버전이 지금 버전과 같은지.
+로그인·가입·`me` 응답: `{user_id, username, csrf_token, expires_at, is_admin, consented_at, consent_version, consent_current}`. `is_admin`은 아이디가 `ADMIN_USERNAMES`와 대소문자까지 같을 때만 true. `consent_current`는 기록된 동의 버전이 지금 버전과 같은지. 회원 정보(0012): `email`, `display_name`, `role`(`user`·`admin`), `status`(`active`·`pending`·`suspended`), `me`에는 `providers`(`password`·`google`·`kakao`)도 있다. `is_admin`은 `role`이 `admin`이어도 true.
+
+**회원 상태**: `AUTH_SIGNUP_REQUIRES_APPROVAL=true`면 새 계정(아이디·이메일·소셜)은 `pending`으로 만들어진다. `pending`·`suspended` 계정은 로그인(세션·토큰)이 되어도 `/v1/auth/*` 밖의 모든 API에서 403 `account_pending`·`account_suspended`다. 소셜 로그인은 제공자가 **확인한** 이메일이 같은 기존 계정에만 연결한다. 초대 코드를 요구하는 서버는 승인제일 때만 소셜 신규 가입을 받는다.
 비밀번호를 잊은 사용자는 운영자가 서버에서 재설정한다(이메일이 없어 자가 재설정이 없다): `scripts/reset_password.py --username <이름>` (`--create`면 계정이 없을 때 만든다 — 운영에서 관리자 계정을 만드는 길).
 
 ```bash
@@ -115,6 +120,10 @@ settings: `formality·friendliness·directness`(1~5), `length`(shorter/same/long
 |---|---|
 | `GET /v1/admin/overview?days=1\|7\|30` | 기간 요약: `users`, `rewrites`(성공률, `by_condition`·`by_channel`·`by_day`), `latency_ms`(p50·p95), `fallback_reasons`, `feedback`, `tokens`, `graph`, `limits`, `health` |
 | `GET /v1/admin/users?limit=50&offset=0` | `{total, items[]}` 최근 가입 순 |
+| `GET /v1/admin/members?query=&status=&limit=50&offset=0` | 회원관리 목록 `{total, items[{user_id, username, email, display_name, role, status, is_admin, providers, created_at, last_login_at}]}`. **전체 사용자 id와 이메일이 나온다**(승인·정지 대상을 가리키기 위해). `query`는 아이디·이메일·표시 이름 부분 일치 |
+| `PATCH /v1/admin/members/{user_id}` `{status?: active\|suspended, role?: user\|admin}` (CSRF) | 승인(pending → active)·정지·권한 변경. 정지하면 그 사용자의 세션을 모두 폐기한다. 자기 자신의 정지·강등은 422 |
+| `POST /v1/admin/members/{user_id}/revoke-sessions` (CSRF) | 강제 로그아웃 `{revoked}` |
+| `DELETE /v1/admin/members/{user_id}` (CSRF) | 계정과 모든 데이터 삭제 (자기 자신은 422) |
 | `GET /v1/admin/jobs?limit=50` | 최근 가져오기 작업. `graph_error`는 오류 종류만 |
 | `GET /v1/admin/feedback?limit=50` | 최근 거절 피드백 (선택형 사유만) |
 | `GET /v1/admin/access-log?limit=50` | 관리자 접근 기록 |

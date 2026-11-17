@@ -118,6 +118,17 @@ class Settings(BaseSettings):
     require_consent: bool = Field(False, description="true면 가입 요청에 consent=true가 있어야 한다")
     consent_version: str = Field("2026-11-14", description="약관·개인정보 안내 버전. 동의 기록에 남긴다")
     admin_usernames: str = Field("", description="쉼표 구분. 이 이름의 사용자만 /v1/admin/* 접근")
+    # 승인제 가입: true면 새 계정(아이디·이메일·소셜)이 pending으로 만들어지고 관리자가 승인해야 API를 쓴다.
+    # 기본은 false(예전 동작). 운영에서 초대 코드 없이 가입을 열려면 켠다.
+    auth_signup_requires_approval: bool = False
+    # 소셜 로그인 (인가 코드 방식). ID가 비면 그 제공자는 꺼진다. 카카오 시크릿은 콘솔에서 켰을 때만 넣는다.
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    kakao_client_id: str = Field("", description="카카오 REST API 키")
+    kakao_client_secret: str = ""
+    public_base_url: str = Field(
+        "", description="밖에서 보이는 주소(https://도메인). 소셜 로그인 redirect_uri에 쓴다. 비면 요청 주소"
+    )
     # 요청 제한 (IP 기준, 프로세스 메모리). 0이면 끈다.
     rate_limit_per_minute: int = Field(0, ge=0, description="/v1/* 전체")
     rate_limit_auth_per_minute: int = Field(0, ge=0, description="로그인·가입·토큰 발급")

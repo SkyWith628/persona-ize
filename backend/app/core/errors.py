@@ -104,3 +104,21 @@ class InvalidInviteError(ForbiddenError):
     """`REGISTER_INVITE_CODE`가 설정돼 있는데 가입 요청의 초대 코드가 없거나 다르다."""
 
     code = "invalid_invite"
+
+
+class SignupClosedError(ForbiddenError):
+    """새 계정을 만들 수 없다 (가입 닫힘, 또는 초대 코드 서버의 소셜 신규 가입). 기존 계정 로그인은 된다."""
+
+    code = "signup_closed"
+
+
+class AccountPendingError(ForbiddenError):
+    """승인 대기 계정. 로그인은 되지만 `/v1/auth/*` 밖의 API는 쓸 수 없다."""
+
+    code = "account_pending"
+
+
+class AccountSuspendedError(ForbiddenError):
+    """정지된 계정. 로그인할 수 없다."""
+
+    code = "account_suspended"
