@@ -6,6 +6,11 @@
 - 관리자 규칙: `role == admin` 또는 `ADMIN_USERNAMES`(기존 동작 그대로). 관리자는 자기 자신을 정지·강등·삭제할 수 없고, `ADMIN_USERNAMES`의 계정은 API로 정지·삭제할 수 없다 → API로는 관리자가 0명이 되지 않는다.
 - 기본값은 예전 동작: 승인제 꺼짐(`AUTH_SIGNUP_REQUIRES_APPROVAL=false`), 소셜 로그인 꺼짐(ID·시크릿이 모두 있어야 켜짐). 운영 모드는 소셜을 켜면 `PUBLIC_BASE_URL`(https)을 요구한다.
 - 확인 못 한 것: 실제 Google·Kakao 왕복(가짜 제공자·모의 HTTP로만 검증). 이메일 소유 확인(메일 발송)은 없다 — 이메일 가입자는 소셜 연결이 안 된다.
+- 2026-11-17 보안 검토 반영: OAuth state 보관소는 가득 차도 남의 것을 버리지 않는다(클라이언트당 20개, 전체가 차면 새 시작 거절) · 활성 관리자가 0명이 되는 변경·삭제·본인 탈퇴는 409 `last_admin`(변경과 한 트랜잭션, 권고 잠금) · `PATCH …/members/{id}`의 `expected_status`(다르면 409 `member_changed`) · 회원관리 기록에 결과(`_done`·`_failed`)와 거절(`member_refused`)을 남기고 대상은 줄인 id만 · Caddy 로그에서 `code`·`state` 가림 · 이메일은 ASCII·DNS 모양만 · `create_user`는 입력을 가릴 수 없는 터미널(Git Bash)에서 비밀번호를 받지 않는다.
+- 알려진 한계(M1, 정책 미정): 주소를 확인하지 않는 이메일 가입으로 남의 주소를 먼저 차지할 수 있다 — 진짜 주인의 Google·Kakao 로그인은 `auth_error=email_in_use`, 이메일 가입은 409가 된다. 이메일 확인(메일 발송)이 있어야 풀린다. 그때까지는 관리자가 선점한 계정을 지운다.
+- 알려진 한계(M2, 정책 미정): main에서 온 이름 단독 실패 한도(5 × `AUTH_NAME_FAILURE_FACTOR`)가 이메일에도 걸려, 알려진 이메일은 주소 네 곳에서 틀리면 15분 잠긴다. 선택지: `AUTH_NAME_FAILURE_FACTOR=0`, 또는 이름 단독 범위만 넘었을 때는 맞는 비밀번호를 통과시키기(여러 주소로 나눠 추측하는 것에 대한 상한이 약해진다).
+- 알려진 한계(L7): `APP_ENV=production`이 아니면 헤더 스텁(`AUTH_ALLOW_HEADER_STUB` 기본 true)이 회원 상태 검사를 건너뛰고, `PUBLIC_BASE_URL`이 비면 redirect_uri를 Host 헤더로 만든다. 운영 모드는 스텁이 켜져 있으면 시작하지 않는다.
+- 알려진 한계(main과 달라진 동작): `DELETE /v1/auth/me`가 소셜 전용 계정에는 빈 비밀번호를 받는다 · 계정마다 로그인 실패 제한 키가 둘이다(아이디와 이메일) · 권한 관리자가 다른 사람을 관리자로 올릴 수 있다.
 
 ## 2026-11-02 팀 운영·범위 확정
 - 결정: 팀장 단독 개발 + 비전공자는 "평가 시트·프롬프트 문서·스키마 설계" 중심(방향 B+C 혼합). 전원이 GitHub(PR 기반)와 Docker를 쓰되, 비전공자는 GitHub Desktop·`make` 명령 수준으로 제한한다(2026-11-02 수정: 비전공자도 코드 작업 가능성 있음).

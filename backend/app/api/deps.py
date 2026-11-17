@@ -207,7 +207,14 @@ def build_state(settings: Settings) -> AppState:
     )
     auth_service = AuthService(settings, auth)
     deletion_service = DeletionService(
-        contacts, conversations, rewrites, import_service, usage, auth, graph_store
+        contacts,
+        conversations,
+        rewrites,
+        import_service,
+        usage,
+        auth,
+        graph_store,
+        admin_names=settings.admin_name_list,  # 마지막 활성 관리자는 지우지 않는다 (본인 탈퇴 포함)
     )
     return AppState(
         settings=settings,

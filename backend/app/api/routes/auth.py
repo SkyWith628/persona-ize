@@ -57,7 +57,9 @@ from app.core.errors import (
     InvalidInviteError,
     NotFoundError,
     SignupClosedError,
+    TooManyAttemptsError,
 )
+from app.core.ratelimit import client_key
 from app.core.security import tokens_equal
 from app.domain.auth import AuthResult, PendingSignup, User
 from app.services.oauth import (
@@ -65,6 +67,7 @@ from app.services.oauth import (
     OAUTH_STATE_TTL_SECONDS,
     OAuthError,
     OAuthProvider,
+    OAuthStateStoreFullError,
     PendingLogin,
     new_pkce_verifier,
     pkce_challenge,
@@ -289,7 +292,11 @@ def _begin(
     consent: bool,
     invite_ok: bool,
 ) -> str:
-    """진행 중 로그인을 보관하고 state 쿠키를 심는다. 제공자 로그인 주소를 돌려준다."""
+    """진행 중 로그인을 보관하고 state 쿠키를 심는다. 제공자 로그인 주소를 돌려준다.
+
+    보관소가 가득 차 있으면 `OAuthStateStoreFullError`가 올라간다 (쿠키를 심기 전이다) — 부르는 쪽이
+    POST는 429, GET은 `auth_error=oauth_failed`로 바꾼다.
+    """
     impl = _provider(state, provider)
     verifier = new_pkce_verifier() if impl.uses_pkce else None
     oauth_state = state.oauth_states.issue(
@@ -299,7 +306,9 @@ def _begin(
             code_verifier=verifier,
             consent=consent,
             invite_ok=invite_ok,
-        )
+        ),
+        # 요청 제한(`core/ratelimit.py`)·로그인 실패 제한과 같은 클라이언트 키로 자리 수를 센다.
+        client=client_key(_client_ip(request)),
     )
     response.set_cookie(
         key=OAUTH_COOKIE,
@@ -323,15 +332,24 @@ async def oauth_start(provider: str, request: Request, state: State, next: str |
 
     이미 가입한 사용자의 로그인에는 이것으로 충분하다. 새 계정에 동의·초대 코드가 필요한 서버에서는
     `POST`로 시작해 그 값을 함께 보낸다 (이 길로 온 새 사용자는 `auth_error=consent_required`나
-    `invalid_invite`로 돌아간다).
+    `invalid_invite`로 돌아간다). 진행 중인 소셜 로그인 보관소가 가득 차 있으면 제공자로 보내지 않고
+    `<next>?auth_error=oauth_failed`로 돌려보낸다.
     """
     _provider(state, provider)  # 쿠키를 심기 전에 404부터
     response = Response(status_code=status.HTTP_302_FOUND)
     invite_ok = not state.auth_service.invite_required
     # 제공자 주소는 우리가 만든 것(고정 주소 + urlencode한 값)이라 그대로 Location에 넣는다.
-    response.headers["location"] = _begin(
-        request, state, response, provider, next_path=next, consent=False, invite_ok=invite_ok
-    )
+    try:
+        response.headers["location"] = _begin(
+            request, state, response, provider, next_path=next, consent=False, invite_ok=invite_ok
+        )
+    except OAuthStateStoreFullError:
+        # 링크로 연 화면이라 JSON 오류 대신 콜백의 실패와 같은 길로 돌려보낸다 (검사한 같은 출처 경로로).
+        # state 쿠키는 지우지 않는다 — 이 브라우저가 다른 탭에서 진행 중인 로그인이 있을 수 있다.
+        log.warning("oauth state store full provider=%s", provider)
+        return RedirectResponse(
+            with_auth_error(safe_next(next), "oauth_failed"), status_code=status.HTTP_302_FOUND
+        )
     return response
 
 
@@ -344,6 +362,7 @@ async def oauth_start_with_terms(
     """동의·초대 코드를 함께 보내는 시작. 응답의 `authorize_url`로 브라우저를 보낸다.
 
     초대 코드가 필요한 서버에서 코드를 보냈는데 틀리면 여기서 403 `invalid_invite`(가입과 같은 시도 제한).
+    진행 중인 소셜 로그인 보관소가 가득 차 있으면 429 `too_many_attempts`(`Retry-After`).
     코드를 보내지 않으면 통과시키되, 콜백에서 새 계정을 만들어야 할 때 `auth_error=invalid_invite`가 된다 —
     이미 가입한 사용자는 초대 코드 없이 로그인된다. 세션이 없는 요청이라 CSRF 토큰은 없다(로그인과 같다).
     """
@@ -355,15 +374,22 @@ async def oauth_start_with_terms(
     if service.invite_required and body.invite_code and state.settings.auth_allow_register:
         service.check_invite(body.invite_code, f"oauth:{provider}", _client_ip(request))
         invite_ok = True
-    url = _begin(
-        request,
-        state,
-        response,
-        provider,
-        next_path=body.next,
-        consent=bool(body.consent),
-        invite_ok=invite_ok,
-    )
+    try:
+        url = _begin(
+            request,
+            state,
+            response,
+            provider,
+            next_path=body.next,
+            consent=bool(body.consent),
+            invite_ok=invite_ok,
+        )
+    except OAuthStateStoreFullError as exc:
+        log.warning("oauth state store full provider=%s", provider)
+        raise TooManyAttemptsError(
+            "지금 진행 중인 소셜 로그인이 너무 많습니다. 잠시 뒤에 다시 시도하세요.",
+            retry_after=exc.retry_after,
+        ) from None
     return OAuthStartOut(authorize_url=url)
 
 
@@ -496,6 +522,8 @@ async def delete_me(
     """계정 삭제 (비밀번호 확인 + CSRF). 상대·대화·첨삭 이력·그래프·사용량·세션을 지운다. 되돌릴 수 없다.
 
     비밀번호가 없는 소셜 전용 계정은 `{"password": ""}`(세션과 CSRF만으로 지운다).
+    하나뿐인 활성 관리자는 탈퇴할 수 없다 — 409 `last_admin`(아무것도 지우지 않는다). 다른 관리자를 먼저
+    지정한 뒤 다시 한다.
     """
     session = await current_session(request, state)
     require_csrf(request, state, session)

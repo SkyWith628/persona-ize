@@ -201,7 +201,14 @@ def inspect_production_settings(settings: Settings) -> GuardReport:
             "첨삭이 원문 유지로만 끝납니다."
         )
     if not settings.admin_username_set:
-        warnings.append("ADMIN_USERNAMES가 비어 있습니다 — 관리자 화면(/admin)에 아무도 들어갈 수 없습니다.")
+        # 설정만 보고 하는 판단이다(여기서는 DB를 읽지 않는다). 관리자는 이름 말고 권한(users.role=admin)
+        # 으로도 되므로(2026-11-16) "아무도 못 들어간다"고 단정하지 않는다 — 권한 관리자가 없을 때만 그렇다.
+        warnings.append(
+            "ADMIN_USERNAMES가 비어 있습니다 — 이름으로 지정된 관리자가 없습니다. "
+            "권한(role)이 admin인 계정도 "
+            "없으면 관리자 화면(/admin)에 아무도 들어갈 수 없습니다. 권한 관리자는 서버에서 "
+            "`python -m app.tools.create_user <아이디> --admin`으로 만듭니다."
+        )
     if not settings.trusted_host_list:
         warnings.append(
             "TRUSTED_HOSTS가 비어 있습니다 — Host 헤더를 검사하지 않습니다. 서비스 도메인을 적으세요."

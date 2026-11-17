@@ -21,7 +21,7 @@
 | `POST /v1/auth/login` `{username, password}` | 로그인. `username`에 **아이디 또는 이메일**. 비밀번호가 맞은 뒤에만 403 `account_pending`(승인 대기)·`account_suspended`(정지). 같은 곳(IP)에서 같은 아이디를 계속 틀리면 그 조합만 429 `too_many_attempts` + `Retry-After`(IP 단독·아이디 단독은 훨씬 높은 횟수에서) |
 | `POST /v1/auth/token` `{username, password, client?}` | Bearer 토큰 발급: `{access_token, token_type: "bearer", expires_at, user_id, username}`. `client`는 `mobile`·`desktop`·`api` |
 | `GET /v1/auth/oauth/{google\|kakao}/start?next=/경로` | 소셜 로그인 시작 → 제공자로 302. 링크로 바로 연다. 설정되지 않은 제공자는 404 |
-| `POST /v1/auth/oauth/{google\|kakao}/start` `{next?, consent?, invite_code?}` | 같은 시작인데 새 계정에 필요한 동의·초대 코드를 함께 보낸다 → `{authorize_url}`(그 주소로 이동). 초대 코드가 틀리면 403 `invalid_invite` |
+| `POST /v1/auth/oauth/{google\|kakao}/start` `{next?, consent?, invite_code?}` | 같은 시작인데 새 계정에 필요한 동의·초대 코드를 함께 보낸다 → `{authorize_url}`(그 주소로 이동). 초대 코드가 틀리면 403 `invalid_invite`. 진행 중인 소셜 로그인이 서버 상한에 닿아 있으면 429 `too_many_attempts` + `Retry-After` |
 | `GET /v1/auth/oauth/{google\|kakao}/callback` | 제공자가 돌려보내는 곳(화면이 부르지 않는다). 성공: 세션 쿠키 + 302 → `next`. 실패: 302 → `<next>?auth_error=<코드>` |
 | `POST /v1/auth/logout` | 쿠키 세션과 Bearer 토큰을 폐기 |
 | `GET /v1/auth/me` | 내 정보 + CSRF 토큰 재조회 |
@@ -29,7 +29,7 @@
 | `GET /v1/auth/sessions` | 로그인된 기기 목록 `[{id, created_at, expires_at, current}]` |
 | `POST /v1/auth/logout-all` (CSRF) | 지금 세션만 남기고 전부 로그아웃 → `{revoked_sessions}` |
 | `POST /v1/auth/password` `{current_password, new_password}` (CSRF) | 비밀번호 변경. 다른 세션은 모두 로그아웃 |
-| `DELETE /v1/auth/me` `{password}` (CSRF) | **계정 삭제**. 비밀번호가 없는 소셜 전용 계정은 `{"password": ""}`. 상대·대화·묶음·첨삭 이력·그래프·사용량·세션을 모두 지운다. 되돌릴 수 없다 |
+| `DELETE /v1/auth/me` `{password}` (CSRF) | **계정 삭제**. 비밀번호가 없는 소셜 전용 계정은 `{"password": ""}`. 상대·대화·묶음·첨삭 이력·그래프·사용량·세션을 모두 지운다. 되돌릴 수 없다. 하나뿐인 활성 관리자는 409 `last_admin`(아무것도 지우지 않는다 — 다른 관리자를 먼저 지정한다) |
 
 로그인·가입·`me` 응답: `{user_id, username, csrf_token, expires_at, is_admin, consented_at, consent_version, consent_current, email, display_name, role, status}`. `me`에는 `expires_at` 대신 `providers`(로그인 수단: `password`·`google`·`kakao`)가 있다. `is_admin`은 `role`이 `admin`이거나 아이디가 `ADMIN_USERNAMES`와 대소문자까지 같을 때 true. `consent_current`는 기록된 동의 버전이 지금 버전과 같은지.
 
@@ -39,6 +39,8 @@
 - **소셜 로그인**은 `GOOGLE_*`·`KAKAO_*`의 ID와 시크릿이 모두 있을 때만 켜진다(기본 꺼짐). `next`는 `/`로 시작하는 같은 출처 경로만 받는다(아니면 `/`). `auth_error` 값: `oauth_failed`(state 불일치·만료·재사용, 교환 실패) · `oauth_denied`(사용자가 취소) · `signup_closed` · `invalid_invite` · `consent_required` · `account_pending` · `account_suspended` · `email_in_use`.
 - 계정 연결: 제공자가 **확인해 준** 이메일이 기존 계정의 **확인된** 이메일(= 소셜로 만든 계정)과 같을 때만 그 계정에 묶는다. 이메일로 가입한 계정(주소 미확인)에는 묶지 않고 `email_in_use` — 비밀번호로 로그인하라고 안내한다. 확인되지 않은 이메일은 이메일 없는 새 계정이 된다.
 - 이메일 가입·소셜 시작/콜백은 `RATE_LIMIT_AUTH_PER_MINUTE`에 함께 걸린다.
+- 진행 중인 소셜 로그인(시작만 하고 아직 돌아오지 않은 것)은 클라이언트(IP, IPv6는 /64)마다 20개까지 둔다 — 넘으면 **그 클라이언트의** 가장 오래된 것이 무효가 된다. 서버 전체 상한(5,000)에 닿으면 새로 시작하지 못한다: `POST …/start`는 429 `too_many_attempts`, `GET …/start`는 제공자로 가지 않고 `<next>?auth_error=oauth_failed`. 이미 시작한 다른 사람의 로그인은 끊기지 않는다(2026-11-17).
+- 이메일 형식(가입·이메일 로그인·제공자가 준 이메일 공통, 2026-11-17): 254자 이하, `@` 하나, 출력 가능한 ASCII만. 앞부분은 영문·숫자와 ``.!#$%&'*+/=?^_`{|}~-``(1~64자, 점은 맨 앞·뒤·연속 불가), 도메인은 점으로 나뉜 영문·숫자·하이픈 라벨 둘 이상이고 마지막 라벨은 영문 2자 이상. 한글·전각 글자·폭 없는 문자가 든 주소와 IP 주소 형식(`a@127.0.0.1`)은 422 `invalid_input`(소셜 로그인에서는 이메일 없는 계정으로 처리).
 비밀번호를 잊은 사용자는 운영자가 서버에서 재설정한다(이메일이 없어 자가 재설정이 없다): `scripts/reset_password.py --username <이름>` (`--create`면 계정이 없을 때 만든다 — 운영에서 `ADMIN_USERNAMES` 관리자 계정을 만드는 길). 권한으로 관리자를 만들거나 올릴 때는 `cd backend && python -m app.tools.create_user <아이디> [--admin] [--reset-password]`.
 
 ```bash
@@ -137,12 +139,13 @@ settings: `formality·friendliness·directness`(1~5), `length`(shorter/same/long
 | 경로 | 내용 |
 |---|---|
 | `GET /v1/admin/members?query=&status=&role=&limit=50&offset=0` | `{total, counts: {active, pending, suspended}, items[]}` 최근 가입 순. `query`는 아이디·이메일·표시 이름 부분 일치. `counts`는 필터와 무관한 전체 수(승인 대기 배지). 항목: `{user_id, username, email, email_verified, display_name, role, status, is_admin, config_admin, providers[], created_at, last_login_at, consent_version}` |
-| `PATCH /v1/admin/members/{user_id}` `{status?: "active"\|"suspended", role?: "user"\|"admin"}` | 승인(pending→active)·정지·정지 해제·권한 변경 → 바뀐 항목. 정지하면 그 회원의 세션·토큰을 모두 폐기한다. 빈 본문·`pending`·모르는 필드는 422 |
+| `PATCH /v1/admin/members/{user_id}` `{status?: "active"\|"suspended", role?: "user"\|"admin", expected_status?: "active"\|"pending"\|"suspended"}` | 승인(pending→active)·정지·정지 해제·권한 변경 → 바뀐 항목. 정지하면 그 회원의 세션·토큰을 모두 폐기한다. 빈 본문·`pending`·모르는 필드는 422. `expected_status`(선택)를 보내면 그 회원의 **지금 상태가 그 값일 때만** 바꾼다 — 다르면 409 `member_changed`(아무것도 바꾸지 않는다). 화면은 줄을 그릴 때 본 상태를 늘 보내고, 409면 목록을 다시 읽는다 |
 | `POST /v1/admin/members/{user_id}/revoke-sessions` | 그 회원의 세션 전부 폐기 → `{revoked_sessions}` |
-| `DELETE /v1/admin/members/{user_id}` | 계정과 자료 삭제(되돌릴 수 없다) → `{contacts, conversations, messages, graph_nodes_removed, graph_error}` |
+| `DELETE /v1/admin/members/{user_id}` | 계정과 자료 삭제(되돌릴 수 없다) → `{contacts, conversations, messages, graph_nodes_removed, graph_error}`. 대상이 하나뿐인 활성 관리자면 409 `last_admin` |
 
-- 자기 보호: 관리자는 자기 자신을 정지·권한 내리기·삭제할 수 없다(409 `cannot_modify_self`). `ADMIN_USERNAMES`의 계정(`config_admin: true`)은 누구도 이 API로 정지·삭제할 수 없다(409 `protected_admin`) — 그래서 관리자가 0명이 되지 않는다.
-- 기록(`admin_access_log`, 바꾸기 전에 적는다): `members` · `member_approve` · `member_suspend` · `member_activate` · `member_role` · `member_revoke_sessions` · `member_delete` → `member_delete_done`. 대상은 `target=u_8f2…a1 name=<아이디>`.
+- 자기 보호: 관리자는 자기 자신을 정지·권한 내리기·삭제할 수 없다(409 `cannot_modify_self`). `ADMIN_USERNAMES`의 계정(`config_admin: true`)은 누구도 이 API로 정지·삭제할 수 없다(409 `protected_admin`).
+- 마지막 관리자(2026-11-17): 권한 내리기·정지·삭제로 **활성 관리자**가 0명이 되면 409 `last_admin`이고 아무것도 바뀌지 않는다. 활성 관리자 = 상태가 `active`이고, `role`이 `admin`이거나 아이디가 `ADMIN_USERNAMES`에 있는 **실제로 있는** 계정(이름만 적혀 있고 계정이 없으면 세지 않는다. 정지·승인 대기 계정도 세지 않는다). 검사는 변경과 같은 DB 트랜잭션에서 한다 — 두 관리자가 동시에 서로를 내리거나 지워도 한 명은 남는다. 본인 탈퇴(`DELETE /v1/auth/me`)도 같은 규칙이다.
+- 기록(`admin_access_log`): 하려는 일을 **바꾸기 전에** 적고(`members` · `member_approve` · `member_suspend` · `member_activate` · `member_role` · `member_revoke_sessions` · `member_delete`), 끝나면 결과를 한 줄 더 적는다 — `<이름>_done`(정지·세션 폐기는 `sessions=<수>`, 삭제는 지운 수) 또는 `<이름>_failed reason=<오류 코드\|예외 종류>`. 서버 규칙에 걸린 시도(409)는 `member_refused` `op=update\|delete status=… role=… reason=cannot_modify_self\|protected_admin\|member_changed`. 대상은 줄인 id(`target=u_8f2…a1`)로만 적는다 — 아이디·이메일은 적지 않는다(계정을 지운 뒤에도 기록에 개인정보가 남지 않게).
 
 - 기간은 사용량과 같은 하루 경계(KST)의 달력 날짜 N일(오늘 포함). 표본이 없으면 `success_rate`·`acceptance_rate`·`latency_ms`는 null.
 - `tokens`는 `usage_counters` 기준. `estimated_cost_usd`는 `COST_*` 단가가 0이면 null(숫자를 지어내지 않는다).

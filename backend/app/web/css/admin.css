@@ -692,6 +692,167 @@ tbody tr:last-child > * {
   font-size: var(--text-s);
 }
 
+/* ---- 회원 관리 ---- */
+
+/* 위쪽 바로 가기(#members)로 왔을 때 제목이 화면 맨 위에 붙지 않게 */
+#members {
+  scroll-margin-top: var(--space-4);
+}
+
+#h-members:focus {
+  outline: none;
+  box-shadow: none;
+}
+
+.members-tools {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.members-search {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.input {
+  min-height: var(--control-h);
+  padding: 0 var(--space-3);
+  font: inherit;
+  font-size: var(--text-s);
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+}
+
+.input::placeholder {
+  color: var(--muted);
+  opacity: 1;
+}
+
+.members-search input.input {
+  width: 240px;
+  max-width: 100%;
+}
+
+/* 위험한 일(정지 확인·삭제): 색과 함께 글자가 뜻을 담는다 */
+.btn.ghost.danger {
+  color: var(--bad);
+}
+
+.btn.ghost.danger:hover:not(:disabled) {
+  background: var(--bad-soft);
+  border-color: var(--bad);
+}
+
+.btn.danger-solid {
+  background: var(--bad);
+  border-color: var(--bad);
+  color: var(--surface);
+}
+
+.btn.danger-solid:hover:not(:disabled) {
+  background: var(--bad);
+  border-color: var(--ink);
+}
+
+/* 막힌 버튼의 색은 .btn:disabled를 그대로 따른다 (위 규칙이 덮지 않게) */
+.btn.ghost.danger:disabled,
+.btn.danger-solid:disabled {
+  color: var(--muted);
+  border-color: var(--line);
+  background: var(--surface-2);
+}
+
+.member-name,
+.member-email {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* 버튼이 여럿이라 이 칸만 줄바꿈을 허용한다 */
+td.member-cell {
+  white-space: normal;
+  min-width: 300px;
+}
+
+.member-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.member-action {
+  padding: 0 var(--space-3);
+}
+
+.member-lock {
+  margin-top: var(--space-1);
+  font-size: var(--text-xs);
+}
+
+/* ---- 확인 대화상자 (서비스 화면의 대화상자와 같은 모양) ---- */
+
+.dialog {
+  width: min(480px, calc(100vw - 2 * var(--space-4)));
+  max-height: calc(100vh - 2 * var(--space-5));
+  padding: var(--space-5);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-l);
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--shadow-2);
+  overflow-y: auto;
+}
+
+.dialog::backdrop {
+  background: color-mix(in srgb, var(--ink) 45%, transparent);
+}
+
+.dialog.danger {
+  border-top: 4px solid var(--bad);
+}
+
+.dialog-title {
+  margin-bottom: var(--space-3);
+}
+
+.dialog-message {
+  margin-bottom: var(--space-3);
+  font-size: var(--text-s);
+  color: var(--ink-2);
+}
+
+.dialog-bullets {
+  margin-bottom: var(--space-4);
+}
+
+.dialog .field {
+  display: grid;
+  gap: var(--space-1);
+  font-size: var(--text-s);
+}
+
+.dialog .field label {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+
 /* ---- 좁은 화면 ---- */
 
 @media (max-width: 1100px) {

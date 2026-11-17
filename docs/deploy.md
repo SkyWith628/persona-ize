@@ -130,7 +130,8 @@ curl -sI "http://<도메인>/" | head -3               # 308 → https
 브라우저로 `https://<도메인>`을 열어 자물쇠(인증서)와 화면을 본다.
 
 ### 7단계 — 관리자 계정
-관리자 여부는 아이디로만 정한다(`ADMIN_USERNAMES`와 대소문자까지 같아야 한다). 그래서 운영에서는 그 아이디를
+관리자는 두 가지로 정해진다: 아이디가 `ADMIN_USERNAMES`에 있거나(대소문자까지 같아야 한다), 권한(`users.role`)이
+`admin`이다. 먼저 이름으로 지정하는 쪽 — 운영에서는 그 아이디를
 **화면 가입으로 만들 수 없게 막아 두었다**(다른 사람이 먼저 차지하는 것을 막으려고 — 시도하면 "이미 사용 중인 이름"으로 보인다).
 관리자 계정은 서버에서 만든다. 비밀번호는 물어본다(8자 이상):
 ```bash
@@ -138,6 +139,43 @@ scripts/ops/run.sh scripts/reset_password.py --username <관리자 아이디> --
 ```
 만든 뒤 `https://<도메인>`에서 그 아이디로 로그인하고 `https://<도메인>/admin`을 연다. 계정이 아직 없으면 backend가
 시작할 때 로그에 "관리자 계정이 아직 없습니다" 경고를 남긴다.
+
+권한으로 관리자를 만들 때(`ADMIN_USERNAMES`를 비워 두었거나 관리자를 더 둘 때)는 `app.tools.create_user`를 쓴다.
+앱에 들어 있는 모듈이라 `run.sh`(저장소의 `scripts/*.py`용)가 아니라 compose로 바로 돌린다:
+```bash
+scripts/ops/compose.sh run --rm --no-deps backend python -m app.tools.create_user <아이디> --admin
+```
+- 없는 아이디면 관리자(role=admin, 승인제여도 바로 active)로 만들고 비밀번호를 화면에 보이지 않게 두 번 묻는다.
+  이미 있는 아이디면 비밀번호는 건드리지 않고 권한만 올린다. `--reset-password`를 붙이면 비밀번호도 새로 정한다.
+- 비밀번호는 명령 인자·환경변수로 받지 않는다. 자동화할 때는 표준입력 첫 줄로 넘긴다(`… -T backend python -m
+  app.tools.create_user <아이디> --admin < 비밀번호파일`). 입력을 가릴 수 없는 터미널 창(Windows의 Git Bash)에서는
+  묻지 않고 끝내므로 `winpty`를 앞에 붙이거나 PowerShell에서 실행한다.
+- 그 뒤로는 `/admin`의 회원 관리에서 다른 회원을 관리자로 올리거나 내릴 수 있다. **활성 관리자가 0명이 되는 변경은
+  거절된다**(409 `last_admin` — 마지막 관리자의 권한 내리기·정지·삭제·본인 탈퇴). 활성 관리자는 상태가 active이고
+  role이 admin이거나 `ADMIN_USERNAMES`에 있는, 실제로 있는 계정이다.
+
+### 7-1단계 — 소셜 로그인 켜기 (선택)
+기본은 꺼져 있다. 켜려면 `.env.production`에 아래를 채우고 `scripts/ops/compose.sh up -d`로 backend를 다시 만든다.
+
+| 설정 | 값 |
+|---|---|
+| `PUBLIC_BASE_URL` | 밖에서 보이는 주소, 끝에 `/` 없이. 예) `https://persona.example.com`. 소셜 로그인을 켰는데 이 값이 `https://`로 시작하지 않으면 운영 모드는 시작하지 않는다 |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Google Cloud Console → API 및 서비스 → 사용자 인증 정보 → OAuth 클라이언트 ID(웹 애플리케이션) |
+| `KAKAO_CLIENT_ID`, `KAKAO_CLIENT_SECRET` | Kakao Developers → 내 애플리케이션. ID는 **REST API 키**, 시크릿은 보안 → Client Secret("사용함"으로 켠다) |
+
+제공자마다 ID와 시크릿이 **둘 다** 있어야 그 제공자가 켜진다(하나만 있으면 꺼진 채로 시작 로그에 경고가 남는다).
+각 제공자 콘솔에 **redirect URI**를 글자 그대로 등록한다:
+```
+<PUBLIC_BASE_URL>/v1/auth/oauth/google/callback      # Google: "승인된 리디렉션 URI"
+<PUBLIC_BASE_URL>/v1/auth/oauth/kakao/callback       # Kakao: 카카오 로그인 → Redirect URI
+```
+- Kakao는 카카오 로그인을 "활성화"로 두고, 이메일을 받으려면 동의 항목에서 카카오계정(이메일)을 켠다(없어도 로그인은
+  된다 — 이메일 없는 계정이 만들어진다).
+- 켜졌는지는 `curl -s https://<도메인>/v1/auth/providers`의 `google`·`kakao` 값으로 본다.
+- 새 계정은 가입 정책을 그대로 따른다: 초대 코드·동의가 필요한 서버에서는 화면이 그 값을 함께 보내고, 승인제
+  (`AUTH_SIGNUP_REQUIRES_APPROVAL=true`)면 첫 소셜 로그인은 승인 대기로 끝난다(관리자가 `/admin`에서 승인).
+- Caddy 접근 로그에는 콜백 주소의 `code`·`state` 값이 `REDACTED`로 남는다(`docker/caddy/Caddyfile`).
+- 실제 Google·Kakao 왕복은 앱 키가 없어 확인하지 못했다(가짜 제공자로만 검증) — 처음 켤 때 직접 로그인해 본다.
 
 비밀번호를 잊은 사용자는 운영자가 서버에서 재설정한다(이메일이 없어 자가 재설정이 없다):
 `scripts/ops/run.sh scripts/reset_password.py --username <이름>`

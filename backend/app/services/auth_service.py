@@ -72,13 +72,13 @@ from app.core.security import (
 )
 from app.domain.auth import (
     MAX_DISPLAY_NAME,
-    MAX_EMAIL,
     AuthResult,
     PendingSignup,
     Role,
     Session,
     User,
     UserStatus,
+    canonical_email,
 )
 from app.repositories.auth import EMAIL_TAKEN, USERNAME_TAKEN, AuthRepo
 from app.services.oauth import OAuthProfile
@@ -106,15 +106,16 @@ PRUNE_THRESHOLD = 1000  # 이 수를 넘으면 실패 기록 때마다 빈 키�
 
 GENERATED_USERNAME_TRIES = 8
 MAX_SEED_CHARS = 24  # 만든 아이디 = 앞부분(24자까지) + `_` + 무작위 6자 ≤ 32자
-# 한 글자씩 소비하는 단순 패턴이다 (중첩 반복 없음 — 긴 입력에도 선형).
-_EMAIL_RE = re.compile(r"[^@\s]+@[^@\s.]+(?:\.[^@\s.]+)+")
 _SEED_STRIP_RE = re.compile(r"[^a-z0-9_-]")
 
 
 def normalize_email(raw: str) -> str:
-    """앞뒤 공백을 떼고 소문자로. 형식·길이가 맞지 않으면 InvalidInputError."""
-    email = raw.strip().lower()
-    if not email or len(email) > MAX_EMAIL or not _EMAIL_RE.fullmatch(email):
+    """앞뒤 공백을 떼고 소문자로. 형식·길이가 맞지 않으면 InvalidInputError.
+
+    규칙은 `domain.auth.canonical_email` 한 곳에 있다 (ASCII만, `@` 하나, DNS 모양 도메인, 254자 이하).
+    """
+    email = canonical_email(raw)
+    if email is None:
         raise InvalidInputError("이메일 형식이 올바르지 않습니다.")
     return email
 

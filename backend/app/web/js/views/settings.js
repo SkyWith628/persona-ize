@@ -1,4 +1,4 @@
-// 설정(#/settings): 비밀번호 변경, 로그인된 기기, 화면 테마, 단축키 안내, 동의 정보·문서, 오늘 사용량·한도.
+// 설정(#/settings): 계정 정보(아이디·이메일·권한·로그인 방법), 비밀번호 변경, 로그인된 기기, 화면 테마, 단축키 안내, 동의 정보·문서, 오늘 사용량·한도.
 
 import { api } from "../api.js";
 import { describeError } from "../lib/errors.js";
@@ -6,7 +6,7 @@ import { formatDateTime, formatNumber, isMacLike } from "../lib/format.js";
 import { usageView } from "../lib/model.js";
 import { refreshUsage } from "../session.js";
 import { getTheme, setTheme, store } from "../store.js";
-import { busy, h, uid } from "../ui/dom.js";
+import { busy, h, setChildren, uid } from "../ui/dom.js";
 import { UNAVAILABLE_TOAST, emptyState, kbd, loadInto, meter, note, pageHead, tag } from "../ui/parts.js";
 import { toast } from "../ui/toast.js";
 
@@ -290,18 +290,74 @@ function consentSection() {
   );
 }
 
-export function mountSettings(root) {
+const PROVIDER_LABEL = { password: "비밀번호", google: "Google", kakao: "카카오" };
+
+/** 로그인 방법 목록 → "비밀번호 · Google". 모르는 값은 그대로 보여 준다. */
+function providersText(providers) {
+  return providers.map((p) => (Object.hasOwn(PROVIDER_LABEL, p) ? PROVIDER_LABEL[p] : String(p))).join(" · ");
+}
+
+function fact(name, ...value) {
+  return h("div", null, h("dt", null, name), h("dd", null, value));
+}
+
+/**
+ * 계정: 아이디·이메일·표시 이름·권한·로그인 방법. 이메일과 로그인 방법은 `/v1/auth/me`에서 읽는다
+ * (store에는 아이디와 관리자 여부만 있다). 읽지 못하면 아는 것(아이디)만 보여 준다.
+ * @param {Promise<object|null>} account `/v1/auth/me`의 응답(실패하면 null)
+ */
+function accountSection(account) {
   const me = store.me || {};
+  const idRow = (isAdmin) => fact("아이디", h("strong", null, me.username || ""), isAdmin ? [" ", tag("관리자", "accent")] : null);
+  const box = h("dl", { class: "account-facts" }, idRow(me.is_admin));
+  account.then((info) => {
+    if (!info || !box.isConnected) return;
+    const providers = Array.isArray(info.providers) ? info.providers : null;
+    const isAdmin = info.is_admin === true || info.role === "admin";
+    setChildren(
+      box,
+      idRow(isAdmin),
+      fact("이메일", info.email || h("span", { class: "muted" }, "등록된 이메일이 없어요 (아이디로 가입한 계정)")),
+      info.display_name ? fact("표시 이름", info.display_name) : null,
+      fact("권한", isAdmin ? "관리자" : "일반 회원"),
+      // 옛 서버는 로그인 방법을 주지 않는다 — 그때는 줄을 내지 않는다
+      providers ? fact("로그인 방법", providers.length ? providersText(providers) : "–") : null,
+    );
+  });
+  return h("section", { class: "card section" }, h("h2", { class: "section-title" }, "계정"), box);
+}
+
+/**
+ * 비밀번호 구획. 소셜 로그인으로만 쓰는 계정(로그인 방법에 비밀번호가 없다)은 바꿀 비밀번호가 없으므로
+ * 폼 대신 안내를 보여 준다. 로그인 방법을 모르면(옛 서버·읽기 실패) 폼을 그대로 둔다.
+ */
+function passwordOrSocialNote(account) {
+  const holder = h("div", null, passwordSection());
+  account.then((info) => {
+    if (!holder.isConnected || !info || !Array.isArray(info.providers) || info.providers.includes("password")) return;
+    // 쓰는 중이던 폼을 갑자기 치우지 않는다 (응답이 늦게 온 경우)
+    if (holder.contains(document.activeElement)) return;
+    holder.replaceChildren(
+      h(
+        "section",
+        { class: "card section" },
+        h("h2", { class: "section-title" }, "비밀번호"),
+        h("p", null, `이 계정은 ${providersText(info.providers) || "소셜"} 로그인으로만 써서 비밀번호가 없어요.`),
+        note("계정을 지울 때도 비밀번호를 묻지 않아요. ‘내 데이터’ 화면에서 지울 수 있어요."),
+      ),
+    );
+  });
+  return holder;
+}
+
+export function mountSettings(root) {
+  // 이메일·권한·로그인 방법은 store에 없어 한 번 읽는다. 실패해도(401 포함) 화면은 아는 것만으로 그린다.
+  const account = api.me().catch(() => null);
   root.replaceChildren(
     pageHead("설정"),
-    h(
-      "section",
-      { class: "card section" },
-      h("h2", { class: "section-title" }, "계정"),
-      h("p", null, "아이디 ", h("strong", null, me.username || ""), me.is_admin ? [" ", tag("관리자", "accent")] : null),
-    ),
+    accountSection(account),
     usageSection(),
-    passwordSection(),
+    passwordOrSocialNote(account),
     sessionsSection(),
     themeSection(),
     shortcutsSection(),

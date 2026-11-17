@@ -183,6 +183,11 @@ class Settings(BaseSettings):
         """관리자 이름의 소문자 집합 — 이름 선점 차단·경고처럼 '비슷한 이름'을 볼 때 쓴다."""
         return frozenset(name.lower() for name in self._split(self.admin_usernames))
 
+    @property
+    def admin_name_list(self) -> tuple[str, ...]:
+        """`ADMIN_USERNAMES`에 적힌 이름 그대로(대소문자 유지). "활성 관리자" 수를 셀 때 저장소에 넘긴다."""
+        return tuple(self._split(self.admin_usernames))
+
     def is_admin_name(self, username: str) -> bool:
         """관리자인지 — `ADMIN_USERNAMES`에 적힌 이름과 **대소문자까지** 같아야 한다.
 

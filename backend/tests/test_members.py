@@ -14,7 +14,10 @@ import asyncio
 import io
 import json
 import logging
+import re
 import uuid
+from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 from uuid import UUID
@@ -25,7 +28,13 @@ from fastapi.testclient import TestClient
 
 from app.api.routes.auth import safe_next, with_auth_error
 from app.core.config import Settings
-from app.core.errors import DomainError, InvalidInputError, NotFoundError
+from app.core.errors import (
+    DomainError,
+    InvalidInputError,
+    LastAdminError,
+    MemberChangedError,
+    NotFoundError,
+)
 from app.core.guard import inspect_production_settings
 from app.core.ratelimit import AUTH_LIMITED
 from app.main import create_app
@@ -33,13 +42,16 @@ from app.repositories.auth import InMemoryAuthRepo
 from app.services.auth_service import AuthService, normalize_email, username_seed
 from app.services.member_admin_service import CannotModifySelfError, ProtectedAdminError
 from app.services.oauth import (
+    MAX_PENDING_STATES_PER_CLIENT,
     GoogleProvider,
     KakaoProvider,
     OAuthError,
     OAuthProfile,
     OAuthStateStore,
+    OAuthStateStoreFullError,
     PendingLogin,
     build_oauth_providers,
+    clean_email,
     pkce_challenge,
 )
 from app.tools import create_user
@@ -206,6 +218,36 @@ def test_production_guard_requires_https_public_base_url_for_social_login() -> N
     assert any("KAKAO" in w for w in half.warnings)
 
 
+def test_empty_admin_usernames_warning_does_not_claim_nobody_can_be_admin() -> None:
+    """관리자는 권한(role)으로도 된다 — 이름 목록이 비었다고 "아무도 못 들어간다"고 단정하지 않는다."""
+    warning = next(w for w in inspect_production_settings(_settings()).warnings if "ADMIN_USERNAMES" in w)
+    assert "권한(role)이 admin인 계정도 없으면" in warning and "app.tools.create_user" in warning
+    assert "비어 있습니다 — 관리자 화면(/admin)에 아무도" not in warning  # 예전의 단정하는 문장
+    named = inspect_production_settings(_settings(admin_usernames="boss"))
+    assert not any("ADMIN_USERNAMES가 비어" in w for w in named.warnings)
+
+
+def test_proxy_access_log_redacts_oauth_code_and_state() -> None:
+    """Caddy 접근 로그에 소셜 로그인 콜백의 인가 코드·state가 남지 않게 쿼리 값을 가린다 (Caddyfile).
+
+    문법과 실제 가림은 `caddy:2-alpine`(v2.11.9)으로 확인했다(2026-11-17).
+    여기서는 그 설정이 빠지지 않는지만 본다.
+    """
+    caddyfile = Path(__file__).resolve().parents[2] / "docker" / "caddy" / "Caddyfile"
+    if not caddyfile.is_file():
+        pytest.skip("저장소의 docker/ 폴더가 없는 곳(테스트 이미지)에서는 건너뛴다.")
+    text = caddyfile.read_text(encoding="utf-8")
+    log_block = text[text.rindex("	log {") :]
+    uri = re.search(r"request>uri query \{(.*?)\}", log_block, re.S)
+    assert uri is not None, "접근 로그의 request>uri 쿼리 필터가 없다"
+    assert re.findall(r"replace (\w+) REDACTED", uri.group(1)) == ["code", "state"]
+    location = re.search(r"resp_headers>Location query \{(.*?)\}", log_block, re.S)
+    assert location is not None and "replace state REDACTED" in location.group(1)
+    # 예전부터 있던 헤더 가림도 그대로다
+    assert "request>headers>X-Csrf-Token delete" in log_block
+    assert "request>headers>X-User-Id delete" in log_block
+
+
 # ---------- 이메일 가입·이메일 로그인 ----------
 
 
@@ -216,6 +258,45 @@ def test_email_helpers() -> None:
             normalize_email(bad)
     with pytest.raises(InvalidInputError):
         normalize_email("x" * 250 + "@example.com")
+    # 눈에는 같아 보여도 다른 주소가 되는 값·IP 주소 형식은 받지 않는다 (2026-11-17 보안 검토)
+    for bad in (
+        "min\u200bsu@example.com",  # 폭 없는 공백
+        "minsu@exam\u200dple.com",  # 폭 없는 결합자
+        "\ufeffminsu@example.com",  # BOM
+        "ｍｉｎｓｕ@example.com",  # 전각 영문
+        "minsu@ｅｘａｍｐｌｅ.com",
+        "minsu@example。com",  # 전각 마침표
+        "민수@example.com",
+        "minsu@한국.kr",
+        "minsu@127.0.0.1",
+        "minsu@[127.0.0.1]",
+        "minsu@[IPv6:::1]",
+        "minsu@example.c",  # 한 글자 TLD
+        "minsu@example.123",
+        "minsu@-example.com",
+        "minsu@example-.com",
+        "minsu@exa_mple.com",
+        "minsu@example.com.",
+        ".minsu@example.com",
+        "minsu.@example.com",
+        "min..su@example.com",
+        '"min su"@example.com',
+        "min\tsu@example.com",
+        "minsu@example.com\nbcc:x@example.com",
+        "a" * 65 + "@example.com",  # local part 64자 초과
+        "minsu@" + "a" * 64 + ".com",  # 라벨 63자 초과
+    ):
+        with pytest.raises(InvalidInputError):
+            normalize_email(bad)
+        assert clean_email(bad) is None, bad  # 소셜 로그인도 같은 규칙이다
+    for good in (
+        "minsu.kim+work@mail.example.co.kr",
+        "o'neil_99@sub-domain.example.org",
+        "a@b.io",
+        "a" * 64 + "@example.com",
+    ):
+        assert normalize_email(good.upper()) == good and clean_email(f" {good} ") == good
+    assert clean_email(None) is None and clean_email(123) is None
     assert username_seed("Minsu.Kim") == "minsu_kim"
     assert username_seed("가") == "user" and username_seed("__") == "user" and username_seed("ab") == "user"
     assert len(username_seed("a" * 80)) == 24
@@ -346,9 +427,10 @@ def test_generated_username_never_takes_an_admin_name() -> None:
         "/v1/auth/signup", json={"email": "OPS_LEAD@example.com", "password": PW}
     )
     assert ops.json()["username"] != "ops_lead" and ops.json()["is_admin"] is False
-    # 짧거나 한글뿐인 앞부분은 기본 이름으로
-    short = TestClient(client.app).post("/v1/auth/signup", json={"email": "가@example.com", "password": PW})
-    assert short.status_code == 201 and short.json()["username"].startswith("user")
+    # 짧거나 기호뿐인 앞부분은 기본 이름으로 (한글 앞부분은 이메일 검사에서 422 — test_email_helpers)
+    for email in ("k@example.com", "+_+@example.com"):
+        short = TestClient(client.app).post("/v1/auth/signup", json={"email": email, "password": PW})
+        assert short.status_code == 201 and short.json()["username"].startswith("user"), email
 
 
 def test_login_by_email_shares_the_throttle_and_does_not_reveal_existence() -> None:
@@ -491,7 +573,8 @@ def test_suspension_cuts_cookie_sessions_and_bearer_tokens_at_once() -> None:
 
     log = Log()
     out = asyncio.run(state.member_admin.update_member(log, uuid.uuid4(), UUID(uid), status="suspended"))
-    assert out.status == "suspended" and log.actions == ["member_suspend"]
+    assert out.status == "suspended" and log.actions == ["member_suspend", "member_suspend_done"]
+    assert log.lines[1][1].endswith("sessions=2")  # 결과 줄: 가입 때 열린 세션 + Bearer 토큰을 끊었다
     _all_dead(client, browser, csrf, bearer)
 
     # 정지 계정은 로그인할 수 없다 (쿠키 로그인·토큰 발급 모두). 비밀번호가 틀리면 정지 여부를 알리지 않는다.
@@ -576,7 +659,7 @@ def test_oauth_start_redirects_to_provider_with_state_cookie_and_pkce() -> None:
     assert client.post("/v1/auth/oauth/google/start").status_code == 200  # 본문 없이도
 
 
-def test_state_store_is_single_use_short_lived_and_bounded() -> None:
+def test_state_store_is_single_use_and_short_lived() -> None:
     now = [1000.0]
     store = OAuthStateStore(ttl_seconds=600, max_entries=3, clock=lambda: now[0])
     pending = PendingLogin(provider="google", next_path="/", code_verifier="v")
@@ -592,10 +675,71 @@ def test_state_store_is_single_use_short_lived_and_bounded() -> None:
     now[0] += 1  # late는 정확히 600초 = 만료
     assert store.consume(late) is None and store.consume(fresh) == pending
 
-    states = [store.issue(pending) for _ in range(5)]  # 상한 3 → 오래된 둘은 버려진다
+    assert store.consume("x" * 5000) is None and len(store) == 0
+
+
+def test_state_store_never_evicts_another_clients_pending_login() -> None:
+    """가득 찼을 때: 만료분을 치우고, 클라이언트는 자기 것만 밀어내고, 그래도 가득이면 새로 내주지 않는다."""
+    now = [1000.0]
+    store = OAuthStateStore(ttl_seconds=600, max_entries=5, clock=lambda: now[0], per_client=2)
+    pending = PendingLogin(provider="google", next_path="/")
+    victim = store.issue(pending, "198.51.100.7")
+
+    # 한 곳에서 아무리 시작해도 차지하는 자리는 per_client개다 — 자기 것 중 오래된 것만 사라진다
+    flood = [store.issue(pending, "203.0.113.9") for _ in range(50)]
     assert len(store) == 3
-    assert [store.consume(s) is not None for s in states] == [False, False, True, True, True]
-    assert store.consume("x" * 5000) is None
+    assert [store.consume(s) is not None for s in flood[-3:]] == [False, True, True]
+    assert store.consume(flood[0]) is None
+
+    # 주소를 바꿔 가며 전체 상한까지 채워도 먼저 시작한 사람의 로그인은 살아 있다. 새 state는 거절된다.
+    for i in range(4):
+        store.issue(pending, f"192.0.2.{i}")
+    assert len(store) == 5
+    with pytest.raises(OAuthStateStoreFullError) as full:
+        store.issue(pending, "192.0.2.99")
+    assert full.value.retry_after == 601  # 가장 먼저 만료되는 보관분이 사라질 때까지
+    with pytest.raises(OAuthStateStoreFullError):
+        store.issue(pending)  # 클라이언트 키 없이 불러도 같다
+    assert len(store) == 5
+    assert store.consume(victim) == pending
+
+    # 만료된 것은 새로 넣기 전에 먼저 치운다 — 가득 차 있어도 만료분만큼 자리가 난다
+    now[0] += 600
+    assert store.consume(store.issue(pending, "192.0.2.99")) == pending and len(store) == 0
+
+
+def test_oauth_start_flood_cannot_kill_someone_elses_login_and_full_store_refuses() -> None:
+    client = _client()
+    _fake(client, "google", OAuthProfile(subject="g-1", email="a@example.com", email_verified=True))
+    state = _state(client)
+    victim = TestClient(client.app, client=("198.51.100.7", 40000))
+    _, victim_state = _start(victim, "google", "/admin")
+
+    # 로그인하지 않은 한 주소가 시작만 계속 부른다 → 그 주소의 자리(20개)만 돈다
+    attacker = TestClient(client.app, client=("203.0.113.9", 50000))
+    for _ in range(MAX_PENDING_STATES_PER_CLIENT * 3):
+        assert attacker.get("/v1/auth/oauth/google/start", follow_redirects=False).status_code == 302
+    assert len(state.oauth_states) == MAX_PENDING_STATES_PER_CLIENT + 1
+    done = _callback(victim, "google", code="good-code", state=victim_state)
+    assert done.headers["location"] == "/admin" and _has_session_cookie(done)
+
+    # 보관소가 가득 찬 서버: POST는 429, GET은 화면으로 돌려보낸다. 이미 시작한 로그인은 그대로 끝난다.
+    state.oauth_states = OAuthStateStore(max_entries=1)
+    late = TestClient(client.app, client=("198.51.100.8", 40000))
+    _, kept = _start(late, "google")
+    other = TestClient(client.app, client=("192.0.2.44", 40000))
+    refused = other.post("/v1/auth/oauth/google/start", json={})
+    assert _code(refused) == (429, "too_many_attempts") and int(refused.headers["retry-after"]) >= 1
+    assert "set-cookie" not in refused.headers
+    redirected = other.get("/v1/auth/oauth/google/start", params={"next": "/m"}, follow_redirects=False)
+    assert redirected.status_code == 302 and redirected.headers["location"] == "/m?auth_error=oauth_failed"
+    assert "set-cookie" not in redirected.headers  # 제공자로 보내지 않고 state 쿠키도 심지 않는다
+    outside = other.get(
+        "/v1/auth/oauth/google/start", params={"next": "//evil.example"}, follow_redirects=False
+    )
+    assert outside.headers["location"] == "/?auth_error=oauth_failed"
+    assert len(state.oauth_states) == 1
+    assert _callback(late, "google", code="good-code", state=kept).headers["location"] == "/"
 
 
 # ---------- 소셜 로그인: 콜백 ----------
@@ -1107,7 +1251,16 @@ def test_member_admin_rules_self_protection_and_protected_config_admin() -> None
         run(svc.update_member(log, ids["boss"], ids["member"], status="pending"))
     with pytest.raises(NotFoundError):
         run(svc.update_member(log, ids["boss"], uuid.uuid4(), status="suspended"))
-    assert log.lines == []  # 거절된 요청은 아무것도 바꾸지도 적지도 않는다
+    # 서버 규칙에 걸린 시도(409)는 사유 코드와 함께 남는다. 형식이 틀린 요청·없는 회원은 남기지 않는다.
+    assert log.actions == ["member_refused"] * 7
+    reasons = [detail.rpartition(" reason=")[2] for _, detail in log.lines]
+    assert reasons == ["cannot_modify_self"] * 5 + ["protected_admin"] * 2
+    assert log.lines[0][1].endswith("op=update status=suspended role=- reason=cannot_modify_self")
+    assert log.lines[2][1].endswith("op=update status=suspended role=user reason=cannot_modify_self")
+    assert log.lines[3][1].endswith("op=delete reason=cannot_modify_self")
+    assert log.lines[6][1].endswith("op=delete reason=protected_admin")
+    assert all(detail.startswith("target=u_") for _, detail in log.lines)
+    log.lines.clear()
     repo = _state(client).auth
     assert {u.username: (u.role, u.status) for u in run(repo.list_users())[1]} == {
         "boss": ("user", "active"),
@@ -1125,9 +1278,132 @@ def test_member_admin_rules_self_protection_and_protected_config_admin() -> None
     boss_view = run(svc.update_member(log, ids["member"], ids["boss"], role="admin"))
     boss_view = run(svc.update_member(log, ids["member"], ids["boss"], role="user"))
     assert (boss_view.role, boss_view.is_admin, boss_view.config_admin) == ("user", True, True)
-    assert log.actions == ["member_role"] * 4
-    assert log.lines[0][1].endswith("name=jihyun user→admin") and "target=u_" in log.lines[0][1]
-    assert str(ids["member"]) not in log.lines[0][1]  # 기록에는 줄인 id만
+    assert log.actions == ["member_role", "member_role_done"] * 4
+    assert log.lines[0][1].endswith(" user→admin") and log.lines[0][1].startswith("target=u_")
+    # 기록에는 줄인 id만 — 전체 id도, 아이디(이메일 가입이면 이메일 앞부분)도 없다
+    text = " ".join(detail for _, detail in log.lines)
+    assert str(ids["member"]) not in text and "jihyun" not in text and "name=" not in text
+
+
+def test_last_active_admin_cannot_be_demoted_suspended_deleted_or_delete_itself() -> None:
+    """활성 관리자 = active + (권한 admin 또는 ADMIN_USERNAMES의 이름), 실제로 있는 계정만 센다."""
+    client = _client(admin_usernames="boss,ghost")  # ghost는 이름만 있고 계정이 없다 — 세지 않는다
+    state = _state(client)
+    service, repo, names = state.auth_service, state.auth, ("boss", "ghost")
+
+    def run(coro):  # noqa: ANN001, ANN202
+        return asyncio.run(coro)
+
+    chief = run(service.create_account("chief", PW, role="admin"))
+    member = run(service.create_account("member", PW))
+    # 저장소: 하나뿐인 활성 관리자는 내리지도 정지하지도 지우지도 못한다 (검사에 걸리면 아무것도 안 바뀐다)
+    for change in ({"role": "user"}, {"status": "suspended"}, {"role": "user", "status": "suspended"}):
+        with pytest.raises(LastAdminError) as last:
+            run(repo.update_user(chief.id, admin_names=names, **change))
+        assert (last.value.status_code, last.value.code) == (409, "last_admin")
+    with pytest.raises(LastAdminError):
+        run(repo.delete_user(chief.id, admin_names=names))
+    with pytest.raises(LastAdminError):
+        run(repo.ensure_not_last_admin(chief.id, names))
+    still = run(repo.get_user(chief.id))
+    assert (still.role, still.status) == ("admin", "active")
+    # 관리자가 아닌 회원에게는 걸리지 않는다. 운영 도구(admin_names 없음)는 검사하지 않는다.
+    assert run(repo.update_user(member.id, status="suspended", admin_names=names)).status == "suspended"
+    run(repo.ensure_not_last_admin(member.id, names))
+    run(repo.ensure_not_last_admin(uuid.uuid4(), names))  # 없는 사용자는 통과 (삭제가 404를 낸다)
+
+    # 본인 탈퇴(DELETE /v1/auth/me)도 같은 규칙 — 409이고 자료·계정·세션이 그대로다
+    browser = TestClient(client.app)
+    login = browser.post("/v1/auth/login", json={"username": "chief", "password": PW})
+    csrf = {"X-CSRF-Token": login.json()["csrf_token"]}
+    assert browser.post("/v1/contacts", json=CONTACT, headers=csrf).status_code == 201
+
+    def leave(password: str = PW) -> httpx.Response:
+        return browser.request("DELETE", "/v1/auth/me", json={"password": password}, headers=csrf)
+
+    refused = leave()
+    assert _code(refused) == (409, "last_admin") and "다른 관리자" in refused.json()["message"]
+    assert _code(leave("wrong-password-1")) == (401, "unauthorized")  # 비밀번호가 맞은 뒤에만 알린다
+    assert len(browser.get("/v1/contacts").json()) == 1 and browser.get("/v1/auth/me").status_code == 200
+
+    # 다른 관리자가 "있다"로 치지 않는 경우: 정지된 관리자, 승인 대기 관리자, 계정 없는 설정상의 이름
+    other = run(service.create_account("other", PW, role="admin"))
+    for status in ("suspended", "pending"):
+        run(repo.update_user(other.id, status=status))
+        assert _code(leave()) == (409, "last_admin"), status
+    # 설정상의 관리자(ADMIN_USERNAMES)가 실제로 있고 active면 센다 — 권한 열이 user여도
+    boss = run(service.create_account("boss", PW))
+    assert run(repo.update_user(chief.id, role="user", admin_names=names)).role == "user"
+    run(repo.update_user(chief.id, role="admin"))
+    # 반대로 설정상의 관리자도 혼자면 탈퇴할 수 없다 (chief를 내리면 boss만 남는다)
+    run(repo.update_user(chief.id, role="user", admin_names=names))
+    boss_browser = TestClient(client.app)
+    boss_login = boss_browser.post("/v1/auth/login", json={"username": "boss", "password": PW})
+    boss_csrf = {"X-CSRF-Token": boss_login.json()["csrf_token"]}
+    alone = boss_browser.request("DELETE", "/v1/auth/me", json={"password": PW}, headers=boss_csrf)
+    assert _code(alone) == (409, "last_admin")
+    # 설정상의 관리자는 권한 열을 내려도 관리자다 — 마지막 관리자여도 그 변경은 막지 않는다
+    run(repo.update_user(boss.id, role="admin"))
+    assert run(repo.update_user(boss.id, role="user", admin_names=names)).role == "user"
+
+    # 다른 활성 관리자가 생기면 탈퇴된다. 관리자가 아닌 회원은 언제나 탈퇴할 수 있다.
+    run(repo.update_user(chief.id, role="admin"))
+    done = boss_browser.request("DELETE", "/v1/auth/me", json={"password": PW}, headers=boss_csrf)
+    assert done.status_code == 200
+    run(repo.update_user(chief.id, role="user"))  # 관리자 0명(운영 도구로만 생기는 상태)에서도
+    assert leave().status_code == 200  # 일반 회원의 탈퇴는 막지 않는다
+
+
+def test_stale_approve_with_expected_status_does_not_lift_a_suspension() -> None:
+    client = _client(admin_usernames="boss", auth_signup_requires_approval=True)
+    ids = _seed_members(client)  # jihyun은 승인 대기
+    state = _state(client)
+    svc, repo = state.member_admin, state.auth
+    member = ids["member"]
+
+    def run(coro):  # noqa: ANN001, ANN202
+        return asyncio.run(coro)
+
+    # 두 관리자가 같은 "승인 대기" 줄을 보고 있다. chief가 승인했다가 곧 정지했다.
+    log = Log()
+    run(svc.update_member(log, ids["chief"], member, status="active", expected_status="pending"))
+    run(svc.update_member(log, ids["chief"], member, status="suspended", expected_status="active"))
+    log.lines.clear()
+    # boss의 화면은 아직 "승인 대기"다 — 그 줄의 승인은 정지를 풀지 않는다
+    with pytest.raises(MemberChangedError) as changed:
+        run(svc.update_member(log, ids["boss"], member, status="active", expected_status="pending"))
+    assert (changed.value.status_code, changed.value.code) == (409, "member_changed")
+    assert run(repo.get_user(member)).status == "suspended"
+    assert log.actions == ["member_refused"]
+    assert log.lines[0][1].endswith("op=update status=active role=- reason=member_changed")
+    # 권한만 바꾸는 요청도 기대 상태가 다르면 바꾸지 않는다
+    with pytest.raises(MemberChangedError):
+        run(svc.update_member(log, ids["boss"], member, role="admin", expected_status="pending"))
+    assert run(repo.get_user(member)).role == "user"
+
+    # 서비스가 읽은 뒤에 상태가 바뀐 경우(동시 요청)는 저장소가 같은 트랜잭션에서 잡는다 → 결과 줄에 남는다
+    log.lines.clear()
+    real_get = repo.get_user
+
+    async def stale_get(user_id: UUID):  # noqa: ANN202 - 서비스에게만 예전 상태를 보여 준다
+        user = await real_get(user_id)
+        return user.model_copy(update={"status": "pending"}) if user_id == member else user
+
+    repo.get_user = stale_get
+    try:
+        with pytest.raises(MemberChangedError):
+            run(svc.update_member(log, ids["boss"], member, status="active", expected_status="pending"))
+    finally:
+        repo.get_user = real_get
+    assert log.actions == ["member_approve", "member_approve_failed"]
+    assert log.lines[1][1].endswith("reason=member_changed")
+    assert run(repo.get_user(member)).status == "suspended"
+
+    # 지금 상태를 알고 보낸 요청은 된다. expected_status를 안 보내면 예전처럼 무조건 바꾼다.
+    lifted = run(svc.update_member(log, ids["boss"], member, status="active", expected_status="suspended"))
+    assert lifted.status == "active"
+    run(svc.update_member(log, ids["boss"], member, status="suspended"))
+    assert run(svc.update_member(log, ids["boss"], member, status="active")).status == "active"
 
 
 def test_member_admin_records_before_changing_and_changes_nothing_if_the_record_fails() -> None:
@@ -1160,9 +1436,18 @@ def test_member_admin_records_before_changing_and_changes_nothing_if_the_record_
     assert browser.get("/v1/auth/me").status_code == 401
     deleted = asyncio.run(svc.delete_member(log, ids["boss"], ids["member"]))
     assert (deleted.contacts, deleted.conversations, deleted.messages) == (1, 0, 0)
-    assert log.actions == ["member_revoke_sessions", "member_delete", "member_delete_done"]
-    assert "contacts=1" in log.lines[2][1] and "name=jihyun" in log.lines[1][1]
-    assert all("박지현" not in detail and "example.com" not in detail for _, detail in log.lines)
+    assert log.actions == [
+        "member_revoke_sessions",
+        "member_revoke_sessions_done",
+        "member_delete",
+        "member_delete_done",
+    ]
+    assert log.lines[1][1].endswith("sessions=2") and "contacts=1" in log.lines[3][1]
+    # 지운 뒤에도 기록에 개인정보가 남지 않는다: 표시 이름·이메일은 물론 아이디(이메일 앞부분)도 없다
+    assert all(
+        "박지현" not in detail and "example.com" not in detail and "jihyun" not in detail
+        for _, detail in log.lines
+    )
     with pytest.raises(NotFoundError):
         asyncio.run(svc.delete_member(log, ids["boss"], ids["member"]))
     assert _code(browser.post("/v1/auth/login", json={"username": "jihyun", "password": PW})) == (
@@ -1347,12 +1632,95 @@ def test_create_user_tool_reads_password_without_echo_or_argv() -> None:
     with pytest.raises(SystemExit):  # 비밀번호를 인자로 받는 옵션은 없다
         create_user.parse_args(["someone", "--password", "x"])
 
+    # Git Bash(mintty)처럼 콘솔 없이 터미널을 흉내 내는 창: 치는 글자가 화면에 보이므로 읽지 않고 끝낸다
+    typed = io.StringIO("visible-password-3\n")
+    with pytest.raises(create_user.InputError, match="가릴 수 없어"):
+        create_user.read_password(typed, terminal_pipe=lambda _: True)
+    assert typed.tell() == 0  # 한 글자도 읽지 않았다
+    # 진짜 파이프·파일로 판단되면 읽는다. 판단은 핸들을 보고 한다 — 핸들이 없는 스트림은 파이프로 본다.
+    assert create_user.is_terminal_pipe(io.StringIO("x")) is False
+    assert create_user.read_password(typed, terminal_pipe=lambda _: False) == "visible-password-3"
+    # 환경변수로도 받지 않는다 (비밀번호처럼 보이는 변수가 있어도 표준입력만 본다)
+    import os
+    from unittest import mock
+
+    with mock.patch.dict(
+        os.environ, {"PASSWORD": "env-password-4", "CREATE_USER_PASSWORD": "env-password-4"}
+    ):
+        with pytest.raises(create_user.InputError):
+            create_user.read_password(io.StringIO(""))
+
+
+def test_create_user_tool_reads_a_real_pipe_and_does_not_wait_on_a_null_device() -> None:
+    """실제 프로세스의 표준입력으로 본다: 파이프면 첫 줄을 읽고, 입력 없는 장치(NUL)면 기다리지 않는다."""
+    import subprocess
+    import sys
+
+    code = (
+        "import sys\n"
+        "from app.tools import create_user\n"
+        "try:\n"
+        "    password = create_user.read_password()\n"
+        "except create_user.InputError as exc:\n"
+        "    print('input-error')\n"
+        "    raise SystemExit(2) from exc\n"
+        "print(len(password), create_user.is_console(sys.stdin), create_user.is_terminal_pipe(sys.stdin))\n"
+    )
+
+    def run(**stdin: Any) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(  # noqa: S603 - 이 테스트가 만든 고정 코드만 돌린다
+            [sys.executable, "-c", code], capture_output=True, text=True, timeout=60, check=False, **stdin
+        )
+
+    piped = run(input="piped-password-2\nsecond line is ignored\n")
+    assert (piped.returncode, piped.stdout.split()) == (0, ["16", "False", "False"]), piped.stderr
+    assert "piped-password-2" not in piped.stdout + piped.stderr  # 읽은 값은 어디에도 찍지 않는다
+    # Windows의 NUL은 isatty()가 참이다 — 콘솔로 착각해 getpass가 끝없이 기다리면 여기서 시간 초과가 난다
+    empty = run(stdin=subprocess.DEVNULL)
+    assert (empty.returncode, empty.stdout.strip()) == (2, "input-error"), empty.stderr
+
 
 # ---------- PostgreSQL 통합 (DB가 없으면 건너뛴다) ----------
 
 
 def _pg_name(prefix: str = "mb") -> str:
     return f"{prefix}_{uuid.uuid4().hex[:12]}"
+
+
+@pytest.fixture(name="pg_url")
+def _pg_url_cleaned(pg_url: str) -> Iterator[str]:
+    """이 파일의 PostgreSQL 테스트가 쓰는 `pg_url` — 끝나면 그 테스트가 넣은 사용자와 접근 기록을 지운다.
+
+    테스트 DB는 세션 동안 여러 파일이 함께 쓴다. 여기서 남긴 `admin_access_log` 행 때문에 뒤에 도는
+    `test_admin.py`의 "접근 기록은 전부 그 관리자의 것" 검사가 깨졌다(2026-11-17) — 시작할 때 있던 행의
+    id를 적어 두고, 끝나면 그 밖의 행을 지운다(사용자를 지우면 세션·소셜 연결은 CASCADE).
+    """
+    import asyncpg
+
+    from tests.pg_support import dsn
+
+    tables = ("users", "admin_access_log")
+
+    async def _ids() -> dict[str, list[UUID]]:
+        conn = await asyncpg.connect(dsn(pg_url))
+        try:
+            return {t: [r["id"] for r in await conn.fetch(f"SELECT id FROM {t}")] for t in tables}  # noqa: S608
+        finally:
+            await conn.close()
+
+    async def _remove_new(before: dict[str, list[UUID]]) -> None:
+        conn = await asyncpg.connect(dsn(pg_url))
+        try:
+            for table in tables:
+                await conn.execute(f"DELETE FROM {table} WHERE id <> ALL($1::uuid[])", before[table])  # noqa: S608
+        finally:
+            await conn.close()
+
+    before = asyncio.run(_ids())
+    try:
+        yield pg_url
+    finally:
+        asyncio.run(_remove_new(before))
 
 
 def test_schema_defaults_constraints_and_identity_repo_on_postgres(pg_url: str) -> None:
@@ -1666,29 +2034,48 @@ def test_member_admin_api_end_to_end_on_postgres(pg_url: str) -> None:
             "unauthorized",
         )
 
-        # 접근 기록: 상태·권한 변경과 삭제가 관리자 이름·대상(줄인 id + 아이디)과 함께 남았다
+        # 접근 기록: 하려던 일·결과·거절이 관리자 이름·대상(줄인 id)과 함께 남았다
         as_boss()
         log = client.get("/v1/admin/access-log", params={"limit": 200}).json()
-        short_a = f"target=u_{a['user_id'][:3]}…{a['user_id'][-2:]} name={a['username']}"
+        short_a = f"target=u_{a['user_id'][:3]}…{a['user_id'][-2:]}"
         mine = [e for e in log if e["detail"] and short_a in e["detail"]]
         assert [e["action"] for e in reversed(mine)] == [
             "member_approve",
+            "member_approve_done",
             "member_suspend",
+            "member_suspend_done",
             "member_activate",
             "member_role",
+            "member_activate_done",
+            "member_role_done",
+            "member_refused",  # a가 자기 자신을 정지
+            "member_refused",  # a가 자기 권한을 내림
+            "member_refused",  # a가 자기 자신을 삭제
             "member_revoke_sessions",
+            "member_revoke_sessions_done",
             "member_delete",
             "member_delete_done",
         ]
         details = {e["action"]: e["detail"] for e in mine}
         assert details["member_approve"].endswith("pending→active")
         assert details["member_suspend"].endswith("active→suspended")
+        assert details["member_suspend_done"].endswith("sessions=2")  # 쿠키 세션 + Bearer 토큰
         assert details["member_role"].endswith("user→admin")
+        assert details["member_revoke_sessions_done"].endswith("sessions=1")
         assert "contacts=1" in details["member_delete_done"]
-        assert {e["admin_username"] for e in mine} == {boss}
+        refused = [e for e in mine if e["action"] == "member_refused"]
+        assert {e["detail"].rpartition(" reason=")[2] for e in refused} == {"cannot_modify_self"}
+        assert {e["admin_username"] for e in refused} == {a["username"]}  # 시도한 사람의 이름으로
+        assert {e["admin_username"] for e in mine if e["action"] != "member_refused"} == {boss}
+        # boss를 겨냥한 거절(자기 자신 2 + 설정상의 관리자 2)도 사유 코드와 함께 남았다
+        short_boss = f"target=u_{boss_id[:3]}…{boss_id[-2:]}"
+        on_boss = [e["detail"].rpartition(" reason=")[2] for e in log if short_boss in (e["detail"] or "")]
+        assert sorted(on_boss) == ["cannot_modify_self"] * 2 + ["protected_admin"] * 2
         assert any(e["action"] == "members" for e in log)
-        text = json.dumps(log, ensure_ascii=False)
+        # 대상의 전체 id·이메일·아이디(이메일 앞부분)·표시 이름은 기록 어디에도 없다
+        text = json.dumps([e["detail"] for e in log], ensure_ascii=False)
         assert a["user_id"] not in text and emails[0] not in text and PW not in text and "박지현" not in text
+        assert a["username"] not in text and b["username"] not in text and "name=" not in text
 
 
 def test_social_login_round_trip_on_postgres(pg_url: str) -> None:
@@ -1725,3 +2112,121 @@ def test_social_login_round_trip_on_postgres(pg_url: str) -> None:
         csrf = {"X-CSRF-Token": client.get("/v1/auth/me").json()["csrf_token"]}
         assert client.request("DELETE", "/v1/auth/me", json={"password": ""}, headers=csrf).status_code == 200
         assert client.get("/v1/auth/me").status_code == 401
+
+
+def test_two_admins_racing_to_remove_each_other_leave_one_admin_on_postgres(pg_url: str) -> None:
+    """두 권한 관리자가 **동시에** 서로를 내리기·정지·삭제해도 한 명은 남는다 (저장소의 한 트랜잭션 검사)."""
+    import asyncpg
+
+    from tests.pg_support import dsn
+
+    async def _no_other_admins() -> None:
+        # 다른 테스트가 남긴 권한 관리자가 있으면 "다른 관리자가 있다"로 세어져 이 검사가 헛돈다.
+        conn = await asyncpg.connect(dsn(pg_url))
+        try:
+            await conn.execute("UPDATE users SET role = 'user' WHERE role = 'admin'")
+        finally:
+            await conn.close()
+
+    asyncio.run(_no_other_admins())
+    settings = _settings(database_url=pg_url)  # ADMIN_USERNAMES 없음 — 관리자는 권한으로만 있다
+    with TestClient(create_app(settings)) as client:  # 한 이벤트 루프에서 (asyncpg 연결은 루프에 묶인다)
+        state = _state(client)
+        svc, repo, service = state.member_admin, state.auth, state.auth_service
+
+        async def race(op: str) -> tuple[list[Any], Log, list[UUID]]:
+            a = await service.create_account(_pg_name("adm"), PW, role="admin")
+            b = await service.create_account(_pg_name("adm"), PW, role="admin")
+            log = Log()
+
+            def remove(actor: UUID, target: UUID):  # noqa: ANN202
+                if op == "delete":
+                    return svc.delete_member(log, actor, target)
+                change = {"role": "user"} if op == "demote" else {"status": "suspended"}
+                return svc.update_member(log, actor, target, **change)
+
+            results = await asyncio.gather(remove(a.id, b.id), remove(b.id, a.id), return_exceptions=True)
+            return results, log, [a.id, b.id]
+
+        async def active_admins(ids: list[UUID]) -> list[UUID]:
+            _, users = await repo.list_users(role="admin", status="active", limit=200)
+            return [u.id for u in users if u.id in ids]
+
+        for op, action in (
+            ("demote", "member_role"),
+            ("suspend", "member_suspend"),
+            ("delete", "member_delete"),
+        ):
+            results, log, ids = client.portal.call(race, op)
+            errors = [r for r in results if isinstance(r, BaseException)]
+            assert len(errors) == 1 and isinstance(errors[0], LastAdminError), (op, results)
+            survivors = client.portal.call(active_admins, ids)
+            assert len(survivors) == 1, op  # 정확히 한 명이 남았다
+            # 진 쪽의 시도는 사유와 함께 기록에 남는다
+            failed = [detail for name, detail in log.lines if name == f"{action}_failed"]
+            assert len(failed) == 1 and failed[0].endswith("reason=last_admin"), (op, log.lines)
+            assert log.actions.count(f"{action}_done") == 1
+            # 다음 판을 위해 남은 관리자를 내린다 (운영 도구의 길 — 검사 없음)
+            client.portal.call(lambda sid=survivors[0]: repo.update_user(sid, role="user"))
+
+        # 본인 탈퇴: 하나뿐인 활성 관리자는 409이고 자료·계정이 그대로다. 다른 관리자가 생기면 된다.
+        solo = _pg_name("solo")
+        client.portal.call(lambda: service.create_account(solo, PW, role="admin"))
+        login = client.post("/v1/auth/login", json={"username": solo, "password": PW})
+        assert login.status_code == 200 and login.json()["is_admin"] is True
+        csrf = {"X-CSRF-Token": login.json()["csrf_token"]}
+        assert client.post("/v1/contacts", json=CONTACT, headers=csrf).status_code == 201
+        refused = client.request("DELETE", "/v1/auth/me", json={"password": PW}, headers=csrf)
+        assert _code(refused) == (409, "last_admin") and "다른 관리자" in refused.json()["message"]
+        assert len(client.get("/v1/contacts").json()) == 1 and client.get("/v1/auth/me").status_code == 200
+        client.portal.call(lambda: service.create_account(_pg_name("adm"), PW, role="admin"))
+        gone = client.request("DELETE", "/v1/auth/me", json={"password": PW}, headers=csrf)
+        assert gone.status_code == 200 and gone.json()["contacts"] == 1
+        assert client.get("/v1/auth/me").status_code == 401
+
+
+def test_stale_approve_does_not_lift_a_suspension_on_postgres(pg_url: str) -> None:
+    boss, tag = _pg_name("boss"), uuid.uuid4().hex[:10]
+    settings = _settings(database_url=pg_url, admin_usernames=boss, auth_signup_requires_approval=True)
+    with TestClient(create_app(settings)) as client:
+        state = _state(client)
+        client.portal.call(state.auth_service.create_account, boss, PW)
+        email = f"{tag}@example.com"
+        assert client.post("/v1/auth/signup", json={"email": email, "password": PW}).status_code == 202
+        login = client.post("/v1/auth/login", json={"username": boss, "password": PW})
+        csrf = {"X-CSRF-Token": login.json()["csrf_token"]}
+        member = client.get("/v1/admin/members", params={"query": tag}).json()["items"][0]
+        url = f"/v1/admin/members/{member['user_id']}"
+        assert member["status"] == "pending"
+
+        def patch(**body: str) -> httpx.Response:
+            return client.patch(url, json=body, headers=csrf)
+
+        # 다른 관리자가 그 사이 승인했다가 정지했다 (저장소에 직접 — 다른 관리자의 요청 자리)
+        user_id = UUID(member["user_id"])
+        client.portal.call(lambda: state.auth.update_user(user_id, status="suspended"))
+        # 오래된 화면("승인 대기")에서 누른 승인: 409, 그대로 정지
+        stale = patch(status="active", expected_status="pending")
+        assert _code(stale) == (409, "member_changed") and "새로" in stale.json()["message"]
+        assert client.get("/v1/admin/members", params={"query": tag}).json()["items"][0]["status"] == (
+            "suspended"
+        )
+        assert patch(status="active", expected_status="banned").status_code == 422
+        # 저장소의 검사(변경과 한 트랜잭션): 기대 상태가 다르면 바꾸지 않는다
+        with pytest.raises(MemberChangedError):
+            client.portal.call(
+                lambda: state.auth.update_user(user_id, status="active", expected_status="pending")
+            )
+        with pytest.raises(NotFoundError):
+            client.portal.call(
+                lambda: state.auth.update_user(uuid.uuid4(), status="active", expected_status="pending")
+            )
+        # 목록을 새로 읽은 화면(정지)에서 누른 정지 해제는 된다
+        lifted = patch(status="active", expected_status="suspended")
+        assert lifted.status_code == 200 and lifted.json()["status"] == "active"
+        log = client.get("/v1/admin/access-log", params={"limit": 50}).json()
+        refused = [
+            e["detail"] for e in log if e["action"] == "member_refused" and e["admin_username"] == boss
+        ]
+        assert len(refused) == 1 and refused[0].endswith("status=active role=- reason=member_changed")
+        assert client.delete(url, headers=csrf).status_code == 200

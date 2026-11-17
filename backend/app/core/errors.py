@@ -133,3 +133,18 @@ class OAuthStateError(DomainError):
 
     status_code = 400
     code = "oauth_failed"
+
+
+class LastAdminError(VersionConflictError):
+    """이 일을 하면 **활성 관리자**가 0명이 된다 (권한 내리기·정지·삭제, 본인 탈퇴 포함).
+
+    활성 관리자 = 상태가 active이고, 권한이 admin이거나 이름이 `ADMIN_USERNAMES`에 있는 **실제로 있는** 계정.
+    """
+
+    code = "last_admin"
+
+
+class MemberChangedError(VersionConflictError):
+    """회원관리 요청이 기대한 상태(`expected_status`)와 지금 상태가 다르다 — 그 사이 다른 관리자가 바꿨다."""
+
+    code = "member_changed"

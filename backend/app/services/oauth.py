@@ -18,6 +18,8 @@
 - state(`OAuthStateStore`): 256비트 무작위, 한 번 꺼내면 사라지고(일회용), `OAUTH_STATE_TTL_SECONDS` 뒤에는
   못 쓴다. PKCE verifier·돌아갈 경로·가입 조건(동의·초대 코드 통과)은 쿠키가 아니라 여기에 둔다 — 브라우저가
   가진 것은 state 값 하나뿐이다. 프로세스 메모리다(워커 1개 전제, 재시작하면 진행 중이던 로그인은 다시 한다).
+  보관소가 가득 차도 남의 진행 중 로그인은 버리지 않는다 — 클라이언트마다 자리 수를 두고, 전체가 차면
+  새 state를 거절한다(2026-11-17, `OAuthStateStore` 설명).
 """
 
 from __future__ import annotations
@@ -25,7 +27,6 @@ from __future__ import annotations
 import base64
 import hashlib
 import logging
-import re
 import secrets
 import time
 from collections.abc import Callable
@@ -37,7 +38,7 @@ import httpx
 
 from app.core.config import Settings
 from app.core.security import token_hash
-from app.domain.auth import MAX_DISPLAY_NAME, MAX_EMAIL, MAX_SUBJECT
+from app.domain.auth import MAX_DISPLAY_NAME, MAX_SUBJECT, canonical_email
 
 log = logging.getLogger(__name__)
 
@@ -51,8 +52,24 @@ KAKAO_ME_URL = "https://kapi.kakao.com/v2/user/me"
 HTTP_TIMEOUT_SECONDS = 10.0
 OAUTH_STATE_TTL_SECONDS = 600
 MAX_PENDING_STATES = 5000  # 시작만 하고 돌아오지 않는 요청이 쌓여도 메모리는 여기까지
+# 한 클라이언트(요청 제한과 같은 키 — IPv4 주소, IPv6는 /64)가 동시에 걸어 둘 수 있는 진행 중 로그인 수.
+# 넘으면 **그 클라이언트 자신의** 가장 오래된 것을 버린다. 같은 공유기 뒤의 여러 사람이 10분 안에 함께
+# 로그인하는 경우를 넉넉히 받되, 한 곳에서 전체 상한(5,000)을 채우려면 주소 250개가 필요하게 한다.
+MAX_PENDING_STATES_PER_CLIENT = 20
+UNKNOWN_STATE_CLIENT = "unknown"  # 클라이언트 키 없이 부른 경우(테스트·스크립트)가 함께 쓰는 칸
 MAX_CODE_CHARS = 2048  # 인가 코드는 수백 자다. 터무니없이 긴 값은 제공자에 보내지 않는다
-_EMAIL_RE = re.compile(r"[^@\s]+@[^@\s.]+(?:\.[^@\s.]+)+")
+
+
+class OAuthStateStoreFullError(Exception):
+    """진행 중 로그인 보관소가 가득 찼다 — 새 state를 내주지 않는다 (남의 것을 버리지 않는다).
+
+    시작 경로가 받아서 `POST …/start`는 429 `too_many_attempts`, `GET …/start`는 `auth_error=oauth_failed`로
+    돌려보낸다. `retry_after`는 가장 먼저 만료되는 보관분까지 남은 초(그때 자리가 난다).
+    """
+
+    def __init__(self, retry_after: int) -> None:
+        super().__init__("진행 중인 소셜 로그인이 너무 많습니다.")
+        self.retry_after = retry_after
 
 
 class OAuthError(Exception):
@@ -97,30 +114,50 @@ class PendingLogin:
 
 
 class OAuthStateStore:
-    """state → 진행 중 로그인. 키는 state의 해시다(메모리가 새도 state를 되살릴 수 없다)."""
+    """state → 진행 중 로그인. 키는 state의 해시다(메모리가 새도 state를 되살릴 수 없다).
+
+    가득 찼을 때 **남의 진행 중 로그인을 버리지 않는다** (2026-11-17 보안 검토 — 예전에는 가장 오래된 것부터
+    버려서, 로그인하지 않은 누구나 `GET …/start`를 5,000번 불러 다른 사람들의 로그인을 끊을 수 있었다).
+    1. 새로 넣기 전에 만료된 것을 먼저 치운다.
+    2. 클라이언트마다 `per_client`개까지만 둔다. 넘으면 그 클라이언트 자신의 가장 오래된 것을 버린다 —
+       한 곳에서 아무리 불러도 차지하는 자리는 `per_client`개다.
+    3. 그래도 전체 상한에 닿아 있으면 새 state를 내주지 않는다(`OAuthStateStoreFullError`).
+    """
 
     def __init__(
         self,
         ttl_seconds: float = OAUTH_STATE_TTL_SECONDS,
         max_entries: int = MAX_PENDING_STATES,
         clock: Callable[[], float] = time.monotonic,
+        per_client: int = MAX_PENDING_STATES_PER_CLIENT,
     ) -> None:
         self._ttl = ttl_seconds
         self._max = max_entries
+        self._per_client = per_client
         self._clock = clock
-        self._entries: dict[str, tuple[float, PendingLogin]] = {}  # 넣은 순서 = 오래된 순서
+        # 넣은 순서 = 오래된 순서. 값은 (만료 시각, 진행 중 로그인, 클라이언트 키)
+        self._entries: dict[str, tuple[float, PendingLogin, str]] = {}
 
     def __len__(self) -> int:
         return len(self._entries)
 
-    def issue(self, pending: PendingLogin) -> str:
-        """새 state를 만들어 보관하고 원문을 돌려준다 (추측할 수 없는 256비트)."""
+    def issue(self, pending: PendingLogin, client: str | None = None) -> str:
+        """새 state를 만들어 보관하고 원문을 돌려준다 (추측할 수 없는 256비트).
+
+        `client`는 요청 제한과 같은 클라이언트 키(`core.ratelimit.client_key`)다. 보관소가 가득 차 있으면
+        `OAuthStateStoreFullError` — 이미 보관된 다른 클라이언트의 것은 건드리지 않는다.
+        """
         now = self._clock()
         self._drop_expired(now)
-        while len(self._entries) >= self._max:  # 가득 차면 가장 오래된 것부터 버린다
-            del self._entries[next(iter(self._entries))]
+        owner = client or UNKNOWN_STATE_CLIENT
+        mine = [key for key, (_, _, who) in self._entries.items() if who == owner]
+        for key in mine[: max(len(mine) - self._per_client + 1, 0)]:  # 내 것 중 오래된 것부터 자리를 비운다
+            del self._entries[key]
+        if len(self._entries) >= self._max:
+            soonest = min(expires for expires, _, _ in self._entries.values())
+            raise OAuthStateStoreFullError(retry_after=max(int(soonest - now) + 1, 1))
         state = secrets.token_urlsafe(32)
-        self._entries[token_hash(state)] = (now + self._ttl, pending)
+        self._entries[token_hash(state)] = (now + self._ttl, pending, owner)
         return state
 
     def consume(self, state: str | None) -> PendingLogin | None:
@@ -133,7 +170,7 @@ class OAuthStateStore:
         return found[1]
 
     def _drop_expired(self, now: float) -> None:
-        for key in [k for k, (expires, _) in self._entries.items() if expires <= now]:
+        for key in [k for k, (expires, _, _) in self._entries.items() if expires <= now]:
             del self._entries[key]
 
 
@@ -151,13 +188,11 @@ def pkce_challenge(verifier: str) -> str:
 
 
 def clean_email(value: Any) -> str | None:  # noqa: ANN401 - 제공자 응답 값
-    """앞뒤 공백을 떼고 소문자로. 문자열이 아니거나 형식·길이가 이상하면 None."""
-    if not isinstance(value, str):
-        return None
-    email = value.strip().lower()
-    if not email or len(email) > MAX_EMAIL or not _EMAIL_RE.fullmatch(email):
-        return None
-    return email
+    """앞뒤 공백을 떼고 소문자로. 문자열이 아니거나 형식·길이가 이상하면 None.
+
+    가입과 같은 규칙이다 (`domain.auth.canonical_email`).
+    """
+    return canonical_email(value)
 
 
 def clean_name(value: Any) -> str | None:  # noqa: ANN401

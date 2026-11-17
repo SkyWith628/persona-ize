@@ -6,7 +6,8 @@
 - 로그인하지 않았으면 401, 관리자가 아니면 403 `forbidden`. 개발용 헤더 스텁(`X-User-Id`)은 세션이
   아니므로 401이다 — 누구나 아무 id로 관리자 화면을 열 수 없게.
 - 저장소가 PostgreSQL이 아니면(인메모리) 503 `admin_unavailable` — 집계 SQL을 돌릴 곳이 없다.
-- 통과한 호출은 전부 `admin_access_log`에 남는다(서비스가 자료를 읽거나 바꾸기 전에 기록한다).
+- 통과한 호출은 전부 `admin_access_log`에 남는다(서비스가 자료를 읽거나 바꾸기 전에 기록한다). 회원관리의
+  쓰기는 결과(`*_done`·`*_failed`)와 서버 규칙에 걸린 시도(`member_refused`)도 남긴다.
 - 쓰기(`POST /graph/retry-held`, 회원관리의 PATCH·POST·DELETE)는 쿠키 인증이면 `X-CSRF-Token`이 맞아야
   한다(403, 관리자 검사 뒤). 안전하지 않은 메서드 전부에 `require_admin`이 한 곳에서 건다.
 - 회원관리(`/members*`, 2026-11-16): 목록·승인·정지·권한·세션 폐기·삭제. 규칙은 `member_admin_service.py`,
@@ -196,10 +197,19 @@ async def update_member(user_id: UUID, body: MemberUpdate, access: Admin) -> Mem
     """본문 `{"status": "active"|"suspended"}` 그리고/또는 `{"role": "user"|"admin"}`.
 
     pending → active가 승인이다. 정지하면 그 사용자의 세션·토큰이 모두 폐기된다. 자기 자신 정지·권한 내리기는
-    409 `cannot_modify_self`, `ADMIN_USERNAMES`의 계정 정지는 409 `protected_admin`.
+    409 `cannot_modify_self`, `ADMIN_USERNAMES`의 계정 정지는 409 `protected_admin`, 이 변경으로 활성
+    관리자가 0명이 되면 409 `last_admin`(두 관리자가 동시에 서로를 내릴 때 진 쪽).
+
+    `expected_status`(선택)는 화면이 그 회원을 그릴 때 본 상태다. 지금 상태와 다르면 아무것도 바꾸지 않고
+    409 `member_changed` — 오래된 화면의 "승인"이 그 사이 걸린 정지를 풀지 않게, 화면은 이 값을 늘 보낸다.
     """
     return await access.members.update_member(
-        access.log, access.admin_id, user_id, status=body.status, role=body.role
+        access.log,
+        access.admin_id,
+        user_id,
+        status=body.status,
+        role=body.role,
+        expected_status=body.expected_status,
     )
 
 
@@ -213,5 +223,5 @@ async def revoke_member_sessions(user_id: UUID, access: Admin) -> RevokeSessions
 @router.delete("/members/{user_id}", response_model=MemberDeletionOut, summary="회원 삭제 (되돌릴 수 없다)")
 async def delete_member(user_id: UUID, access: Admin) -> AccountDeletion:
     """계정과 상대·대화·첨삭 이력·그래프·사용량·세션을 지운다. 자기 자신은 409 `cannot_modify_self`,
-    `ADMIN_USERNAMES`의 계정은 409 `protected_admin`."""
+    `ADMIN_USERNAMES`의 계정은 409 `protected_admin`, 하나뿐인 활성 관리자는 409 `last_admin`."""
     return await access.members.delete_member(access.log, access.admin_id, user_id)

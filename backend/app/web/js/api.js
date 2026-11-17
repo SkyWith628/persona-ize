@@ -75,6 +75,12 @@ export const api = {
   me: () => get("/v1/auth/me", { quiet401: true }),
   login: (username, password) => post("/v1/auth/login", { username, password }, { quiet401: true }),
   register: (payload) => post("/v1/auth/register", payload, { quiet401: true }),
+  // 가입 정책과 켜진 소셜 로그인 (로그인 전 화면용). 옛 서버에는 없다(404) — 그때는 아이디 가입만 보인다
+  authProviders: () => get("/v1/auth/providers"),
+  // 이메일 가입. 승인제 서버는 201(세션) 대신 202 {status:"pending", username, email}을 준다
+  signup: (payload) => post("/v1/auth/signup", payload, { quiet401: true }),
+  // 소셜 로그인 시작: {next, consent, invite_code} → {authorize_url}. 세션이 없는 요청이라 CSRF 토큰은 없다
+  oauthStart: (provider, payload) => post(`/v1/auth/oauth/${id(provider)}/start`, payload, { quiet401: true }),
   logout: () => request("POST", "/v1/auth/logout", { quiet401: true }),
   consent: () => post("/v1/auth/consent", {}),
   changePassword: (current_password, new_password) =>
