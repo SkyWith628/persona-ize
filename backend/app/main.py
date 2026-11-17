@@ -35,6 +35,9 @@ log = logging.getLogger(__name__)
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
 SHUTDOWN_WAIT_SECONDS = 5.0
+# 서버가 요청을 받기 전에 임베딩 모델 로딩을 기다리는 상한. 넘으면 뒤에서 마저 올리고 서버는 연다
+# (모델을 처음 내려받는 설치에서 시작이 끝없이 막히지 않게).
+EMBEDDER_WARMUP_WAIT_SECONDS = 60.0
 
 
 class PublicStaticFiles(StaticFiles):
@@ -108,6 +111,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = container.settings
     log.info("env=%s storage=%s graph=%s", settings.app_env, container.storage, container.graph_enabled)
     tasks = [asyncio.create_task(_warm_up_embedder(container), name="warm-up-embedder")]
+    # 모델이 올라온 뒤에 요청을 받는다. 예전에는 뒤에서 올리는 동안 서버가 먼저 열려, 시작 직후의 첫 C/D
+    # 첨삭이 로딩이 끝날 때까지(약 20초) 기다렸다 (2026-11-17 실측). 이어받기 작업도 그 뒤에 시작한다 —
+    # 같이 돌면 로딩이 더 느려진다.
+    await asyncio.wait(tasks, timeout=EMBEDDER_WARMUP_WAIT_SECONDS)
     tasks.append(asyncio.create_task(_resume_imports(container), name="import-resume"))
     if container.graph_enabled and settings.graph_resume_on_start:
         tasks.append(asyncio.create_task(_resume_graph(container), name="graph-resume"))
