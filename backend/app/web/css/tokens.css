@@ -42,6 +42,8 @@
   --space-5: 24px;
   --space-6: 32px;
   --space-7: 48px;
+  --space-8: 64px; /* 구역과 구역 사이 */
+  --space-9: 96px; /* 첫 화면의 큰 구역 사이 */
 
   --text-xs: 12px;
   --text-s: 13px;
@@ -49,6 +51,10 @@
   --text-l: 17px;
   --text-xl: 22px;
   --text-2xl: 28px;
+  --text-3xl: 36px; /* 화면 제목을 크게 쓸 때 */
+  --text-4xl: 48px; /* 첫 화면의 큰 제목 */
+  --leading-tight: 1.15; /* 큰 제목의 줄 간격 */
+  --tracking-tight: -0.02em; /* 큰 제목의 자간 */
 
   --shadow-1: 0 1px 2px rgba(20, 22, 30, 0.06), 0 1px 1px rgba(20, 22, 30, 0.04);
   --shadow-2: 0 10px 30px rgba(20, 22, 30, 0.16);
