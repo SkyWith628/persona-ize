@@ -8,6 +8,7 @@ import {
   CONDITION_LABEL,
   GRAPH_STATUS_LABEL,
   JOB_STATUS_LABEL,
+  MEMBER_STATUS,
   NO_DATA,
   REASON_LABEL,
   RELATION_LABEL,
@@ -21,8 +22,10 @@ import {
   healthView,
   heldView,
   label,
+  memberActions,
   num,
   percent,
+  providersText,
   share,
   usd,
 } from "./format.js";
@@ -533,6 +536,64 @@ export function renderUsers(root, page) {
       ],
       page.items,
     ),
+  );
+}
+
+/**
+ * 회원관리 표. 여기에는 이메일이 그대로 나온다(승인할 사람을 알아봐야 한다).
+ * actions.selfId: 지금 관리자의 사용자 id, actions.onAction(action, member, button): 버튼을 눌렀을 때.
+ */
+export function renderMembers(root, page, actions = {}) {
+  if (!page.items.length) {
+    fill(root, empty(page.total > 0 ? "이 쪽에는 회원이 없습니다." : "조건에 맞는 회원이 없습니다."));
+    return;
+  }
+  const actionCell = (m) => {
+    const list = memberActions(m, actions.selfId);
+    if (!list.length) return "–";
+    return el(
+      "div",
+      { class: "row-actions" },
+      list.map((a) => {
+        // 읽는 이름에 누구에 대한 일인지 넣는다 (같은 '정지' 버튼이 줄마다 있다)
+        const button = el("button", {
+          type: "button",
+          class: a.danger ? "btn small danger" : "btn small ghost",
+          "aria-label": `${m.username} ${a.label}`,
+          text: a.label,
+        });
+        button.addEventListener("click", () => actions.onAction?.(a, m, button));
+        return button;
+      }),
+    );
+  };
+  fill(
+    root,
+    table(
+      "회원",
+      [
+        {
+          title: "아이디",
+          cell: (m) =>
+            el("span", {}, [m.username, m.display_name ? el("span", { class: "muted", text: ` ${m.display_name}` }) : null]),
+        },
+        { title: "이메일", cell: (m) => m.email ?? "–" },
+        {
+          title: "상태",
+          cell: (m) => {
+            const s = MEMBER_STATUS[m.status] ?? { kind: "off", text: String(m.status) };
+            return tag(s.kind, s.text);
+          },
+        },
+        { title: "권한", cell: (m) => (m.is_admin ? tag("ok", "관리자") : "일반") },
+        { title: "로그인 수단", cell: (m) => providersText(m.providers) },
+        { title: "가입", cell: (m) => timeCell(m.created_at) },
+        { title: "마지막 로그인", cell: (m) => timeCell(m.last_login_at) },
+        { title: "할 일", cell: actionCell },
+      ],
+      page.items,
+    ),
+    hint("승인·정지·권한·삭제는 확인을 받은 뒤 보내고, 모두 관리자 접근 기록에 남습니다."),
   );
 }
 

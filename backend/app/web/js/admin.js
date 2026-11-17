@@ -1,11 +1,13 @@
 // 운영 대시보드(/admin)의 시작점. 빌드 없는 ES 모듈이고, 관리자 API(/v1/admin/*)를 읽는다.
-// 쓰기는 하나뿐이다: 수집 표의 "다시 시도"(보류된 그래프 메시지) — 확인을 받은 뒤에만 보낸다.
+// 쓰기는 둘이다: 수집 표의 "다시 시도"(보류된 그래프 메시지)와 회원관리(승인·정지·권한·강제 로그아웃·삭제)
+// — 모두 확인을 받은 뒤에만 보낸다.
 // 화면을 열거나 새로 고칠 때마다 서버의 관리자 접근 기록에 남는다 — 그래서 자동 새로 고침은 하지 않는다.
 
-import { getJson, postJson } from "./admin/api.js";
+import { getJson, postJson, writeJson } from "./admin/api.js";
 import {
   clock,
   gateFor,
+  memberResultText,
   num,
   rangeText,
   retryConfirmText,
@@ -17,12 +19,14 @@ import {
   renderFailure,
   renderFeedback,
   renderJobs,
+  renderMembers,
   renderOverview,
   renderUsers,
 } from "./admin/view.js";
 
 const LIST_LIMIT = 50; // 거절 피드백·가져오기 작업
 const USERS_PAGE = 50;
+const MEMBERS_PAGE = 50;
 const ACCESS_LIMIT = 200; // 묶어서 보여 주므로 넉넉히 읽는다
 
 const $ = (id) => document.getElementById(id);
@@ -41,6 +45,11 @@ const state = {
   usersOffset: 0,
   overviewSeq: 0, // 기간을 빠르게 바꿔도 마지막 요청의 응답만 그린다
   usersSeq: 0,
+  membersOffset: 0,
+  membersStatus: "", // "" | "pending" | "suspended"
+  membersQuery: "",
+  membersSeq: 0,
+  selfId: null, // 지금 관리자의 사용자 id (자기 자신에게는 정지·삭제 버튼을 내지 않는다)
   loadedOnce: false,
   pending: 0, // 진행 중인 불러오기 수 (0이 되면 '바쁨' 표시를 뗀다)
 };
@@ -161,6 +170,67 @@ async function loadUsers() {
   renderUsersPager(page);
 }
 
+function renderMembersPager(page) {
+  const to = state.membersOffset + page.items.length;
+  $("members-page").textContent = page.items.length
+    ? `${num(state.membersOffset + 1)}–${num(to)} / ${num(page.total)}명`
+    : `${num(page.total)}명`;
+  $("members-prev").disabled = state.membersOffset <= 0;
+  $("members-next").disabled = to >= page.total;
+}
+
+async function loadMembers() {
+  const seq = ++state.membersSeq;
+  $("members-prev").disabled = true;
+  $("members-next").disabled = true;
+  const params = new URLSearchParams({ limit: String(MEMBERS_PAGE), offset: String(state.membersOffset) });
+  if (state.membersStatus) params.set("status", state.membersStatus);
+  if (state.membersQuery) params.set("query", state.membersQuery);
+  const page = await getJson(`/v1/admin/members?${params}`);
+  if (seq !== state.membersSeq) return;
+  renderMembers($("t-members"), page, { selfId: state.selfId, onAction: memberAction });
+  renderMembersPager(page);
+}
+
+/** 회원 한 줄의 버튼: 확인 → 보내기 → 결과 안내 → 목록과 접근 기록을 새로 읽는다. */
+async function memberAction(action, member, button) {
+  if (!window.confirm(action.confirm)) return;
+  const note = $("members-status");
+  button.disabled = true;
+  busy(+1);
+  note.classList.remove("error");
+  note.textContent = "처리하는 중입니다…";
+  try {
+    // 토큰은 누를 때마다 새로 읽는다 (다른 탭에서 다시 로그인했을 수 있다)
+    const me = await getJson("/v1/auth/me");
+    const result = await writeJson(action.method, action.path, me.csrf_token, action.body);
+    note.textContent = memberResultText(action, member, result);
+  } catch (error) {
+    button.disabled = false;
+    if (gateFor(error)) handleError(error);
+    else {
+      note.classList.add("error");
+      note.textContent = `처리하지 못했습니다. ${error.message}`;
+    }
+    return;
+  } finally {
+    busy(-1);
+  }
+  if (await loadInto($("t-members"), loadMembers)) return;
+  await loadInto($("t-access"), async () =>
+    renderAccess($("t-access"), await getJson(`/v1/admin/access-log?limit=${ACCESS_LIMIT}`)),
+  );
+}
+
+async function changeMembersFilter(status) {
+  state.membersStatus = status;
+  state.membersOffset = 0;
+  for (const chip of document.querySelectorAll("[data-member-status]")) {
+    chip.setAttribute("aria-pressed", String(chip.dataset.memberStatus === status));
+  }
+  await loadInto($("t-members"), loadMembers);
+}
+
 /** 표 하나를 불러와 그린다. 실패해도 다른 표는 그대로 두고, 접근 문제면 true를 돌려준다. */
 async function loadInto(root, task) {
   try {
@@ -189,7 +259,7 @@ async function loadAll() {
     }
     $("gate").hidden = true;
     $("dash").hidden = false;
-    showWho(); // 로그인이 확인된 뒤에만 묻는다 (로그인 전에는 실패하는 요청을 하나라도 덜 보낸다)
+    await showWho(); // 로그인이 확인된 뒤에만 묻는다 (로그인 전에는 실패하는 요청을 하나라도 덜 보낸다)
 
     const blocked = await Promise.all([
       loadInto($("t-feedback"), async () =>
@@ -199,6 +269,7 @@ async function loadAll() {
         renderJobs($("t-jobs"), await getJson(`/v1/admin/jobs?limit=${LIST_LIMIT}`)),
       ),
       loadInto($("t-users"), loadUsers),
+      loadInto($("t-members"), loadMembers),
     ]);
     if (blocked.some(Boolean)) return;
     // 접근 기록은 마지막에 읽는다 — 방금 한 호출들이 목록에 보이도록.
@@ -218,7 +289,7 @@ async function loadAll() {
 
 async function changeDays(days) {
   state.days = days;
-  for (const chip of document.querySelectorAll(".chip")) {
+  for (const chip of document.querySelectorAll(".chip[data-days]")) {
     chip.setAttribute("aria-pressed", String(Number(chip.dataset.days) === days));
   }
   setStatus("기간을 바꾸는 중입니다…", { quiet: true });
@@ -245,14 +316,32 @@ async function showWho() {
   try {
     const me = await getJson("/v1/auth/me");
     $("who").textContent = `${me.username} 님`;
+    state.selfId = me.user_id;
   } catch {
     $("who").textContent = ""; // 이름은 없어도 화면은 쓸 수 있다
   }
 }
 
-for (const chip of document.querySelectorAll(".chip")) {
+for (const chip of document.querySelectorAll(".chip[data-days]")) {
   chip.addEventListener("click", () => changeDays(Number(chip.dataset.days)));
 }
+for (const chip of document.querySelectorAll("[data-member-status]")) {
+  chip.addEventListener("click", () => changeMembersFilter(chip.dataset.memberStatus));
+}
+$("members-search").addEventListener("submit", (e) => {
+  e.preventDefault();
+  state.membersQuery = $("members-query").value.trim();
+  state.membersOffset = 0;
+  loadInto($("t-members"), loadMembers);
+});
+$("members-prev").addEventListener("click", () => {
+  state.membersOffset = Math.max(0, state.membersOffset - MEMBERS_PAGE);
+  loadInto($("t-members"), loadMembers);
+});
+$("members-next").addEventListener("click", () => {
+  state.membersOffset += MEMBERS_PAGE;
+  loadInto($("t-members"), loadMembers);
+});
 $("refresh").addEventListener("click", () => loadAll());
 $("users-prev").addEventListener("click", () => changeUsersPage(-1));
 $("users-next").addEventListener("click", () => changeUsersPage(1));

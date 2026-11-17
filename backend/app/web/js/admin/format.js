@@ -151,7 +151,65 @@ export const ACTION_LABEL = {
   access_log: "접근 기록",
   graph_retry_held: "보류 다시 시도",
   graph_retry_held_done: "보류 다시 시도 결과",
+  members: "회원 목록",
+  member_update: "회원 승인·정지·권한",
+  member_revoke_sessions: "회원 강제 로그아웃",
+  member_delete: "회원 삭제",
 };
+
+// ---------- 회원관리 ----------
+
+export const MEMBER_STATUS = {
+  active: { kind: "ok", text: "사용 중" },
+  pending: { kind: "warn", text: "승인 대기" },
+  suspended: { kind: "bad", text: "정지" },
+};
+
+export const PROVIDER_LABEL = { password: "비밀번호", google: "Google", kakao: "카카오" };
+
+/** 로그인 수단을 사람이 읽는 말로. 없으면 – */
+export function providersText(providers) {
+  const list = Array.isArray(providers) ? providers : [];
+  return list.length ? list.map((p) => PROVIDER_LABEL[p] ?? p).join(" · ") : "–";
+}
+
+/**
+ * 회원 한 줄에서 할 수 있는 일. 자기 자신에게는 정지·강등·삭제를 내지 않는다(서버도 거부한다).
+ * 각 항목: { key, label, method, path, body?, confirm, danger? } — confirm은 누르기 전에 받는 확인 문장.
+ */
+export function memberActions(member, selfId) {
+  const base = `/v1/admin/members/${encodeURIComponent(member.user_id)}`;
+  const who = member.email ? `${member.username}(${member.email})` : member.username;
+  const isSelf = member.user_id === selfId;
+  const actions = [];
+  if (member.status === "pending") {
+    actions.push({ key: "approve", label: "승인", method: "PATCH", path: base, body: { status: "active" }, confirm: `${who} 님의 가입을 승인할까요? 승인하면 바로 서비스를 쓸 수 있습니다.` });
+  }
+  if (member.status === "suspended") {
+    actions.push({ key: "restore", label: "정지 풀기", method: "PATCH", path: base, body: { status: "active" }, confirm: `${who} 님의 정지를 풀까요?` });
+  }
+  if (isSelf) return actions;
+  if (member.status !== "suspended") {
+    actions.push({ key: "suspend", label: "정지", method: "PATCH", path: base, body: { status: "suspended" }, confirm: `${who} 님을 정지할까요? 모든 기기에서 로그아웃되고 다시 로그인할 수 없습니다.` });
+  }
+  if (member.role === "admin") {
+    actions.push({ key: "demote", label: "관리자 해제", method: "PATCH", path: base, body: { role: "user" }, confirm: `${who} 님의 관리자 권한을 거둘까요?` });
+  } else if (member.status === "active") {
+    actions.push({ key: "promote", label: "관리자로", method: "PATCH", path: base, body: { role: "admin" }, confirm: `${who} 님을 관리자로 올릴까요? 이 화면과 회원관리를 모두 쓸 수 있게 됩니다.` });
+  }
+  actions.push({ key: "logout", label: "강제 로그아웃", method: "POST", path: `${base}/revoke-sessions`, confirm: `${who} 님을 모든 기기에서 로그아웃시킬까요?` });
+  actions.push({ key: "delete", label: "삭제", method: "DELETE", path: base, danger: true, confirm: `${who} 님의 계정과 모든 데이터(상대·대화·첨삭 이력)를 지울까요? 되돌릴 수 없습니다.` });
+  return actions;
+}
+
+/** 회원 작업이 끝난 뒤의 안내 문장. */
+export function memberResultText(action, member, result) {
+  const name = member.username;
+  if (action.key === "logout") return `${name} 님을 로그아웃시켰습니다 (세션 ${num(result?.revoked ?? 0)}개).`;
+  if (action.key === "delete") return `${name} 님의 계정을 지웠습니다.`;
+  const done = { approve: "가입을 승인했습니다", restore: "정지를 풀었습니다", suspend: "정지했습니다", demote: "관리자 권한을 거뒀습니다", promote: "관리자로 올렸습니다" };
+  return `${name} 님: ${done[action.key] ?? "바꿨습니다"}.`;
+}
 
 // ---------- 보류된 그래프 메시지 다시 시도 ----------
 

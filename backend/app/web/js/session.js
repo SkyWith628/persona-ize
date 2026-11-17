@@ -46,6 +46,13 @@ export async function register(payload) {
   store.emit("session");
 }
 
+/** 이메일 가입. payload = {email, password, display_name?, invite_code?, consent?} */
+export async function signupEmail(payload) {
+  const out = await api.signupEmail(payload);
+  entered(out);
+  store.emit("session");
+}
+
 export async function acceptConsent() {
   const me = await api.consent();
   entered({ ...me, csrf_token: me.csrf_token || store.csrf });

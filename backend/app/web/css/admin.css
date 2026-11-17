@@ -692,6 +692,53 @@ tbody tr:last-child > * {
   font-size: var(--text-s);
 }
 
+/* ---- 회원관리 ---- */
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.search {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.search input {
+  min-width: 14rem;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  color: inherit;
+  font: inherit;
+}
+
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.btn.small {
+  padding: 2px var(--space-2);
+  font-size: var(--text-s);
+}
+
+.btn.danger {
+  border-color: var(--bad);
+  color: var(--bad);
+  background: transparent;
+}
+
+.hint.error {
+  color: var(--bad);
+}
+
 /* ---- 좁은 화면 ---- */
 
 @media (max-width: 1100px) {

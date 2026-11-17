@@ -340,6 +340,33 @@
   margin-top: 0;
 }
 
+/* 가입 방법 바꾸기(아이디 ↔ 이메일)와 소셜 로그인 */
+.auth-switch {
+  align-self: flex-start;
+  padding-inline: 0;
+}
+
+.auth-social {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+
+.auth-or {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--muted);
+  font-size: var(--text-s);
+}
+
+.auth-or::before,
+.auth-or::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--line);
+}
+
 .consent-main {
   max-width: 640px;
   margin: 0 auto;

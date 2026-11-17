@@ -1,5 +1,5 @@
 // Persona_ize PC 웹 앱의 시작점. 빌드 없는 ES 모듈 + 해시 라우팅(#/compose 등).
-// 로그인 상태에 따라 첫 화면 → 동의 → 앱 셸(화면들) 중 하나를 그린다.
+// 로그인 상태에 따라 첫 화면 → 승인 대기 → 동의 → 앱 셸(화면들) 중 하나를 그린다.
 
 import { describeError } from "./lib/errors.js";
 import { DEFAULT_ROUTE, buildHash, matchRoute } from "./lib/router.js";
@@ -15,6 +15,7 @@ import { mountData } from "./views/data.js";
 import { mountHistory } from "./views/history.js";
 import { mountImport } from "./views/import.js";
 import { mountLanding } from "./views/landing.js";
+import { mountPending } from "./views/pending.js";
 import { mountSettings } from "./views/settings.js";
 import { mountShell } from "./views/shell.js";
 
@@ -29,7 +30,7 @@ const VIEWS = {
 };
 
 const root = document.getElementById("root");
-let mode = null; // "landing" | "consent" | "app" | "error"
+let mode = null; // "landing" | "pending" | "consent" | "app" | "error"
 let shell = null;
 let cleanup = null; // 지금 화면의 정리 함수
 
@@ -131,6 +132,9 @@ function render() {
   } else if (!store.me) {
     mode = "landing";
     cleanup = mountLanding(root);
+  } else if (store.isPending()) {
+    mode = "pending";
+    cleanup = mountPending(root);
   } else if (store.needsConsent()) {
     mode = "consent";
     cleanup = mountConsent(root);

@@ -7,6 +7,9 @@ const DEFAULT_CONFIG = Object.freeze({
   require_consent: false,
   consent_version: null,
   app_env: null,
+  requires_approval: false, // 새 계정이 관리자 승인을 기다리는가
+  google: false, // 켜진 소셜 로그인
+  kakao: false,
   loaded: false, // 서버가 /v1/auth/config를 아직 주지 않으면 false (기본값으로 동작)
 });
 
@@ -50,6 +53,11 @@ export const store = {
           consented_at: me.consented_at ?? null,
           consent_version: me.consent_version ?? null,
           consent_current: me.consent_current, // 옛 서버는 이 값을 주지 않는다(undefined)
+          // 회원 상태(0012). 옛 서버는 주지 않는다 → 활성 계정으로 본다. providers는 /me에만 있다.
+          email: me.email ?? null,
+          display_name: me.display_name ?? null,
+          status: me.status ?? "active",
+          providers: Array.isArray(me.providers) ? me.providers : null,
         }
       : null;
     if (me && me.csrf_token) this.csrf = me.csrf_token;
@@ -64,6 +72,17 @@ export const store = {
   },
 
   /** 동의를 먼저 받아야 하는가: 서버가 동의를 요구하고, 지금 버전에 동의한 기록이 없을 때만. */
+  /** 관리자 승인을 기다리는 계정인가 (승인 전에는 /v1/auth/* 밖의 API가 403이다). */
+  isPending() {
+    return Boolean(this.me && this.me.status === "pending");
+  },
+
+  /** 비밀번호가 있는 계정인가. 소셜 로그인으로만 만든 계정은 없다. 모르면(로그인 직후) 있다고 본다. */
+  hasPassword() {
+    const providers = this.me?.providers;
+    return !providers || providers.includes("password");
+  },
+
   needsConsent() {
     return Boolean(this.me && this.config.require_consent && this.me.consent_current === false);
   },

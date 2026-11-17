@@ -11,6 +11,15 @@ import { UNAVAILABLE_TOAST, emptyState, kbd, loadInto, meter, note, pageHead, ta
 import { toast } from "../ui/toast.js";
 
 function passwordSection() {
+  // 소셜 로그인으로만 만든 계정은 비밀번호가 없다 — 바꿀 것이 없으니 까닭만 알린다
+  if (!store.hasPassword()) {
+    return h(
+      "section",
+      { class: "card section" },
+      h("h2", { class: "section-title" }, "비밀번호"),
+      h("p", { class: "section-lead" }, "소셜 로그인으로 가입한 계정이라 비밀번호가 없어요. 로그인은 가입할 때 쓴 소셜 계정으로 해 주세요."),
+    );
+  }
   const curId = uid("cur");
   const newId = uid("new");
   const againId = uid("again");

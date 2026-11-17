@@ -75,6 +75,7 @@ export const api = {
   me: () => get("/v1/auth/me", { quiet401: true }),
   login: (username, password) => post("/v1/auth/login", { username, password }, { quiet401: true }),
   register: (payload) => post("/v1/auth/register", payload, { quiet401: true }),
+  signupEmail: (payload) => post("/v1/auth/signup", payload, { quiet401: true }),
   logout: () => request("POST", "/v1/auth/logout", { quiet401: true }),
   consent: () => post("/v1/auth/consent", {}),
   changePassword: (current_password, new_password) =>

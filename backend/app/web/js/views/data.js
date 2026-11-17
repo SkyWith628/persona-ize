@@ -7,7 +7,7 @@ import { formatDateTime, formatNumber } from "../lib/format.js";
 import { relLabel } from "../lib/model.js";
 import { buildHash } from "../lib/router.js";
 import { invalidateContacts, leave, loadContacts } from "../session.js";
-import { forgetUserPrefs } from "../store.js";
+import { forgetUserPrefs, store } from "../store.js";
 import { openDialog } from "../ui/dialog.js";
 import { busy, h, uid } from "../ui/dom.js";
 import { UNAVAILABLE_TOAST, emptyState, loadInto, note, pageHead } from "../ui/parts.js";
@@ -181,6 +181,7 @@ function deleteAccountDialog() {
     title: "계정을 지울까요?",
     danger: true,
     render: ({ close }) => {
+      const hasPassword = store.hasPassword(); // 소셜 전용 계정은 비밀번호 재확인이 없다
       const passId = uid("pw");
       const phraseId = uid("phrase");
       const errorEl = h("p", { class: "form-error", role: "alert", hidden: true });
@@ -188,7 +189,7 @@ function deleteAccountDialog() {
       const phraseEl = h("input", { id: phraseId, class: "input", type: "text", autocomplete: "off", spellcheck: "false" });
       const submit = h("button", { type: "submit", class: "btn btn-danger-solid", disabled: true }, "계정과 모든 데이터 지우기");
       const sync = () => {
-        submit.disabled = !(passEl.value && phraseEl.value.trim() === PHRASE);
+        submit.disabled = !((!hasPassword || passEl.value) && phraseEl.value.trim() === PHRASE);
       };
       passEl.addEventListener("input", sync);
       phraseEl.addEventListener("input", sync);
@@ -198,7 +199,7 @@ function deleteAccountDialog() {
         errorEl.hidden = true;
         await busy(submit, "지우는 중…", async () => {
           try {
-            close(await api.deleteAccount(passEl.value));
+            close(await api.deleteAccount(hasPassword ? passEl.value : ""));
           } catch (err) {
             errorEl.textContent =
               err.status === 401 ? "비밀번호가 맞지 않아요." : describeError(err, "지우지 못했어요. 잠시 뒤 다시 시도해 주세요.");
@@ -222,7 +223,7 @@ function deleteAccountDialog() {
           h("li", null, "로그인 정보(모든 기기에서 로그아웃)"),
         ),
         h("p", { class: "hint" }, "필요하면 먼저 '내 데이터 내려받기'로 사본을 받아 두세요."),
-        h("div", { class: "field" }, h("label", { for: passId }, "비밀번호"), passEl),
+        hasPassword ? h("div", { class: "field" }, h("label", { for: passId }, "비밀번호"), passEl) : null,
         h("div", { class: "field" }, h("label", { for: phraseId }, `확인하려면 "${PHRASE}"라고 입력해 주세요`), phraseEl),
         errorEl,
         h("div", { class: "dialog-actions" }, h("button", { type: "button", class: "btn", onClick: () => close(undefined) }, "취소"), submit),

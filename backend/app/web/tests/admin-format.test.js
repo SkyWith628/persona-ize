@@ -231,3 +231,51 @@ test("쓰기 요청에만 CSRF 토큰을 싣는다", () => {
   assert.deepEqual([post.method, post.credentials, post.cache, "body" in post], ["POST", "same-origin", "no-store", false]);
   assert.equal("X-CSRF-Token" in requestInit("POST", null).headers, false); // 토큰이 없으면 서버가 403으로 막는다
 });
+
+// ---------- 회원관리 ----------
+
+const { memberActions, memberResultText, providersText } = await import("../js/admin/format.js");
+
+const member = (over = {}) => ({
+  user_id: "11111111-2222-3333-4444-555555555555",
+  username: "minsu",
+  email: "minsu@example.com",
+  role: "user",
+  status: "active",
+  ...over,
+});
+
+test("회원 한 줄의 할 일: 상태와 권한에 따라 달라진다", () => {
+  const keys = (m, self = "someone-else") => memberActions(m, self).map((a) => a.key);
+  assert.deepEqual(keys(member({ status: "pending" })), ["approve", "suspend", "logout", "delete"]);
+  assert.deepEqual(keys(member()), ["suspend", "promote", "logout", "delete"]);
+  assert.deepEqual(keys(member({ role: "admin" })), ["suspend", "demote", "logout", "delete"]);
+  assert.deepEqual(keys(member({ status: "suspended" })), ["restore", "logout", "delete"]);
+});
+
+test("자기 자신에게는 정지·강등·삭제를 내지 않는다", () => {
+  const me = member({ role: "admin" });
+  assert.deepEqual(memberActions(me, me.user_id), []);
+});
+
+test("회원 작업은 대상을 주소에 싣고, 확인 문장에 누구인지 적는다", () => {
+  const [approve, , , remove] = memberActions(member({ status: "pending" }), "x");
+  assert.equal(approve.method, "PATCH");
+  assert.equal(approve.path, "/v1/admin/members/11111111-2222-3333-4444-555555555555");
+  assert.deepEqual(approve.body, { status: "active" });
+  assert.match(approve.confirm, /minsu\(minsu@example\.com\)/);
+  assert.equal(remove.method, "DELETE");
+  assert.equal(remove.danger, true);
+  assert.match(remove.confirm, /되돌릴 수 없습니다/);
+  // 이메일이 없는(소셜, 이메일 미동의) 회원은 아이디만 적는다
+  assert.match(memberActions(member({ email: null }), "x")[0].confirm, /^minsu 님/);
+});
+
+test("로그인 수단과 결과 문장", () => {
+  assert.equal(providersText(["password", "google"]), "비밀번호 · Google");
+  assert.equal(providersText([]), "–");
+  assert.equal(providersText(undefined), "–");
+  const [suspend, , logout] = memberActions(member(), "x");
+  assert.equal(memberResultText(suspend, member(), {}), "minsu 님: 정지했습니다.");
+  assert.equal(memberResultText(logout, member(), { revoked: 2 }), "minsu 님을 로그아웃시켰습니다 (세션 2개).");
+});
