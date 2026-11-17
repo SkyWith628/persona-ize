@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from urllib.parse import unquote, urlsplit
@@ -30,6 +31,8 @@ from urllib.parse import unquote, urlsplit
 from app.core.config import Settings
 
 log = logging.getLogger(__name__)
+
+_SOCIAL_BASE_URL = re.compile(r"https://[^/\s]+")  # 소셜 로그인 redirect_uri의 앞부분 (경로 없이)
 
 DEV_DB_PASSWORD = "persona-dev-only"  # .env.example·docker-compose.yml의 개발 기본값
 DEV_NEO4J_PASSWORD = "neo4j-dev-only"
@@ -201,7 +204,14 @@ def inspect_production_settings(settings: Settings) -> GuardReport:
             "첨삭이 원문 유지로만 끝납니다."
         )
     if not settings.admin_username_set:
-        warnings.append("ADMIN_USERNAMES가 비어 있습니다 — 관리자 화면(/admin)에 아무도 들어갈 수 없습니다.")
+        # 설정만 보고 하는 판단이다(여기서는 DB를 읽지 않는다). 관리자는 이름 말고 권한(users.role=admin)
+        # 으로도 되므로(2026-11-16) "아무도 못 들어간다"고 단정하지 않는다 — 권한 관리자가 없을 때만 그렇다.
+        warnings.append(
+            "ADMIN_USERNAMES가 비어 있습니다 — 이름으로 지정된 관리자가 없습니다. "
+            "권한(role)이 admin인 계정도 "
+            "없으면 관리자 화면(/admin)에 아무도 들어갈 수 없습니다. 권한 관리자는 서버에서 "
+            "`python -m app.tools.create_user <아이디> --admin`으로 만듭니다."
+        )
     if not settings.trusted_host_list:
         warnings.append(
             "TRUSTED_HOSTS가 비어 있습니다 — Host 헤더를 검사하지 않습니다. 서비스 도메인을 적으세요."
@@ -210,6 +220,35 @@ def inspect_production_settings(settings: Settings) -> GuardReport:
         warnings.append(
             "가입이 열려 있는데 REGISTER_INVITE_CODE가 비어 있습니다 — 주소를 아는 누구나 가입할 수 있습니다."
         )
+    if settings.oauth_provider_names:
+        # 경로 없는 `https://도메인`이어야 한다 — 이 값 뒤에 콜백 경로를 붙여 제공자 콘솔에 등록한
+        # Redirect URI와 글자까지 맞춘다. 앞머리만 보면 `https://도메인/app`처럼 경로가 붙은 값도
+        # 통과해 제공자가 redirect_uri 불일치로 거절한다 (2026-11-17, PR 7의 검사를 가져옴).
+        base = settings.public_base_url.strip().rstrip("/")
+        if not _SOCIAL_BASE_URL.fullmatch(base):
+            errors.append(
+                "소셜 로그인이 켜져 있는데 PUBLIC_BASE_URL이 https://도메인 형식이 아닙니다 (경로 없이) — "
+                "비어 있으면 redirect_uri를 요청의 Host 헤더로 만들게 됩니다. 서비스 주소를 넣으세요."
+            )
+    half = [
+        name
+        for name, pair in (
+            ("GOOGLE", (settings.google_client_id, settings.google_client_secret)),
+            ("KAKAO", (settings.kakao_client_id, settings.kakao_client_secret)),
+        )
+        if bool(pair[0].strip()) != bool(pair[1].strip())
+    ]
+    if half:
+        warnings.append(
+            f"{', '.join(half)}_CLIENT_ID·_CLIENT_SECRET 중 하나만 있습니다 — "
+            "둘 다 있어야 그 소셜 로그인이 켜집니다."
+        )
+    if settings.auth_allow_register and not settings.auth_signup_requires_approval:
+        if settings.oauth_provider_names and not settings.register_invite_code:
+            warnings.append(
+                "소셜 로그인이 켜져 있고 초대 코드·승인제가 모두 꺼져 있습니다 — 구글·카카오 계정이 있는 "
+                "누구나 가입합니다. REGISTER_INVITE_CODE나 AUTH_SIGNUP_REQUIRES_APPROVAL=true를 고려하세요."
+            )
     if settings.rate_limit_per_minute == 0 or settings.rate_limit_auth_per_minute == 0:
         warnings.append(
             "RATE_LIMIT_PER_MINUTE 또는 RATE_LIMIT_AUTH_PER_MINUTE가 0입니다 — 그 요청 제한은 꺼져 있습니다."

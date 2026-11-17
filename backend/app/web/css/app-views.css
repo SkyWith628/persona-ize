@@ -340,6 +340,103 @@
   margin-top: 0;
 }
 
+/* 이메일 가입 ↔ 아이디 가입 전환: 글자처럼 보이지만 버튼이다(누르는 높이는 다른 것과 같다) */
+.link-button {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--control-h);
+  margin-top: var(--space-2);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent-strong);
+  font-size: var(--text-s);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+/* 소셜 로그인 버튼 묶음. "또는" 양옆에 가는 선을 둔다 */
+.auth-social {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.auth-or {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--muted);
+  font-size: var(--text-s);
+}
+
+.auth-or::before,
+.auth-or::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+
+/* 승인 대기 안내의 아이디·이메일 */
+.auth-facts {
+  display: grid;
+  gap: var(--space-1);
+  margin: var(--space-3) 0;
+  padding: var(--space-3);
+  background: var(--surface-2);
+  border-radius: var(--radius);
+}
+
+.auth-facts > div {
+  display: flex;
+  gap: var(--space-3);
+}
+
+.auth-facts dt {
+  flex: none;
+  width: 4em;
+  color: var(--muted);
+  font-size: var(--text-s);
+}
+
+.auth-facts dd {
+  min-width: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.auth-card > .btn-block {
+  margin-top: var(--space-3);
+}
+
+/* 설정 화면의 계정 정보(아이디·이메일·권한·로그인 방법) */
+.account-facts {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.account-facts > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+}
+
+.account-facts dt {
+  flex: none;
+  width: 7em;
+  color: var(--muted);
+  font-size: var(--text-s);
+}
+
+.account-facts dd {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .consent-main {
   max-width: 640px;
   margin: 0 auto;

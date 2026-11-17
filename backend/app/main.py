@@ -190,6 +190,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     for route, filename in (("/admin", "admin.html"), ("/privacy", "privacy.html"), ("/terms", "terms.html")):
         app.add_api_route(route, _page(filename), methods=["GET"], include_in_schema=False)
 
+    # 모바일 웹: `/m` (PC 웹 앱은 `/` 그대로). 화면 파일(mobile.css·mobile.js)은 위의 /static으로 나간다.
+    # 소셜 로그인은 `next=/m`으로 시작해 이 주소로 돌아온다(실패하면 `/m?auth_error=<코드>`).
+    # Cache-Control(`no-cache` — 파일 이름에 해시가 없으니 매번 재검증)은 다른 화면처럼 미들웨어가 붙인다
+    # (`core/middleware.py`의 PAGE_PATHS에 `/m`이 있다).
+    @app.get("/m", include_in_schema=False)
+    async def mobile() -> FileResponse:
+        return FileResponse(WEB_DIR / "mobile.html")
+
     return app
 
 

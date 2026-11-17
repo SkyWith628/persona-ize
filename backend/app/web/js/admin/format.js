@@ -151,6 +151,28 @@ export const ACTION_LABEL = {
   access_log: "접근 기록",
   graph_retry_held: "보류 다시 시도",
   graph_retry_held_done: "보류 다시 시도 결과",
+  // 회원 관리 (member_admin_service.py가 남기는 이름)
+  members: "회원 목록",
+  // 하려던 일 → 결과(_done) 또는 실패(_failed, detail에 reason=코드). 서버 규칙에 걸린 시도는 member_refused.
+  member_approve: "가입 승인",
+  member_approve_done: "가입 승인 완료",
+  member_approve_failed: "가입 승인 실패",
+  member_suspend: "계정 정지",
+  member_suspend_done: "계정 정지 완료",
+  member_suspend_failed: "계정 정지 실패",
+  member_activate: "정지 해제",
+  member_activate_done: "정지 해제 완료",
+  member_activate_failed: "정지 해제 실패",
+  member_role: "권한 변경",
+  member_role_done: "권한 변경 완료",
+  member_role_failed: "권한 변경 실패",
+  member_revoke_sessions: "세션 끊기",
+  member_revoke_sessions_done: "세션 끊기 완료",
+  member_revoke_sessions_failed: "세션 끊기 실패",
+  member_delete: "회원 삭제",
+  member_delete_done: "회원 삭제 결과",
+  member_delete_failed: "회원 삭제 실패",
+  member_refused: "회원 관리 거절",
 };
 
 // ---------- 보류된 그래프 메시지 다시 시도 ----------
@@ -285,4 +307,289 @@ export function gateFor(error) {
     };
   }
   return null;
+}
+
+// ---------- 회원 관리 ----------
+// 서버 규칙(member_admin_service.py)을 화면에서도 미리 지킨다: 자기 자신은 정지·권한 내리기·삭제를 못 하고,
+// ADMIN_USERNAMES로 지정된 관리자(config_admin)는 정지·삭제를 못 한다. 그래도 서버가 마지막에 다시 검사한다.
+
+export const MEMBER_STATUS_VIEW = {
+  active: { kind: "ok", text: "사용 중" },
+  pending: { kind: "warn", text: "승인 대기" },
+  suspended: { kind: "bad", text: "정지" },
+};
+
+export const PROVIDER_LABEL = { password: "비밀번호", google: "Google", kakao: "카카오" };
+
+/** 상태 코드 → 꼬리표. 모르는 값은 코드를 그대로 보여 준다(지어내지 않는다). */
+export function memberStatusView(status) {
+  return Object.hasOwn(MEMBER_STATUS_VIEW, status)
+    ? MEMBER_STATUS_VIEW[status]
+    : { kind: "off", text: status ? String(status) : "–" };
+}
+
+/** 권한 칸의 문구. ADMIN_USERNAMES로 지정된 계정은 role과 상관없이 관리자다. */
+export function memberRoleText(member) {
+  if (member?.config_admin) return "관리자 (서버 설정)";
+  return member?.role === "admin" || member?.is_admin ? "관리자" : "일반";
+}
+
+/** 로그인 수단 목록 → "비밀번호 · Google". 없으면 "–". */
+export function providersText(providers) {
+  const list = Array.isArray(providers) ? providers : [];
+  return list.length ? list.map((p) => label(PROVIDER_LABEL, p)).join(" · ") : "–";
+}
+
+/** 목록 요청의 쿼리 문자열. 빈 검색어·필터는 싣지 않는다. 검색어는 서버 한도(100자)로 자른다. */
+export function membersQuery({ query = "", status = "", role = "", limit = 50, offset = 0 } = {}) {
+  const params = new URLSearchParams();
+  const q = String(query ?? "").trim().slice(0, 100);
+  if (q) params.set("query", q);
+  if (status) params.set("status", status);
+  if (role) params.set("role", role);
+  params.set("limit", String(limit));
+  params.set("offset", String(Math.max(0, offset)));
+  return params.toString();
+}
+
+/** 상태 필터 버튼의 글자: "승인 대기 3". 수를 모르면(아직 못 읽음) 이름만. */
+export function memberFilterText(status, counts) {
+  if (!status) return "전체";
+  const name = memberStatusView(status).text;
+  const n = counts?.[status];
+  return Number.isFinite(n) ? `${name} ${num(n)}` : name;
+}
+
+/** 위쪽 바로 가기의 글자. 승인을 기다리는 사람이 있으면 그 수를 함께 적는다. */
+export function membersJumpText(counts) {
+  const pending = Number(counts?.pending ?? 0);
+  return pending > 0 ? `회원 관리 · 승인 대기 ${num(pending)}명` : "회원 관리";
+}
+
+/** 쪽 안내: "1–50 / 조건에 맞는 회원 132명". */
+export function membersPageText(offset, shown, total, filtered = false) {
+  const who = filtered ? "조건에 맞는 회원" : "전체 회원";
+  if (!shown) return `${who} ${num(total)}명`;
+  return `${num(offset + 1)}–${num(offset + shown)} / ${who} ${num(total)}명`;
+}
+
+/** 마지막 쪽의 시작 위치. 삭제로 지금 쪽이 비었을 때 돌아갈 곳. */
+export function lastPageOffset(total, limit) {
+  if (!(total > 0) || !(limit > 0)) return 0;
+  return Math.floor((total - 1) / limit) * limit;
+}
+
+/** 이 회원에게 막힌 일이 있으면 그 까닭(버튼 아래에 적는다). 없으면 null. */
+export function memberLockNote(member, selfId = null) {
+  if (selfId && member.user_id === selfId) {
+    return "내 계정입니다 — 여기서는 정지·관리자 해제·삭제를 할 수 없습니다.";
+  }
+  if (member.config_admin) {
+    return "서버 설정(ADMIN_USERNAMES)으로 지정된 관리자입니다 — 정지·삭제할 수 없습니다.";
+  }
+  return null;
+}
+
+// [버튼 글자, 낭독·안내에 쓰는 온전한 이름]
+const MEMBER_ACTION_NAME = {
+  approve: ["승인", "가입 승인"],
+  suspend: ["정지", "계정 정지"],
+  activate: ["정지 해제", "정지 해제"],
+  promote: ["관리자 지정", "관리자 지정"],
+  demote: ["관리자 해제", "관리자 권한 해제"],
+  revoke: ["세션 끊기", "세션 모두 끊기"],
+  delete: ["삭제", "회원 삭제"],
+};
+
+/**
+ * 한 회원의 줄에 낼 버튼들. 순서: 승인(대기일 때) → 정지/정지 해제 → 관리자 지정/해제 → 세션 끊기 → 삭제.
+ * blocked가 있으면 누를 수 없는 버튼이고 그 값이 까닭이다. ariaLabel은 "누구에게 무엇을"을 말한다.
+ */
+export function memberActions(member, selfId = null) {
+  const isSelf = Boolean(selfId) && member.user_id === selfId;
+  const selfBlock = isSelf ? "내 계정" : null;
+  const configBlock = member.config_admin ? "서버 설정 관리자" : null;
+  const list = [];
+  if (member.status === "pending") list.push({ key: "approve", primary: true });
+  if (member.status === "suspended") list.push({ key: "activate" });
+  else list.push({ key: "suspend", blocked: selfBlock ?? configBlock });
+  if (member.role === "admin") list.push({ key: "demote", blocked: selfBlock });
+  else list.push({ key: "promote" });
+  list.push({ key: "revoke" });
+  list.push({ key: "delete", danger: true, blocked: selfBlock ?? configBlock });
+  return list.map((item) => {
+    const [short, full] = MEMBER_ACTION_NAME[item.key];
+    const blocked = item.blocked ?? null;
+    return {
+      key: item.key,
+      label: short,
+      ariaLabel: `${member.username} 님 ${full}${blocked ? ` (할 수 없음: ${blocked})` : ""}`,
+      primary: item.primary === true,
+      danger: item.danger === true,
+      blocked,
+    };
+  });
+}
+
+/**
+ * 버튼 하나가 하는 일: 보낼 요청(method·path·body)과 그 전에 받을 확인(confirm).
+ * 삭제는 아이디를 그대로 입력해야 확인 버튼이 눌린다(requireText).
+ * 상태를 바꾸는 요청(승인·정지·정지 해제)은 이 줄을 그릴 때의 상태를 expected_status로 함께 보낸다 —
+ * 그 사이 다른 관리자가 상태를 바꿨으면 서버가 409 member_changed로 거절한다(오래된 화면의 "승인"이
+ * 방금 걸린 정지를 풀지 않게).
+ */
+export function memberActionPlan(key, member, selfId = null) {
+  const name = member.username;
+  const path = `/v1/admin/members/${encodeURIComponent(member.user_id)}`;
+  const isSelf = Boolean(selfId) && member.user_id === selfId;
+  const configNote = member.config_admin
+    ? " 서버 설정(ADMIN_USERNAMES)으로 지정된 관리자라, 이 값과 상관없이 관리자로 남습니다."
+    : "";
+  switch (key) {
+    case "approve":
+      return {
+        method: "PATCH",
+        path,
+        body: { status: "active", expected_status: member.status },
+        confirm: {
+          title: "가입을 승인할까요?",
+          message: `${name} 님이 로그인해 서비스를 쓸 수 있게 됩니다.`,
+          confirmLabel: "승인",
+        },
+      };
+    case "activate":
+      return {
+        method: "PATCH",
+        path,
+        body: { status: "active", expected_status: member.status },
+        confirm: {
+          title: "정지를 풀까요?",
+          message: `${name} 님이 다시 로그인할 수 있게 됩니다. 자료는 정지 전 그대로입니다.`,
+          confirmLabel: "정지 해제",
+        },
+      };
+    case "suspend":
+      return {
+        method: "PATCH",
+        path,
+        body: { status: "suspended", expected_status: member.status },
+        confirm: {
+          title: "계정을 정지할까요?",
+          message: `${name} 님은 로그인할 수 없게 되고, 지금 로그인된 기기에서도 모두 로그아웃됩니다. 자료는 지워지지 않고, 언제든 정지를 풀 수 있습니다.`,
+          confirmLabel: "정지",
+          danger: true,
+        },
+      };
+    case "promote":
+      return {
+        method: "PATCH",
+        path,
+        body: { role: "admin" },
+        confirm: {
+          title: "관리자로 지정할까요?",
+          message: `${name} 님이 이 대시보드를 보고 회원을 승인·정지·삭제할 수 있게 됩니다.${configNote}`,
+          confirmLabel: "관리자 지정",
+        },
+      };
+    case "demote":
+      return {
+        method: "PATCH",
+        path,
+        body: { role: "user" },
+        confirm: {
+          title: "관리자 권한을 해제할까요?",
+          message: `${name} 님은 일반 회원으로 계속 쓸 수 있지만 이 대시보드에는 들어올 수 없게 됩니다.${configNote}`,
+          confirmLabel: "관리자 해제",
+          danger: true,
+        },
+      };
+    case "revoke":
+      return {
+        method: "POST",
+        path: `${path}/revoke-sessions`,
+        body: undefined,
+        confirm: {
+          title: "세션을 모두 끊을까요?",
+          message: isSelf
+            ? "내 계정입니다. 지금 이 화면을 포함해 모든 기기에서 로그아웃되고, 다시 로그인해야 합니다."
+            : `${name} 님이 로그인한 모든 기기에서 로그아웃됩니다. 다시 로그인하면 계속 쓸 수 있습니다.`,
+          confirmLabel: "세션 끊기",
+          danger: true,
+        },
+      };
+    case "delete":
+      return {
+        method: "DELETE",
+        path,
+        body: undefined,
+        confirm: {
+          title: "회원을 삭제할까요?",
+          message: `${name} 님의 계정과 아래 자료가 모두 지워집니다. 되돌릴 수 없고, 지운 뒤에는 복구할 방법이 없습니다.`,
+          bullets: [
+            "등록한 상대와 말투 설정",
+            "가져온 대화 원문과 검색 자료",
+            "지난 약속·사건 기록(관계 그래프)",
+            "첨삭 이력·피드백·사용량 기록, 로그인 세션",
+          ],
+          confirmLabel: "영구 삭제",
+          danger: true,
+          requireText: name,
+          requireLabel: `확인하려면 이 회원의 아이디 ${name} 을(를) 그대로 입력하세요`,
+        },
+      };
+    default:
+      throw new Error(`unknown member action: ${key}`);
+  }
+}
+
+/** 성공 안내. result는 서버 응답(PATCH는 회원, 세션 끊기는 {revoked_sessions}, 삭제는 지운 수). */
+export function memberActionDoneText(key, member, result) {
+  const name = member.username;
+  switch (key) {
+    case "approve":
+      return `${name} 님의 가입을 승인했습니다.`;
+    case "activate":
+      return `${name} 님의 정지를 풀었습니다.`;
+    case "suspend":
+      return `${name} 님을 정지했습니다. 로그인된 기기에서도 로그아웃됐습니다.`;
+    case "promote":
+      return `${name} 님을 관리자로 지정했습니다.`;
+    case "demote":
+      return `${name} 님의 관리자 권한을 해제했습니다.`;
+    case "revoke":
+      return `${name} 님의 세션 ${num(result?.revoked_sessions ?? 0)}개를 끊었습니다.`;
+    case "delete": {
+      const counts = `상대 ${num(result?.contacts ?? 0)}명 · 대화방 ${num(result?.conversations ?? 0)}개 · 메시지 ${num(result?.messages ?? 0)}건`;
+      const graph = result?.graph_error
+        ? ` 다만 관계 그래프는 지우지 못했습니다(${result.graph_error}) — 서버 로그를 확인하세요.`
+        : "";
+      return `${name} 님을 삭제했습니다 (${counts}).${graph}`;
+    }
+    default:
+      return "처리했습니다.";
+  }
+}
+
+/** 실패 안내. 서버 규칙에 걸린 경우(409)와 오래된 화면(403·404·409 member_changed)을 구분해 알려 준다. */
+export function memberActionErrorText(key, error) {
+  const what = (MEMBER_ACTION_NAME[key] ?? ["요청", "요청"])[1];
+  if (error?.status === 409 && error.code === "cannot_modify_self") {
+    return "자기 자신은 정지하거나 관리자 권한을 내리거나 삭제할 수 없습니다. 다른 관리자에게 요청하세요 (내 계정 삭제는 서비스 화면의 ‘내 데이터’에서 합니다).";
+  }
+  if (error?.status === 409 && error.code === "protected_admin") {
+    return "서버 설정(ADMIN_USERNAMES)으로 지정된 관리자는 정지하거나 삭제할 수 없습니다. 먼저 서버 설정에서 이름을 빼야 합니다.";
+  }
+  if (error?.status === 409 && error.code === "member_changed") {
+    return "그 사이 다른 관리자가 이 회원의 상태를 바꿨습니다. 아무것도 바꾸지 않았습니다 — 목록을 새로 읽었으니 지금 상태를 확인한 뒤 다시 누르세요.";
+  }
+  if (error?.status === 409 && error.code === "last_admin") {
+    return "마지막 관리자는 정지하거나 권한을 내리거나 삭제할 수 없습니다. 먼저 다른 관리자를 지정하세요.";
+  }
+  if (error?.status === 404) {
+    return "회원을 찾지 못했습니다. 이미 삭제됐을 수 있습니다 — 목록을 새로 읽었습니다.";
+  }
+  if (error?.status === 403) {
+    return `${what}에 실패했습니다. 권한이 없거나 로그인 정보가 바뀌었습니다 — 화면을 새로 고친 뒤 다시 누르세요.`;
+  }
+  return `${what}에 실패했습니다. ${error?.message ?? ""}`.trim();
 }

@@ -21,8 +21,13 @@ import {
   healthView,
   heldView,
   label,
+  memberActions,
+  memberLockNote,
+  memberRoleText,
+  memberStatusView,
   num,
   percent,
+  providersText,
   share,
   usd,
 } from "./format.js";
@@ -432,7 +437,7 @@ function table(caption, columns, rows) {
     el(
       "tr",
       {},
-      columns.map((c) => el("td", { class: c.num ? "num" : null }, [c.cell(item)])),
+      columns.map((c) => el("td", { class: c.num ? "num" : (c.class ?? null) }, [c.cell(item)])),
     ),
   );
   // 좁은 화면에서는 가로로 스크롤된다 → 키보드로도 스크롤할 수 있게 포커스를 받는다.
@@ -530,6 +535,92 @@ export function renderUsers(root, page) {
         { title: "메시지", num: true, cell: (u) => `${num(u.messages)}건` },
         { title: "첨삭", num: true, cell: (u) => `${num(u.rewrites)}건` },
         { title: "마지막 첨삭", cell: (u) => timeCell(u.last_rewrite_at) },
+      ],
+      page.items,
+    ),
+  );
+}
+
+// ---------- 회원 관리 ----------
+
+function memberName(member, isSelf) {
+  return el("span", { class: "member-name" }, [
+    el("b", { text: member.username }),
+    isSelf ? el("span", { class: "tag", text: "나" }) : null,
+    member.display_name ? el("span", { class: "muted", text: member.display_name }) : null,
+  ]);
+}
+
+function memberEmail(member) {
+  if (!member.email) return "–";
+  return el("span", { class: "member-email" }, [
+    member.email,
+    // 소셜 제공자가 확인해 준 이메일만 '확인됨'이다 (이메일 가입은 확인 절차가 없다)
+    member.email_verified ? tag("ok", "확인됨") : el("span", { class: "tag off", text: "미확인" }),
+  ]);
+}
+
+/** 한 줄의 버튼들. 막힌 버튼은 비활성으로 두고, 까닭은 버튼 아래에 글로 적는다(비활성 버튼은 포커스를 못 받는다). */
+function memberActionCell(member, selfId, onAction) {
+  const buttons = memberActions(member, selfId).map((action) => {
+    const kind = action.primary ? "btn" : action.danger ? "btn ghost danger" : "btn ghost";
+    const button = el("button", {
+      type: "button",
+      class: `${kind} member-action`,
+      "aria-label": action.ariaLabel,
+      "data-user": member.user_id,
+      "data-action": action.key,
+      disabled: Boolean(action.blocked),
+      text: action.label,
+    });
+    if (!action.blocked && typeof onAction === "function") {
+      button.addEventListener("click", () => onAction(action.key, member, button));
+    }
+    return button;
+  });
+  const lock = memberLockNote(member, selfId);
+  return el("div", { class: "member-actions" }, [
+    el("div", { class: "member-buttons" }, buttons),
+    lock ? el("p", { class: "member-lock muted", text: lock }) : null,
+  ]);
+}
+
+/**
+ * 회원 표. `opts.selfId`는 지금 로그인한 관리자의 user_id(자기 줄의 버튼을 막는 데 쓴다),
+ * `opts.onAction(key, member, button)`은 버튼을 눌렀을 때 부른다. `opts.filtered`는 검색·필터가 걸려 있는지.
+ */
+export function renderMembers(root, page, opts = {}) {
+  const { selfId = null, onAction = null, filtered = false } = opts;
+  if (!page.items.length) {
+    fill(
+      root,
+      empty(
+        filtered || page.total > 0
+          ? "조건에 맞는 회원이 없습니다. 검색어나 필터를 바꿔 보세요."
+          : "가입한 회원이 없습니다.",
+      ),
+    );
+    return;
+  }
+  fill(
+    root,
+    table(
+      "회원",
+      [
+        { title: "회원", cell: (m) => memberName(m, Boolean(selfId) && m.user_id === selfId) },
+        { title: "이메일", cell: memberEmail },
+        { title: "권한", cell: (m) => memberRoleText(m) },
+        {
+          title: "상태",
+          cell: (m) => {
+            const view = memberStatusView(m.status);
+            return tag(view.kind, view.text);
+          },
+        },
+        { title: "로그인 수단", cell: (m) => providersText(m.providers) },
+        { title: "가입", cell: (m) => timeCell(m.created_at) },
+        { title: "마지막 로그인", cell: (m) => timeCell(m.last_login_at) },
+        { title: "관리", class: "member-cell", cell: (m) => memberActionCell(m, selfId, onAction) },
       ],
       page.items,
     ),

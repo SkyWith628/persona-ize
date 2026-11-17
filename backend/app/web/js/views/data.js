@@ -175,7 +175,11 @@ async function download(button) {
   });
 }
 
-function deleteAccountDialog() {
+/**
+ * 계정 삭제 확인. hasPassword가 false면(소셜 로그인으로만 쓰는 계정) 비밀번호를 묻지 않고 빈 값을 보낸다
+ * — 서버는 세션과 CSRF 토큰, 그리고 아래 확인 문구만으로 지운다.
+ */
+function deleteAccountDialog(hasPassword = true) {
   const PHRASE = "계정 삭제";
   return openDialog({
     title: "계정을 지울까요?",
@@ -184,13 +188,22 @@ function deleteAccountDialog() {
       const passId = uid("pw");
       const phraseId = uid("phrase");
       const errorEl = h("p", { class: "form-error", role: "alert", hidden: true });
-      const passEl = h("input", { id: passId, class: "input", type: "password", autocomplete: "current-password", maxlength: 128, "data-autofocus": true });
-      const phraseEl = h("input", { id: phraseId, class: "input", type: "text", autocomplete: "off", spellcheck: "false" });
+      const passEl = hasPassword
+        ? h("input", { id: passId, class: "input", type: "password", autocomplete: "current-password", maxlength: 128, "data-autofocus": true })
+        : null;
+      const phraseEl = h("input", {
+        id: phraseId,
+        class: "input",
+        type: "text",
+        autocomplete: "off",
+        spellcheck: "false",
+        "data-autofocus": hasPassword ? null : true,
+      });
       const submit = h("button", { type: "submit", class: "btn btn-danger-solid", disabled: true }, "계정과 모든 데이터 지우기");
       const sync = () => {
-        submit.disabled = !(passEl.value && phraseEl.value.trim() === PHRASE);
+        submit.disabled = !((!passEl || passEl.value) && phraseEl.value.trim() === PHRASE);
       };
-      passEl.addEventListener("input", sync);
+      if (passEl) passEl.addEventListener("input", sync);
       phraseEl.addEventListener("input", sync);
       const onSubmit = async (e) => {
         e.preventDefault();
@@ -198,13 +211,13 @@ function deleteAccountDialog() {
         errorEl.hidden = true;
         await busy(submit, "지우는 중…", async () => {
           try {
-            close(await api.deleteAccount(passEl.value));
+            close(await api.deleteAccount(passEl ? passEl.value : ""));
           } catch (err) {
             errorEl.textContent =
               err.status === 401 ? "비밀번호가 맞지 않아요." : describeError(err, "지우지 못했어요. 잠시 뒤 다시 시도해 주세요.");
             errorEl.hidden = false;
-            passEl.focus();
-            passEl.select();
+            (passEl || phraseEl).focus();
+            (passEl || phraseEl).select();
           }
         });
         sync();
@@ -222,7 +235,9 @@ function deleteAccountDialog() {
           h("li", null, "로그인 정보(모든 기기에서 로그아웃)"),
         ),
         h("p", { class: "hint" }, "필요하면 먼저 '내 데이터 내려받기'로 사본을 받아 두세요."),
-        h("div", { class: "field" }, h("label", { for: passId }, "비밀번호"), passEl),
+        passEl
+          ? h("div", { class: "field" }, h("label", { for: passId }, "비밀번호"), passEl)
+          : h("p", { class: "hint" }, "소셜 로그인으로만 쓰는 계정이라 비밀번호는 묻지 않아요."),
         h("div", { class: "field" }, h("label", { for: phraseId }, `확인하려면 "${PHRASE}"라고 입력해 주세요`), phraseEl),
         errorEl,
         h("div", { class: "dialog-actions" }, h("button", { type: "button", class: "btn", onClick: () => close(undefined) }, "취소"), submit),
@@ -248,8 +263,21 @@ export function mountData(root) {
     },
   });
 
+  let askingAccount = false; // 로그인 방법을 읽는 사이에 다시 눌러 대화상자가 둘 열리지 않게
   const removeAccount = async () => {
-    const result = await deleteAccountDialog();
+    if (askingAccount) return;
+    askingAccount = true;
+    // 비밀번호가 있는 계정인지 먼저 확인한다. 로그인 방법을 모르면(옛 서버·읽기 실패) 예전처럼 비밀번호를 묻는다.
+    let hasPassword = true;
+    try {
+      const me = await api.me();
+      if (Array.isArray(me?.providers) && !me.providers.includes("password")) hasPassword = false;
+    } catch {
+      /* 비밀번호를 묻는 쪽이 안전하다 */
+    } finally {
+      askingAccount = false;
+    }
+    const result = await deleteAccountDialog(hasPassword);
     if (!result) return;
     forgetUserPrefs();
     invalidateContacts();

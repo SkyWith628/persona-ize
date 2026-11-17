@@ -41,6 +41,8 @@
             <button type="button" class="chip" data-days="7" aria-pressed="true">7일</button>
             <button type="button" class="chip" data-days="30" aria-pressed="false">30일</button>
           </div>
+          <!-- 회원 관리 구획으로 바로 가기. 승인을 기다리는 사람이 있으면 그 수를 함께 적는다(스크립트가 채운다). -->
+          <a id="members-jump" class="btn ghost" href="#members">회원 관리</a>
           <button type="button" id="refresh" class="btn ghost">새로 고침</button>
         </div>
       </div>
@@ -80,6 +82,7 @@
         <ul class="bullets">
           <li>이 화면에는 대화 원문, 첨삭한 문장, 사용자가 직접 적은 사유가 나오지 않습니다. 사유는 선택형 항목만 집계합니다.</li>
           <li>사용자 id는 <code>u_8f2…a1</code>처럼 줄여서 보여 줍니다. 작업 오류는 내용이 아니라 종류만 보여 줍니다.</li>
+          <li>‘회원 관리’에서만 아이디·이메일·표시 이름이 그대로 보입니다(회원을 승인·정지·삭제하는 데 필요합니다). 검색어는 기록에 남기지 않습니다.</li>
           <li>관리자가 이 화면을 열 때마다 맨 아래 ‘관리자 접근 기록’에 남습니다.</li>
         </ul>
       </section>
@@ -92,6 +95,40 @@
       <section class="panel" aria-labelledby="h-jobs">
         <h2 id="h-jobs">최근 가져오기 작업</h2>
         <div id="t-jobs"></div>
+      </section>
+
+      <!-- 회원 관리: 가입 승인·정지·권한·세션 끊기·삭제. 기간(오늘·7일·30일)과 상관없이 지금 상태다. -->
+      <section id="members" class="panel" aria-labelledby="h-members">
+        <h2 id="h-members" tabindex="-1">회원 관리</h2>
+        <div class="members-tools">
+          <div class="chips" role="group" aria-label="상태로 거르기">
+            <button type="button" class="chip" data-status="" aria-pressed="true">전체</button>
+            <button type="button" class="chip" data-status="active" aria-pressed="false">사용 중</button>
+            <button type="button" class="chip" data-status="pending" aria-pressed="false">승인 대기</button>
+            <button type="button" class="chip" data-status="suspended" aria-pressed="false">정지</button>
+          </div>
+          <form id="members-search" class="members-search" role="search" aria-label="회원 검색">
+            <label class="sr-only" for="members-query">아이디·이메일·표시 이름</label>
+            <input id="members-query" class="input" type="search" maxlength="100" autocomplete="off"
+                   autocapitalize="none" spellcheck="false" placeholder="아이디·이메일·표시 이름" />
+            <label class="sr-only" for="members-role">권한</label>
+            <select id="members-role" class="input">
+              <option value="">권한 전체</option>
+              <option value="user">일반</option>
+              <option value="admin">관리자</option>
+            </select>
+            <button type="submit" class="btn ghost">검색</button>
+          </form>
+        </div>
+        <!-- 승인·정지·삭제의 결과와 오류 안내. 화면 낭독기가 읽는다. -->
+        <p id="members-note" class="status" role="status" aria-live="polite"></p>
+        <div id="t-members"></div>
+        <div class="pager">
+          <button type="button" id="members-prev" class="btn ghost" disabled>이전</button>
+          <span id="members-page" class="muted" aria-live="polite"></span>
+          <button type="button" id="members-next" class="btn ghost" disabled>다음</button>
+        </div>
+        <p class="hint muted">승인·정지·권한 변경·세션 끊기·삭제는 모두 맨 아래 ‘관리자 접근 기록’에 남습니다. 정지하면 그 회원의 로그인이 모두 끊기고, 삭제는 되돌릴 수 없습니다.</p>
       </section>
 
       <section class="panel" aria-labelledby="h-users">

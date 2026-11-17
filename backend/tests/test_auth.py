@@ -50,8 +50,11 @@ def test_register_login_cookie_csrf_logout() -> None:
     assert me["user_id"] == body["user_id"] and me["csrf_token"] == body["csrf_token"]
     # 응답 필드는 더하기만 했다: 예전 필드는 그대로, 계정 상태(관리자·동의) 네 가지가 붙는다
     account = {"is_admin", "consented_at", "consent_version", "consent_current"}
+    # 회원관리(2026-11-16)로 네 가지가 더 붙었다. `me`에는 로그인 수단 목록도.
+    account |= {"email", "display_name", "role", "status"}
     assert set(body) == {"user_id", "username", "csrf_token", "expires_at"} | account
-    assert set(me) == {"user_id", "username", "csrf_token"} | account
+    assert set(me) == {"user_id", "username", "csrf_token", "providers"} | account
+    assert (me["role"], me["status"], me["email"], me["providers"]) == ("user", "active", None, ["password"])
     assert (me["is_admin"], me["consented_at"], me["consent_current"]) == (False, None, False)
 
     # 쓰기: CSRF 없으면 403, 틀리면 403, 맞으면 201

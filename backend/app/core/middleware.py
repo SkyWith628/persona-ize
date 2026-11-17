@@ -58,7 +58,8 @@ HSTS = "max-age=31536000"
 # Swagger·ReDoc 화면은 CDN 스크립트와 인라인 스크립트를 쓴다. 개발 모드에서만 열리므로 그때만 CSP를 뺀다.
 DOCS_PATHS: frozenset[str] = frozenset({"/docs", "/redoc", "/docs/oauth2-redirect"})
 
-PAGE_PATHS: frozenset[str] = frozenset({"/", "/admin", "/privacy", "/terms", "/favicon.ico"})
+# 화면 HTML을 내는 주소. 모바일 웹 `/m`도 여기에 둔다(2026-11-17 — 라우트가 따로 헤더를 붙이지 않는다).
+PAGE_PATHS: frozenset[str] = frozenset({"/", "/m", "/admin", "/privacy", "/terms", "/favicon.ico"})
 NO_STORE = "no-store"
 NO_CACHE = "no-cache"  # 파일 이름에 해시가 없으므로 매번 재검증(ETag/Last-Modified → 304)
 

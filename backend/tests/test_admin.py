@@ -276,7 +276,7 @@ def test_admin_screen_follows_the_screen_rules() -> None:
     assert css.status_code == 200
     assert not re.search(r"#[0-9a-fA-F]{3,8}\b|\brgba?\(|\bhsla?\(", css.text)  # 색 값은 tokens.css에만
 
-    for name in ("admin.js", "admin/api.js", "admin/format.js", "admin/view.js"):
+    for name in ("admin.js", "admin/api.js", "admin/format.js", "admin/view.js", "admin/dialog.js"):
         script = client.get(f"/static/js/{name}")
         assert script.status_code == 200, name
         # 서버가 준 문자열을 HTML로 해석하게 만드는 길이 없다
