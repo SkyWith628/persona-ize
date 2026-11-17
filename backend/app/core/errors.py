@@ -104,3 +104,47 @@ class InvalidInviteError(ForbiddenError):
     """`REGISTER_INVITE_CODE`가 설정돼 있는데 가입 요청의 초대 코드가 없거나 다르다."""
 
     code = "invalid_invite"
+
+
+class SignupClosedError(ForbiddenError):
+    """`AUTH_ALLOW_REGISTER=false`. 응답 코드는 예전과 같은 `forbidden`이다 (소셜 콜백만 따로 구분해 쓴다)."""
+
+
+class AccountPendingError(ForbiddenError):
+    """승인 대기 계정 (`AUTH_SIGNUP_REQUIRES_APPROVAL`). 관리자가 승인하기 전에는 로그인할 수 없다."""
+
+    code = "account_pending"
+
+
+class AccountSuspendedError(ForbiddenError):
+    """정지된 계정. 비밀번호(또는 소셜 로그인)가 맞은 뒤에만 이 응답이 나간다."""
+
+    code = "account_suspended"
+
+
+class EmailInUseError(VersionConflictError):
+    """소셜 로그인의 이메일이 **확인되지 않은** 이메일로 가입한 기존 계정과 같다 — 자동으로 묶지 않는다."""
+
+    code = "email_in_use"
+
+
+class OAuthStateError(DomainError):
+    """소셜 로그인 state가 없거나 맞지 않거나 이미 썼다."""
+
+    status_code = 400
+    code = "oauth_failed"
+
+
+class LastAdminError(VersionConflictError):
+    """이 일을 하면 **활성 관리자**가 0명이 된다 (권한 내리기·정지·삭제, 본인 탈퇴 포함).
+
+    활성 관리자 = 상태가 active이고, 권한이 admin이거나 이름이 `ADMIN_USERNAMES`에 있는 **실제로 있는** 계정.
+    """
+
+    code = "last_admin"
+
+
+class MemberChangedError(VersionConflictError):
+    """회원관리 요청이 기대한 상태(`expected_status`)와 지금 상태가 다르다 — 그 사이 다른 관리자가 바꿨다."""
+
+    code = "member_changed"

@@ -7,38 +7,80 @@ struct ContactsView: View {
     @StateObject private var run = Runner()
     @State private var alias = ""
     @State private var relationship = "colleague"
+    @State private var adding = false
 
     var body: some View {
-        Form {
-            Section("상대") {
-                if session.contacts.isEmpty { Text("아직 상대가 없습니다. 아래에서 별칭과 관계를 넣고 추가하세요.") }
-                ForEach(session.contacts) { contact in
-                    NavigationLink(value: contact) {
-                        VStack(alignment: .leading) {
-                            Text(contact.alias)
-                            Text(Labels.relationship(contact.relationship_type)
-                                 + (contact.persona_version.map { " · 페르소나 v\($0)" } ?? " · 페르소나 없음"))
-                                .font(.footnote).foregroundStyle(.secondary)
-                        }
+        List {
+            if session.contacts.isEmpty {
+                ContactsEmptyState(systemImage: "person.2",
+                                   text: "아직 상대가 없습니다. 아래 버튼으로 별칭과 관계를 넣고 추가하세요.")
+            } else {
+                Section {
+                    ForEach(session.contacts) { contact in
+                        NavigationLink(value: contact) { row(contact) }
                     }
                 }
+                .listRowBackground(Theme.surface)
             }
-            Section {
-                TextField("별칭 (예: 박지현)", text: $alias)
-                Picker("관계", selection: $relationship) {
-                    ForEach(Labels.relationships, id: \.0) { Text($0.1).tag($0.0) }
-                }
-                Button("추가") { add() }.disabled(alias.trimmingCharacters(in: .whitespaces).isEmpty)
-            } header: {
-                Text("상대 추가")
-            } footer: {
-                Text("실명 대신 별칭을 써도 됩니다.")
-            }
+        }
+        .screenBackground()
+        .tint(Theme.accent)
+        .contactsBottomBar {
+            Button { adding = true } label: { Label("상대 추가", systemImage: "plus") }
+                .buttonStyle(.primary)
         }
         .status(run)
         .navigationTitle("상대")
         .navigationDestination(for: Contact.self) { ContactDetailView(contact: $0) }
         .refreshable { try? await session.reload() }
+        .sheet(isPresented: $adding) { addSheet }
+    }
+
+    /// 별칭을 크게, 관계와 페르소나 준비 상태는 꼬리표로.
+    private func row(_ contact: Contact) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Space.s) {
+            Text(contact.alias).font(.title3.weight(.semibold)).foregroundStyle(Theme.ink)
+            HStack(spacing: Theme.Space.s) {
+                Tag(text: Labels.relationship(contact.relationship_type))
+                if let version = contact.persona_version {
+                    Tag(text: "페르소나 v\(version)", kind: .ok, systemImage: "checkmark.circle.fill")
+                } else {
+                    Tag(text: "페르소나 없음", kind: .warn, systemImage: "exclamationmark.circle")
+                }
+            }
+        }
+        .padding(.vertical, Theme.Space.xs)
+    }
+
+    /// 상대 추가는 화면을 옮기지 않고 시트에서 받는다. 주 버튼은 시트 아래쪽.
+    private var addSheet: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("별칭 (예: 박지현)", text: $alias)
+                    Picker("관계", selection: $relationship) {
+                        ForEach(Labels.relationships, id: \.0) { Text($0.1).tag($0.0) }
+                    }
+                } footer: {
+                    Text("실명 대신 별칭을 써도 됩니다.")
+                }
+                .listRowBackground(Theme.surface)
+            }
+            .screenBackground()
+            .tint(Theme.accent)
+            .contactsBottomBar {
+                Button("추가") { add() }
+                    .buttonStyle(.primary)
+                    .disabled(alias.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+            .status(run)
+            .navigationTitle("상대 추가")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("닫기") { adding = false } }
+            }
+        }
+        .presentationDetents([.medium, .large])
     }
 
     private func add() {
@@ -46,8 +88,104 @@ struct ContactsView: View {
             try await session.api?.addContact(alias: String(alias.trimmingCharacters(in: .whitespaces).prefix(50)),
                                               relationship: relationship)
             alias = ""
+            adding = false
             try await session.reload()
         }
+    }
+}
+
+// MARK: - 이 파일 안에서만 쓰는 조각
+
+private extension View {
+    /// 화면의 주 버튼을 아래쪽(엄지가 닿는 곳)에 고정한다.
+    func contactsBottomBar<Bar: View>(@ViewBuilder _ bar: () -> Bar) -> some View {
+        safeAreaInset(edge: .bottom) {
+            bar()
+                .padding(.horizontal, Theme.Space.l)
+                .padding(.vertical, Theme.Space.m)
+                .background(Theme.bg)
+        }
+    }
+}
+
+/// 빈 상태: 큰 기호와 한 줄 안내. 주 버튼은 화면 아래쪽에 따로 있다.
+private struct ContactsEmptyState: View {
+    let systemImage: String
+    let text: String
+
+    var body: some View {
+        VStack(spacing: Theme.Space.l) {
+            Image(systemName: systemImage).font(.largeTitle).imageScale(.large)
+                .foregroundStyle(Theme.muted).accessibilityHidden(true)
+            Text(text).font(.body).foregroundStyle(Theme.ink2).multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, Theme.Space.xxxl)
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
+    }
+}
+
+/// 페르소나 5단계 한 줄: 항목 이름은 작게, 지금 값의 말 풀이는 크게, 단계는 막대 다섯 칸으로.
+private struct PersonaStepRow: View {
+    let title: String
+    let names: [String]
+    @Binding var value: Int
+
+    private static let barWidth: CGFloat = 120
+
+    var body: some View {
+        Stepper(value: $value, in: 1...5) {
+            VStack(alignment: .leading, spacing: Theme.Space.xs) {
+                Text(title).font(.footnote).foregroundStyle(Theme.muted)
+                Text(Labels.step(names, value)).font(.headline).foregroundStyle(Theme.ink)
+                HStack(spacing: Theme.Space.xs) {
+                    ForEach(1...5, id: \.self) { step in
+                        Capsule().fill(step <= value ? Theme.accent : Theme.line).frame(height: Theme.Space.xs)
+                    }
+                }
+                .frame(maxWidth: Self.barWidth)
+                .accessibilityHidden(true)
+            }
+            .padding(.vertical, Theme.Space.xs)
+        }
+        .accessibilityLabel("\(title) · \(Labels.step(names, value))")
+        .accessibilityValue("5단계 중 \(value)")
+    }
+}
+
+/// 진행 상태 한 줄: 색만이 아니라 기호와 문구로 알린다.
+private struct ImportStatusRow: View {
+    let systemImage: String
+    let tint: Color
+    let title: String
+    var detail: String?
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: Theme.Space.m) {
+            Image(systemName: systemImage).foregroundStyle(tint).accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: Theme.Space.xs) {
+                Text(title).font(.headline).foregroundStyle(Theme.ink)
+                if let detail { Text(detail).font(.footnote).foregroundStyle(Theme.ink2) }
+            }
+        }
+        .padding(.vertical, Theme.Space.xs)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// 삭제처럼 되돌릴 수 없는 행동의 줄. 확인 절차는 부르는 쪽이 그대로 가진다.
+private struct DestructiveRow: View {
+    let title: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(role: .destructive, action: action) {
+            Label(title, systemImage: "trash").foregroundStyle(Theme.bad)
+                .frame(maxWidth: .infinity, minHeight: Theme.minTouch, alignment: .leading)
+                .contentShape(Rectangle())
+        }
+        .listRowBackground(Theme.surface)
     }
 }
 
@@ -71,9 +209,9 @@ private struct ContactDetailView: View {
     var body: some View {
         Form {
             Section {
-                Stepper("격식 · \(Labels.step(Labels.formality, settings.formality))", value: $settings.formality, in: 1...5)
-                Stepper("친근함 · \(Labels.step(Labels.friendliness, settings.friendliness))", value: $settings.friendliness, in: 1...5)
-                Stepper("돌려 말하기 ↔ 직설 · \(Labels.step(Labels.directness, settings.directness))", value: $settings.directness, in: 1...5)
+                PersonaStepRow(title: "격식", names: Labels.formality, value: $settings.formality)
+                PersonaStepRow(title: "친근함", names: Labels.friendliness, value: $settings.friendliness)
+                PersonaStepRow(title: "돌려 말하기 ↔ 직설", names: Labels.directness, value: $settings.directness)
                 Picker("길이", selection: $settings.length) {
                     Text("짧게").tag("shorter"); Text("원문만큼").tag("same"); Text("길게").tag("longer")
                 }
@@ -84,35 +222,59 @@ private struct ContactDetailView: View {
                 TextField("선호 표현 (쉼표로 구분)", text: $preferred)
                 TextField("금지 표현 (예: ㅋㅋ, ㅠ)", text: $forbidden)
                 TextField("메모 (예: 업무 얘기는 결론부터)", text: $notes, axis: .vertical)
-                Button(version == nil ? "저장" : "저장 (새 버전)") { save() }
             } header: {
-                Text(version.map { "페르소나 v\($0)" } ?? "페르소나 (저장 전)")
+                HStack(spacing: Theme.Space.s) {
+                    Text("페르소나")
+                    if let version {
+                        Tag(text: "v\(version)", kind: .ok, systemImage: "checkmark.circle.fill")
+                    } else {
+                        Tag(text: "저장 전", kind: .warn, systemImage: "exclamationmark.circle")
+                    }
+                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(version.map { "페르소나 v\($0)" } ?? "페르소나 (저장 전)")
             } footer: {
                 Text("각 항목은 5단계입니다. 직접 고른 값이며 서버가 추정하지 않습니다. 호칭은 여기 넣은 것만 씁니다.")
             }
+            .listRowBackground(Theme.surface)
             Section {
-                if conversations.isEmpty { Text("대화방이 없습니다. 없어도 A·B 조건 첨삭은 됩니다.") }
+                if conversations.isEmpty {
+                    Text("대화방이 없습니다. 없어도 A·B 조건 첨삭은 됩니다.").font(.subheadline).foregroundStyle(Theme.ink2)
+                }
                 ForEach(conversations) { conversation in
-                    NavigationLink(conversation.title) {
+                    NavigationLink {
                         ConversationView(conversation: conversation, contact: contact) { await loadConversations() }
+                    } label: {
+                        Label(conversation.title, systemImage: "bubble.left.and.bubble.right")
                     }
                 }
                 TextField("대화방 이름", text: $title)
                 TextField("내 이름 (그래프용, 예: 김민수)", text: $meName)
-                Button("대화방 추가") { addConversation() }
+                Button { addConversation() } label: { Label("대화방 추가", systemImage: "plus") }
+                    .buttonStyle(.secondary)
+                    .listRowSeparator(.hidden)
             } header: {
                 Text("과거 대화")
             } footer: {
                 Text("C·D 조건이 참고하는 재료입니다. 합성 대화만 넣으세요.")
             }
+            .listRowBackground(Theme.surface)
             Section {
-                NavigationLink("맥락 그래프 보기") { ContactGraphView(contact: contact) }
+                NavigationLink { ContactGraphView(contact: contact) } label: {
+                    Label("맥락 그래프 보기", systemImage: "point.3.connected.trianglepath.dotted")
+                }
             } footer: {
                 Text("가져온 대화에서 서버가 뽑은 사람·사건·사실입니다. D 조건 첨삭이 참고합니다.")
             }
+            .listRowBackground(Theme.surface)
             Section {
-                Button("이 상대 삭제", role: .destructive) { confirming = true }
+                DestructiveRow(title: "이 상대 삭제") { confirming = true }
             }
+        }
+        .screenBackground()
+        .tint(Theme.accent)
+        .contactsBottomBar {
+            Button(version == nil ? "저장" : "저장 (새 버전)") { save() }.buttonStyle(.primary)
         }
         .status(run)
         .navigationTitle(contact.alias)
@@ -210,35 +372,45 @@ private struct ConversationView: View {
                     ForEach(Method.allCases, id: \.self) { Text($0.rawValue).tag($0) }
                 }
                 .pickerStyle(.segmented)
+                .listRowSeparator(.hidden)
                 switch method {
                 case .kakao:
-                    Text("카카오톡 내보내기(.txt)는 기기와 버전에 따라 형식이 달라 아직 자동으로 읽지 못합니다. 대화를 복사해 ‘붙여넣기’ 형식으로 넣어 주세요.")
+                    guide("카카오톡 내보내기(.txt)는 기기와 버전에 따라 형식이 달라 아직 자동으로 읽지 못합니다. 대화를 복사해 ‘붙여넣기’ 형식으로 넣어 주세요.",
+                          systemImage: "exclamationmark.circle")
                 case .telegram:
-                    Text("PC용 텔레그램에서만 만들 수 있어요. 대화방 메뉴 → 채팅 기록 내보내기 → JSON으로 만든 result.json을 첨부하세요.")
+                    guide("PC용 텔레그램에서만 만들 수 있어요. 대화방 메뉴 → 채팅 기록 내보내기 → JSON으로 만든 result.json을 첨부하세요.",
+                          systemImage: "info.circle")
                     inputs
                 case .paste:
-                    Text("한 줄에 한 메시지: 2026-10-05 09:25 | 박지현 | 내용. 이름 대신 me / contact도 됩니다.").font(.footnote)
+                    guide("한 줄에 한 메시지: 2026-10-05 09:25 | 박지현 | 내용. 이름 대신 me / contact도 됩니다.",
+                          systemImage: "info.circle")
                     inputs
                 }
             } header: {
                 Text("상대와 나눈 대화를 올려주세요")
             } footer: {
-                Text("🔒 올린 대화는 내 계정에만 저장되고 말투 분석에 씁니다. 상대별로 언제든 지울 수 있어요. 시연에는 합성 대화만 넣으세요.")
+                Label("올린 대화는 내 계정에만 저장되고 말투 분석에 씁니다. 상대별로 언제든 지울 수 있어요. 시연에는 합성 대화만 넣으세요.",
+                      systemImage: "lock.fill")
             }
+            .listRowBackground(Theme.surface)
             if let job { analysis(job) }
             Section("메시지 \(messages.count)건") {
                 ForEach(messages) { message in
-                    VStack(alignment: .leading) {
+                    VStack(alignment: .leading, spacing: Theme.Space.xs) {
                         Text((message.speaker_role == "me" ? "나" : contact.alias) + " · " + Labels.date(message.sent_at))
-                            .font(.footnote).foregroundStyle(.secondary)
-                        Text(message.text)
+                            .font(.footnote).foregroundStyle(Theme.muted)
+                        Text(message.text).font(.body).foregroundStyle(Theme.ink)
                     }
+                    .padding(.vertical, Theme.Space.xs)
                 }
             }
+            .listRowBackground(Theme.surface)
             Section {
-                Button("이 대화방 삭제", role: .destructive) { confirming = true }
+                DestructiveRow(title: "이 대화방 삭제") { confirming = true }
             }
         }
+        .screenBackground()
+        .tint(Theme.accent)
         .status(run)
         .navigationTitle(conversation.title)
         .navigationBarTitleDisplayMode(.inline)
@@ -256,33 +428,62 @@ private struct ConversationView: View {
         }
     }
 
+    private static let pasteHeight: CGFloat = 140
+
+    /// 형식 안내: 면(surface2) 위에 기호와 함께.
+    private func guide(_ text: String, systemImage: String) -> some View {
+        Label(text, systemImage: systemImage)
+            .font(.footnote).foregroundStyle(Theme.ink2)
+            .card(padding: Theme.Space.m, fill: Theme.surface2)
+            .listRowSeparator(.hidden)
+    }
+
     @ViewBuilder
     private var inputs: some View {
-        TextEditor(text: $text).frame(minHeight: 110).accessibilityLabel("가져올 합성 대화").focused($editing)
+        TextEditor(text: $text).accessibilityLabel("가져올 합성 대화").focused($editing)
             .font(.footnote.monospaced())
-        Button("대화 파일 첨부하기 (.txt · .json)") { editing = false; picking = true }
+            .scrollContentBackground(.hidden)
+            .frame(minHeight: Self.pasteHeight)
+            .padding(Theme.Space.s)
+            .background(Theme.surface2, in: RoundedRectangle(cornerRadius: Theme.Radius.m, style: .continuous))
+            .listRowSeparator(.hidden)
+        Button { editing = false; picking = true } label: {
+            Label("대화 파일 첨부하기 (.txt · .json)", systemImage: "paperclip")
+        }
+        .buttonStyle(.secondary)
+        .listRowSeparator(.hidden)
         TextField("내 이름으로 쓸 화자 (예: 김민수)", text: $meName)
         Button("가져오기") { importText() }
+            .buttonStyle(.primary)
             .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .listRowSeparator(.hidden)
     }
 
     /// 말투(문체 묶음)는 가져오는 즉시 쓸 수 있고, 사건 정리(그래프)는 서버에서 뒤이어 돈다.
     @ViewBuilder
     private func analysis(_ job: ImportJob) -> some View {
         Section {
-            Label("말투 분석 완료 · 지금 바로 쓸 수 있어요", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
-            Text("메시지 \(messages.count)개 중 내 발화 \(messages.filter { $0.speaker_role == "me" }.count)개 · 이번에 \(job.imported)건 추가, \(job.duplicates)건 중복, 문체 묶음 \(job.episodes)개")
-                .font(.footnote)
+            ImportStatusRow(systemImage: "checkmark.circle.fill", tint: Theme.ok,
+                            title: "말투 분석 완료 · 지금 바로 쓸 수 있어요",
+                            detail: "메시지 \(messages.count)개 중 내 발화 \(messages.filter { $0.speaker_role == "me" }.count)개 · 이번에 \(job.imported)건 추가, \(job.duplicates)건 중복, 문체 묶음 \(job.episodes)개")
             switch job.graph_status {
             case "pending", "running":
-                ProgressView(value: Double(min(job.graph_episodes, job.imported)), total: Double(max(job.imported, 1))) {
-                    Text("지난 약속·사건 정리 중 \(job.graph_episodes) / \(job.imported)").font(.footnote)
+                VStack(alignment: .leading, spacing: Theme.Space.s) {
+                    ImportStatusRow(systemImage: "arrow.triangle.2.circlepath", tint: Theme.accent,
+                                    title: "지난 약속·사건 정리 중 \(job.graph_episodes) / \(job.imported)")
+                    ProgressView(value: Double(min(job.graph_episodes, job.imported)), total: Double(max(job.imported, 1)))
+                        .tint(Theme.accent)
+                        .accessibilityLabel("지난 약속·사건 정리 진행률")
+                    Text("화면을 닫아도 서버에서 계속됩니다. 끝나면 지난번에 약속한 내용까지 참고합니다.")
+                        .font(.footnote).foregroundStyle(Theme.muted)
                 }
-                Text("화면을 닫아도 서버에서 계속됩니다. 끝나면 지난번에 약속한 내용까지 참고합니다.").font(.footnote).foregroundStyle(.secondary)
+                .padding(.vertical, Theme.Space.xs)
             case "completed":
-                Label("지난 약속·사건 정리 완료 (\(job.graph_episodes)개)", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                ImportStatusRow(systemImage: "checkmark.circle.fill", tint: Theme.ok,
+                                title: "지난 약속·사건 정리 완료 (\(job.graph_episodes)개)")
             case "failed":
-                Text("지난 약속·사건 정리 실패: \(job.graph_error ?? "사유 없음")")
+                ImportStatusRow(systemImage: "exclamationmark.triangle.fill", tint: Theme.bad,
+                                title: "지난 약속·사건 정리 실패", detail: job.graph_error ?? "사유 없음")
             default:
                 EmptyView()
             }
@@ -291,6 +492,7 @@ private struct ConversationView: View {
         } footer: {
             Text("이 상대에게 쓰는 말투는 이전 화면의 페르소나에서 직접 정합니다.")
         }
+        .listRowBackground(Theme.surface)
     }
 
     /// 고른 파일을 글로 읽는다. 큰 파일은 요청 한 번에 담기 어려워 막는다.

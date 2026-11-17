@@ -59,7 +59,11 @@ class GraphDisabledError(DomainError):
 
 
 def is_admin_username(username: str, settings: Settings) -> bool:
-    """이 이름이 관리자인지. 판정은 `Settings.is_admin_name` 한 곳이다 (대소문자까지 같아야 한다)."""
+    """이 이름이 **설정으로** 관리자인지 (`ADMIN_USERNAMES`, 대소문자까지 같아야 한다).
+
+    2026-11-16부터 권한(`users.role == "admin"`)으로도 관리자가 된다 — 사용자를 놓고 판정할 때는
+    `AuthService.is_admin(user)`를 쓴다(관리자 API의 접근 검사가 그것을 쓴다).
+    """
     return settings.is_admin_name(username)
 
 
@@ -570,6 +574,10 @@ class AdminService:
         out = RetryHeldOut(released=sum(released.values()), users=len(released), started=started)
         await self._log(admin, "graph_retry_held_done", f"released={out.released} users={out.users}")
         return out
+
+    async def record(self, admin: AdminIdentity, action: str, detail: str) -> None:
+        """접근 기록 한 줄 (회원관리 서비스가 같은 `admin_access_log`에 남길 때 쓴다)."""
+        await self._log(admin, action, detail)
 
     async def _log(self, admin: AdminIdentity, action: str, detail: str) -> None:
         await self._repo.log_access(admin.user_id, admin.username, action, detail)

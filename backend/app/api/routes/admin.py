@@ -1,12 +1,17 @@
 """관리자 API (`/v1/admin/*`) — 품질·비용·수집 작업 현황. 대화 원문과 첨삭 문장은 돌려주지 않는다.
 
-접근: 로그인 세션(쿠키, 또는 `current_session`이 받아 주는 Bearer) + 이름이 `ADMIN_USERNAMES`에 있는 사용자만
-(대소문자까지 같아야 한다 — `admin_service.is_admin_username`).
+접근: 로그인 세션(쿠키, 또는 `current_session`이 받아 주는 Bearer) + 관리자만. 관리자는 이름이
+`ADMIN_USERNAMES`에 있거나(대소문자까지 같아야 한다) 권한이 admin인 사용자다
+(`AuthService.is_admin`, 2026-11-16).
 - 로그인하지 않았으면 401, 관리자가 아니면 403 `forbidden`. 개발용 헤더 스텁(`X-User-Id`)은 세션이
   아니므로 401이다 — 누구나 아무 id로 관리자 화면을 열 수 없게.
 - 저장소가 PostgreSQL이 아니면(인메모리) 503 `admin_unavailable` — 집계 SQL을 돌릴 곳이 없다.
-- 통과한 호출은 전부 `admin_access_log`에 남는다(서비스가 자료를 읽거나 바꾸기 전에 기록한다).
-- 쓰기는 `POST /graph/retry-held` 하나다. 쿠키 인증이면 `X-CSRF-Token`이 맞아야 한다(403, 관리자 검사 뒤).
+- 통과한 호출은 전부 `admin_access_log`에 남는다(서비스가 자료를 읽거나 바꾸기 전에 기록한다). 회원관리의
+  쓰기는 결과(`*_done`·`*_failed`)와 서버 규칙에 걸린 시도(`member_refused`)도 남긴다.
+- 쓰기(`POST /graph/retry-held`, 회원관리의 PATCH·POST·DELETE)는 쿠키 인증이면 `X-CSRF-Token`이 맞아야
+  한다(403, 관리자 검사 뒤). 안전하지 않은 메서드 전부에 `require_admin`이 한 곳에서 건다.
+- 회원관리(`/members*`, 2026-11-16): 목록·승인·정지·권한·세션 폐기·삭제. 규칙은 `member_admin_service.py`,
+  기록은 같은 `admin_access_log`. 여기서만 사용자 id 전체와 이메일이 나간다(회원을 다루는 데 필요하다).
 
 검사 순서는 401 → 403 → 503이다. 로그인하지 않은 요청에는 서버 구성(저장소 종류)도 알려 주지 않는다.
 """
@@ -15,11 +20,15 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from functools import partial
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request, Response
+from pydantic import Field
 
 from app.api.deps import SAFE_METHODS, AppState, State, current_session, require_csrf
+from app.domain.auth import Role, UserStatus
 from app.services.admin_service import (
     AccessLogOut,
     AdminForbiddenError,
@@ -31,8 +40,16 @@ from app.services.admin_service import (
     RejectedFeedbackOut,
     RetryHeldOut,
     UsersPage,
-    is_admin_username,
     short_user_id,
+)
+from app.services.deletion_service import AccountDeletion
+from app.services.member_admin_service import (
+    LogFn,
+    MemberAdminService,
+    MemberOut,
+    MembersPage,
+    MemberUpdate,
+    RevokeSessionsOut,
 )
 
 log = logging.getLogger(__name__)
@@ -55,6 +72,16 @@ class AdminAccess:
 
     admin: AdminIdentity
     service: AdminService
+    members: MemberAdminService
+
+    @property
+    def log(self) -> LogFn:
+        """이 관리자의 이름으로 `admin_access_log`에 한 줄 남기는 함수 (회원관리 서비스에 넘긴다)."""
+        return partial(self.service.record, self.admin)
+
+    @property
+    def admin_id(self) -> UUID:
+        return UUID(self.admin.user_id)
 
 
 def _admin_repo(request: Request, state: AppState):  # noqa: ANN202 - AdminRepo (db extra가 있을 때만 import)
@@ -74,7 +101,7 @@ def _admin_repo(request: Request, state: AppState):  # noqa: ANN202 - AdminRepo 
 async def require_admin(request: Request, state: State) -> AdminAccess:
     session = await current_session(request, state)  # 세션이 없으면 401
     user = await state.auth_service.me(session)
-    if not is_admin_username(user.username, state.settings):
+    if not state.auth_service.is_admin(user):
         # 대소문자만 다른 이름이면 운영자가 설정을 의심할 수 있게 로그에 남긴다 (응답에는 알리지 않는다).
         near = user.username.lower() in state.settings.admin_username_set
         log.warning(
@@ -84,7 +111,9 @@ async def require_admin(request: Request, state: State) -> AdminAccess:
             " (ADMIN_USERNAMES와 대소문자만 다른 이름)" if near else "",
         )
         raise AdminForbiddenError("관리자만 볼 수 있습니다.")
-    if request.method not in SAFE_METHODS:  # 쓰기(보류 다시 시도)는 쿠키 인증이면 CSRF 토큰이 맞아야 한다
+    if (
+        request.method not in SAFE_METHODS
+    ):  # 쓰기(보류 다시 시도·회원관리)는 쿠키 인증이면 CSRF 토큰이 맞아야 한다
         require_csrf(request, state, session)
     if state.engine is None:
         raise AdminUnavailableError("관리자 화면은 PostgreSQL 저장소에서만 볼 수 있습니다.")
@@ -93,6 +122,7 @@ async def require_admin(request: Request, state: State) -> AdminAccess:
         service=AdminService(
             state.settings, _admin_repo(request, state), state.graph_store, state.graph_ingest
         ),
+        members=state.member_admin,  # type: ignore[arg-type] - build_state가 항상 채운다
     )
 
 
@@ -136,3 +166,62 @@ async def retry_held_graph(access: Admin) -> RetryHeldOut:
     그래프가 꺼진 서버는 409 `graph_disabled`.
     """
     return await access.service.retry_held(access.admin)
+
+
+# ---------- 회원관리 (2026-11-16) ----------
+
+
+class MemberDeletionOut(AccountDeletion):
+    """지운 것의 수. `user_id`는 응답에서 뺀다(경로에 이미 있다)."""
+
+    user_id: str = Field(exclude=True)
+
+
+@router.get("/members", response_model=MembersPage, summary="회원 목록·검색 (최근 가입 순)")
+async def list_members(
+    access: Admin,
+    query: Annotated[str, Query(max_length=100, description="아이디·이메일·표시 이름 부분 일치")] = "",
+    status: UserStatus | None = None,
+    role: Role | None = None,
+    limit: Limit = 50,
+    offset: Annotated[int, Query(ge=0, le=MAX_OFFSET)] = 0,
+) -> MembersPage:
+    """`counts`는 필터와 무관한 상태별 전체 수다(승인 대기 배지). `total`은 조건에 맞는 수."""
+    return await access.members.list_members(
+        access.log, query=query, status=status, role=role, limit=limit, offset=offset
+    )
+
+
+@router.patch("/members/{user_id}", response_model=MemberOut, summary="승인·정지·정지 해제·권한 변경")
+async def update_member(user_id: UUID, body: MemberUpdate, access: Admin) -> MemberOut:
+    """본문 `{"status": "active"|"suspended"}` 그리고/또는 `{"role": "user"|"admin"}`.
+
+    pending → active가 승인이다. 정지하면 그 사용자의 세션·토큰이 모두 폐기된다. 자기 자신 정지·권한 내리기는
+    409 `cannot_modify_self`, `ADMIN_USERNAMES`의 계정 정지는 409 `protected_admin`, 이 변경으로 활성
+    관리자가 0명이 되면 409 `last_admin`(두 관리자가 동시에 서로를 내릴 때 진 쪽).
+
+    `expected_status`(선택)는 화면이 그 회원을 그릴 때 본 상태다. 지금 상태와 다르면 아무것도 바꾸지 않고
+    409 `member_changed` — 오래된 화면의 "승인"이 그 사이 걸린 정지를 풀지 않게, 화면은 이 값을 늘 보낸다.
+    """
+    return await access.members.update_member(
+        access.log,
+        access.admin_id,
+        user_id,
+        status=body.status,
+        role=body.role,
+        expected_status=body.expected_status,
+    )
+
+
+@router.post(
+    "/members/{user_id}/revoke-sessions", response_model=RevokeSessionsOut, summary="그 회원의 세션 전부 폐기"
+)
+async def revoke_member_sessions(user_id: UUID, access: Admin) -> RevokeSessionsOut:
+    return RevokeSessionsOut(revoked_sessions=await access.members.revoke_sessions(access.log, user_id))
+
+
+@router.delete("/members/{user_id}", response_model=MemberDeletionOut, summary="회원 삭제 (되돌릴 수 없다)")
+async def delete_member(user_id: UUID, access: Admin) -> AccountDeletion:
+    """계정과 상대·대화·첨삭 이력·그래프·사용량·세션을 지운다. 자기 자신은 409 `cannot_modify_self`,
+    `ADMIN_USERNAMES`의 계정은 409 `protected_admin`, 하나뿐인 활성 관리자는 409 `last_admin`."""
+    return await access.members.delete_member(access.log, access.admin_id, user_id)

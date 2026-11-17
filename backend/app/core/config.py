@@ -58,6 +58,20 @@ class Settings(BaseSettings):
     session_cookie_secure: bool = Field(False, description="https에서만 쿠키 전송. 로컬 http 개발은 False")
     auth_allow_header_stub: bool = Field(True, description="X-User-Id 헤더로 인증 대체 허용 (개발용)")
     auth_allow_register: bool = True
+    # ---- 회원관리·소셜 로그인 (2026-11-16). 기본값은 예전 동작 그대로다: 승인제 꺼짐, 소셜 로그인 꺼짐 ----
+    auth_signup_requires_approval: bool = Field(
+        False,
+        description="true면 새 계정(아이디·이메일·소셜)을 승인 대기로 만든다. 관리자 승인 전에는 로그인 불가",
+    )
+    # 소셜 로그인(인가 코드 방식). 클라이언트 ID와 시크릿이 **둘 다** 있어야 그 제공자가 켜진다.
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    kakao_client_id: str = Field("", description="카카오 REST API 키")
+    kakao_client_secret: str = Field("", description="카카오 콘솔 > 보안 > Client Secret (켜고 넣는다)")
+    public_base_url: str = Field(
+        "",
+        description="밖에서 보이는 주소(https://도메인). 소셜 로그인 redirect_uri에 쓴다. 비면 요청 주소",
+    )
     # 로그인 시도 제한 (프로세스 안 메모리). 같은 (이름, IP)에서 실패가 한도에 닿으면 잠금 시간 동안 429.
     # 한 IP의 실패 합계·한 이름의 실패 합계는 그 배수에서 잠근다 — 남의 계정을 5번 틀려 잠그거나, 같은
     # 공유기(NAT) 뒤의 한 사람이 틀려 모두가 막히는 일이 없게 (2026-11-11 검토). 배수 0은 그 범위를 끈다.
@@ -176,6 +190,11 @@ class Settings(BaseSettings):
         """관리자 이름의 소문자 집합 — 이름 선점 차단·경고처럼 '비슷한 이름'을 볼 때 쓴다."""
         return frozenset(name.lower() for name in self._split(self.admin_usernames))
 
+    @property
+    def admin_name_list(self) -> tuple[str, ...]:
+        """`ADMIN_USERNAMES`에 적힌 이름 그대로(대소문자 유지). "활성 관리자" 수를 셀 때 저장소에 넘긴다."""
+        return tuple(self._split(self.admin_usernames))
+
     def is_admin_name(self, username: str) -> bool:
         """관리자인지 — `ADMIN_USERNAMES`에 적힌 이름과 **대소문자까지** 같아야 한다.
 
@@ -183,6 +202,16 @@ class Settings(BaseSettings):
         가입 때 중복으로 막지만, 그 규칙 이전에 만들어진 계정이 있어도 관리자가 되지 않게 좁은 쪽으로 본다.
         """
         return bool(username) and username in self._split(self.admin_usernames)
+
+    @property
+    def oauth_provider_names(self) -> tuple[str, ...]:
+        """켜진 소셜 로그인 제공자. ID·시크릿 중 하나라도 비면 그 제공자는 꺼져 있다."""
+        names: list[str] = []
+        if self.google_client_id.strip() and self.google_client_secret.strip():
+            names.append("google")
+        if self.kakao_client_id.strip() and self.kakao_client_secret.strip():
+            names.append("kakao")
+        return tuple(names)
 
     @property
     def is_production(self) -> bool:

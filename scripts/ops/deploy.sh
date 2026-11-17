@@ -157,7 +157,7 @@ preflight() {
 	if [ "$(env_get AUTH_ALLOW_REGISTER true)" != "false" ] && [ -z "$(env_get REGISTER_INVITE_CODE)" ]; then
 		warn "가입이 열려 있는데 REGISTER_INVITE_CODE가 비어 있습니다 — 주소를 아는 누구나 가입해 API 비용을 쓸 수 있습니다."
 	fi
-	[ -n "$(env_get ADMIN_USERNAMES)" ] || warn "ADMIN_USERNAMES가 비어 있어 /admin 화면을 볼 수 있는 사람이 없습니다."
+	[ -n "$(env_get ADMIN_USERNAMES)" ] || warn "ADMIN_USERNAMES가 비어 있습니다 — 권한(role)이 admin인 계정도 없으면 /admin 화면을 볼 수 있는 사람이 없습니다 (docs/deploy.md 7단계)."
 	if [ "$(env_get USAGE_GLOBAL_DAILY_TOKEN_LIMIT 0)" = "0" ] && [ "$(env_get USAGE_GLOBAL_DAILY_REWRITE_LIMIT 0)" = "0" ]; then
 		warn "전체 사용량 차단기(USAGE_GLOBAL_DAILY_*)가 꺼져 있습니다 — 하루 비용 상한이 사용자별 한도 × 사용자 수가 됩니다."
 	fi

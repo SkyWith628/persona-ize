@@ -8,6 +8,11 @@
 CSRF를 건너뛰는 것은 **세션을 Bearer 헤더로 찾았을 때뿐**이다 — Bearer 헤더가 있으면 쿠키는 보지 않는다.
 어디서도 요청 본문의 user_id를 신뢰하지 않는다 — 항상 이 의존성에서 받은 값을 쓴다.
 
+회원 상태(2026-11-16): 정지·승인 대기 계정의 세션은 `AuthService.resolve`가 None으로 돌려준다(저장소가 세션과
+함께 사용자 상태를 읽고 `Session.is_active`가 본다). 그래서 아래 ①·②의 모든 경로(`current_session`,
+`current_user_id`, 관리자 검사)에서 쿠키·Bearer가 똑같이 401로 끊긴다. 헤더 스텁 사용자는 계정이 없어
+상태도 없다.
+
 저장소는 `DATABASE_URL`이 있으면 PostgreSQL, 비어 있으면 인메모리다 (테스트·A/B 실험용).
 검색기: A/B는 없음, C는 벡터 kNN(문체), D는 C + 그래프 사실 맥락(NEO4J_URI가 비면 D = C).
 """
@@ -17,7 +22,7 @@ from __future__ import annotations
 import asyncio
 import os
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
@@ -38,6 +43,8 @@ from app.repositories.usage import InMemoryUsageRepo, UsageRepo
 from app.services.auth_service import AuthService, ForbiddenError, UnauthorizedError
 from app.services.deletion_service import DeletionService
 from app.services.import_service import ImportService
+from app.services.member_admin_service import MemberAdminService
+from app.services.oauth import OAuthProvider, OAuthStateStore, build_oauth_providers
 from app.services.rewrite_service import RewriteService
 
 SESSION_COOKIE = "pi_session"
@@ -69,6 +76,13 @@ class AppState:
     engine: Any = None  # sqlalchemy AsyncEngine | None — db extra 없이도 import되게 느슨히 둔다
     graph_store: Any = None  # app.graph.store.GraphStore | None — NEO4J_URI가 있을 때만
     graph_ingest: Any = None  # app.graph.ingest.GraphIngestService | None
+    # 회원관리 (관리자 라우트가 쓴다). 저장소 종류와 무관한 규칙이라 테스트는 인메모리로도 본다.
+    member_admin: MemberAdminService | None = None
+    # 켜진 소셜 로그인 제공자 (google·kakao). 설정이 없으면 비어 있다 = 소셜 로그인 꺼짐.
+    # 테스트는 여기에 가짜 제공자를 끼운다.
+    oauth_providers: dict[str, OAuthProvider] = field(default_factory=dict)
+    # 진행 중인 소셜 로그인(state → verifier·돌아갈 곳). 프로세스 메모리 — 워커 1개 전제.
+    oauth_states: OAuthStateStore = field(default_factory=OAuthStateStore)
 
     @property
     def graph_enabled(self) -> bool:
@@ -191,6 +205,17 @@ def build_state(settings: Settings) -> AppState:
         graph_mode="background",
         index_wait=settings.import_index_wait_seconds,
     )
+    auth_service = AuthService(settings, auth)
+    deletion_service = DeletionService(
+        contacts,
+        conversations,
+        rewrites,
+        import_service,
+        usage,
+        auth,
+        graph_store,
+        admin_names=settings.admin_name_list,  # 마지막 활성 관리자는 지우지 않는다 (본인 탈퇴 포함)
+    )
     return AppState(
         settings=settings,
         contacts=contacts,
@@ -199,7 +224,7 @@ def build_state(settings: Settings) -> AppState:
         embedder=embedder,
         usage=usage,
         auth=auth,
-        auth_service=AuthService(settings, auth),
+        auth_service=auth_service,
         rewrite_service=RewriteService(
             settings,
             contacts,
@@ -214,14 +239,14 @@ def build_state(settings: Settings) -> AppState:
             voice_fingerprint=settings.voice_fingerprint,
         ),
         import_service=import_service,
-        deletion_service=DeletionService(
-            contacts, conversations, rewrites, import_service, usage, auth, graph_store
-        ),
+        deletion_service=deletion_service,
         workflow=workflow,
         storage=storage,
         engine=engine,
         graph_store=graph_store,
         graph_ingest=graph_ingest,
+        member_admin=MemberAdminService(settings, auth, auth_service, deletion_service),
+        oauth_providers=build_oauth_providers(settings),
     )
 
 

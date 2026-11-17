@@ -14,6 +14,7 @@ from typing import Any
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     Date,
     DateTime,
     ForeignKey,
@@ -269,11 +270,50 @@ class UserRow(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
     username: Mapped[str] = mapped_column(String(32), nullable=False, unique=True)
-    password_hash: Mapped[str] = mapped_column(String(256), nullable=False)
+    # 소셜 전용 계정은 비밀번호가 없다 (0012).
+    password_hash: Mapped[str | None] = mapped_column(String(256), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     # 약관·개인정보 안내 동의 (0008). 동의한 적 없으면 둘 다 NULL.
     consented_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     consent_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # 회원관리 (0012). 이메일은 소문자로만 저장하고(CHECK) 유일하다. NULL은 여럿이어도 된다.
+    email: Mapped[str | None] = mapped_column(String(254), nullable=True)
+    # 제공자가 확인해 준 이메일인가. 이메일 가입은 false — 그런 계정에는 소셜 계정을 자동으로 묶지 않는다.
+    email_verified: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    display_name: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    role: Mapped[str] = mapped_column(String(16), nullable=False, default="user", server_default="user")
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="active", server_default="active")
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("email", name="uq_users_email"),
+        CheckConstraint("email = lower(email)", name="ck_users_email_lower"),
+        CheckConstraint("role IN ('user', 'admin')", name="ck_users_role"),
+        CheckConstraint("status IN ('active', 'pending', 'suspended')", name="ck_users_status"),
+        Index("ix_users_status_created", "status", "created_at"),
+    )
+
+
+class UserIdentityRow(Base):
+    """소셜 계정 연결 (0012). 같은 제공자의 같은 subject는 한 사용자에게만 묶인다. 토큰은 저장하지 않는다."""
+
+    __tablename__ = "user_identities"
+
+    id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    provider: Mapped[str] = mapped_column(String(16), nullable=False)
+    subject: Mapped[str] = mapped_column(String(128), nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("provider", "subject", name="uq_user_identities_provider_subject"),
+        # 한 사용자는 제공자마다 계정 하나만 묶는다
+        UniqueConstraint("user_id", "provider", name="uq_user_identities_user_provider"),
+    )
 
 
 class AdminAccessLogRow(Base):
