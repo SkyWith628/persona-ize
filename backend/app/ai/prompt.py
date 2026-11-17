@@ -177,6 +177,7 @@ def build_prompt(
     adjust: str | None = None,
     contact_known: bool = False,
     register_block: str | None = None,
+    voice_block: str | None = None,
 ) -> PromptBundle:
     """첫 생성용 프롬프트.
 
@@ -186,6 +187,8 @@ def build_prompt(
     기본값이면 블록이 예전과 같다.
     `register_block`(내 과거 메시지에서 관찰한 말투 상태, `RewriteInput.register_block`)은 v4부터 있는
     `{register_block}` 자리를 채운다. v3까지의 user.md에는 그 자리가 없어 값을 줘도 본문이 달라지지 않는다.
+    `voice_block`(내 말투 지문, `app.ai.voice`)은 v5부터 있는 `{voice_block}` 자리를 채운다. 없으면 '(없음)'.
+    v4까지의 user.md에는 그 자리가 없어 값을 줘도 본문이 달라지지 않는다.
     """
     user = _load(version, "user").format(
         today=_today_line(today or today_kst()),
@@ -197,6 +200,7 @@ def build_prompt(
         style_block=_examples_block(retrieved, "style"),
         context_block=_examples_block(retrieved, "context"),
         register_block=_register_block(register_block),
+        voice_block=_register_block(voice_block),
     )
     return PromptBundle(system=_load(version, "system"), user=user, version=version)
 

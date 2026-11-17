@@ -103,6 +103,13 @@ class Settings(BaseSettings):
     style_example_gating: bool = Field(
         False, description="문체 예시(C)를 현재 말투 구간의 발화로 제한한다 (2개 미만이면 제한 없이)"
     )
+    voice_fingerprint: bool = Field(
+        False,
+        description=(
+            "C·D 첨삭의 프롬프트에 내 말투 지문(이 상대에게 보낸 내 메시지에서 센 말버릇)을 넣는다. "
+            "PROMPT_VERSION이 rewrite-v5 이상일 때만 프롬프트에 자리가 있다"
+        ),
+    )
     graph_invalidation_mode: Literal["trust", "artifacts", "ignore"] = Field(
         "trust",
         description=(

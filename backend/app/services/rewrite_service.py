@@ -61,6 +61,7 @@ def _input_hash(inp: RewriteInput) -> str:
         payload.pop("channel", None)
     # 서버가 내 과거 메시지에서 만들어 붙이는 값이다 — 요청 본문이 아니므로 해시에 넣지 않는다
     payload.pop("register_block", None)
+    payload.pop("voice_block", None)
     return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
@@ -150,6 +151,7 @@ class RewriteService:
         graph_enabled: bool = False,
         register_state_block: bool = False,
         register_warnings: bool = False,
+        voice_fingerprint: bool = False,
     ) -> None:
         self._settings = settings
         self._contacts = contacts
@@ -164,6 +166,9 @@ class RewriteService:
         # 경고: 저장된 설정이 있는 요청의 결과에 설정과 관찰이 어긋나는 점을 덧붙인다.
         self._register_state_block = register_state_block
         self._register_warnings = register_warnings
+        # 내 말투 지문: C·D 요청의 프롬프트에 이 상대에게 보낸 내 메시지의 말버릇을 붙인다
+        # (rewrite-v5부터 자리가 있다). 꺼 두면 메시지를 읽지 않고 프롬프트가 예전과 글자까지 같다.
+        self._voice_fingerprint = voice_fingerprint
         # 진행 중(모델 호출이 끝나지 않은) 요청 — 프로세스 메모리. 한도 계산에만 쓴다.
         self._locks = KeyedLocks()
         self._in_flight: dict[str, int] = {}
@@ -238,6 +243,29 @@ class RewriteService:
             return await asyncio.to_thread(build_profile, messages, contact.alias, as_of=as_of)
         except Exception as exc:  # noqa: BLE001 - 프로필 계산의 어떤 장애든 프로필 없이 계속한다
             log.warning("register profile failed, continuing without it: %s", exception_kind(exc))
+            return None
+
+    async def _voice_block(self, inp: RewriteInput, contact: Contact) -> str | None:
+        """이 상대에게 보낸 내 메시지의 말투 지문 (요청의 `as_of` 이전, 최근 500건). 못 만들면 None.
+
+        덧붙이는 정보다 — 여기서 난 오류로 첨삭이 실패해서는 안 된다. 오류는 종류만 남긴다.
+        """
+        try:
+            if self._conversations is None:
+                return None
+            from app.ai.register_source import own_messages, recent_before
+            from app.ai.voice import render_voice_block
+
+            as_of = inp.as_of
+            if as_of is not None and as_of.tzinfo is None:
+                as_of = as_of.replace(tzinfo=UTC)
+            messages = recent_before(await own_messages(self._conversations, inp.user_id, contact.id), as_of)
+            if not messages:
+                return None
+            # 정규식 집계라 이벤트 루프 밖에서 돈다 (말투 프로필과 같은 이유)
+            return await asyncio.to_thread(render_voice_block, [text for _, _, text in messages])
+        except Exception as exc:  # noqa: BLE001 - 지문 계산의 어떤 장애든 지문 없이 계속한다
+            log.warning("voice fingerprint failed, continuing without it: %s", exception_kind(exc))
             return None
 
     @staticmethod
@@ -358,7 +386,15 @@ class RewriteService:
             profile = await self._register_profile(inp, contact) if (want_block or want_warnings) else None
             block = self._state_block(profile) if (want_block and profile is not None) else None
             # register_block은 서버만 채운다 — 호출 쪽이 넣어 온 값은 쓰지 않는다.
-            run_input = inp.model_copy(update={"condition": condition, "register_block": block})
+            # 말투 지문은 내 과거 표현을 쓰는 조건(C·D)에만 붙인다 — A·B는 과거 대화를 쓰지 않는 조건이다.
+            voice = (
+                await self._voice_block(inp, contact)
+                if self._voice_fingerprint and condition in ("C", "D")
+                else None
+            )
+            run_input = inp.model_copy(
+                update={"condition": condition, "register_block": block, "voice_block": voice}
+            )
             result = await self._workflow.run(run_input, contact, pv.settings if pv else None)
             if want_warnings and profile is not None and pv is not None:
                 extra = [w for w in self._persona_warnings(profile, pv.settings) if w not in result.warnings]

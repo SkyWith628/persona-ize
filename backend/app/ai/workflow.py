@@ -259,6 +259,7 @@ class RewriteWorkflow:
             adjust=inp.adjust,
             contact_known=inp.condition != "A",  # 설정이 없어도(B~D) 누구에게 쓰는지는 밝힌다
             register_block=inp.register_block,  # v4부터 자리가 있다. 없으면(None) 본문이 그대로다
+            voice_block=inp.voice_block,  # v5부터 자리가 있다
         )
         return {
             "prompt": prompt,
