@@ -129,6 +129,7 @@ export const api = {
   rewrites: {
     create: (payload, idempotencyKey, signal) =>
       post("/v1/rewrites", payload, { headers: { "Idempotency-Key": idempotencyKey }, signal }),
+    createBatch: (payload, idempotencyKey, signal) => post("/v1/rewrites/batch", payload, { headers: { "Idempotency-Key": idempotencyKey }, signal }),
     list: ({ contactId, limit, before } = {}) =>
       get("/v1/rewrites", { query: { contact_id: contactId, limit, before } }),
     feedback: (requestId, payload) => post(`/v1/rewrites/${id(requestId)}/feedback`, payload),

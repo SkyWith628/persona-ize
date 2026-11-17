@@ -13,6 +13,7 @@ from app.api.schemas import (
     ContactDeletionOut,
     ContactGraphOut,
     ContactOut,
+    ContactRegisterOut,
     ContactUpdate,
     GraphEdgeOut,
     GraphNodeOut,
@@ -24,8 +25,11 @@ from app.api.schemas import (
 )
 from app.core.errors import InvalidInputError, NotFoundError
 from app.domain.contact import Contact
+from app.domain.conversation import exception_kind
 from app.domain.persona import PersonaVersion, default_persona
 from app.domain.usage import QuotaExceededError
+from app.graph.store import GraphNeighborhood
+from app.services.register_view import register_view
 from app.services.suggestion_service import ALL_SOURCES, suggest_persona_for_contact
 
 log = logging.getLogger(__name__)
@@ -157,16 +161,48 @@ async def suggest_persona_settings(contact_id: UUID, user_id: UserId, state: Sta
     return out
 
 
+async def _register_out(
+    state: AppState,
+    user_id: str,
+    contact: Contact,
+    center: str | None,
+    hood: GraphNeighborhood | None = None,
+) -> ContactRegisterOut | None:
+    """그래프 화면의 "말투 간선". 내 메시지가 없으면 None, 계산이 실패해도 None — 예전 응답 그대로 나간다.
+
+    말투 프로필을 끈 서버(`REGISTER_SUGGESTIONS=false`)에서도 None이다: 제안과 같은 프로필을 보여 주는
+    값이라 같은 설정을 따른다. 그때는 메시지를 읽지도 않는다. `hood`는 이미 읽은 이웃이다(계기 조회가
+    같은 이웃을 다시 읽지 않게 넘긴다).
+    """
+    if not state.settings.register_suggestions:
+        return None
+    try:
+        view = await register_view(state, user_id, contact, center, hood)
+        return ContactRegisterOut.model_validate(asdict(view)) if view is not None else None
+    except Exception as exc:  # noqa: BLE001 - 부가 표시다. 규칙 계산·메시지 읽기의 실패로 그래프 화면을 막지 않는다
+        log.warning("register view failed, continuing without it: %s", exception_kind(exc))
+        return None
+
+
 @router.get("/{contact_id}/graph", response_model=ContactGraphOut, summary="상대 주변 맥락 그래프")
 async def get_contact_graph(contact_id: UUID, user_id: UserId, state: State) -> ContactGraphOut:
-    """상대 노드와 그 상대가 관여한 사건에 닿은 사실들. 유효한 사실 먼저, 그 안에서는 최근 순."""
+    """상대 노드와 그 상대가 관여한 사건에 닿은 사실들. 유효한 사실 먼저, 그 안에서는 최근 순.
+
+    `register`는 내가 이 상대에게 쓰는 말투의 구간이다 — 화면에는 (나)→(상대) 간선처럼 보이지만 그래프에
+    저장된 값이 아니라 메시지에서 읽을 때 규칙으로 계산한다 (docs/graph-redesign-2026-11-16.md 3.2). 그래서
+    그래프가 꺼져 있어도 온다. 그래프가 켜져 있으면 말투가 바뀐 시점 앞뒤의 계기 사건을 그 구간에 붙인다.
+    """
     contact = await state.contacts.get(user_id, contact_id)
     if state.graph_store is None:
-        return ContactGraphOut(enabled=False)
+        return ContactGraphOut(
+            enabled=False, speech_register=await _register_out(state, user_id, contact, None)
+        )
     # 검색기와 같은 이름으로 찾는다 — 상대 이름을 바꿔도 그래프에는 처음 수집한 이름이 남는다 (0009).
     center = await state.graph_store.find_entity_uuid(user_id, contact.name_in_graph)
     if center is None:
-        return ContactGraphOut(enabled=True)
+        return ContactGraphOut(
+            enabled=True, speech_register=await _register_out(state, user_id, contact, None)
+        )
     hood = await state.graph_store.neighborhood(user_id, center)
     now = datetime.now(UTC)
     oldest = datetime.min.replace(tzinfo=UTC)
@@ -196,7 +232,13 @@ async def get_contact_graph(contact_id: UUID, user_id: UserId, state: State) -> 
         )
         for n in sorted(hood.nodes, key=lambda n: (n.uuid != center, n.kind, n.name))
     ]
-    return ContactGraphOut(enabled=True, center_id=center, nodes=nodes, edges=edges)
+    return ContactGraphOut(
+        enabled=True,
+        center_id=center,
+        nodes=nodes,
+        edges=edges,
+        speech_register=await _register_out(state, user_id, contact, center, hood),
+    )
 
 
 @router.delete("/{contact_id}", response_model=ContactDeletionOut)

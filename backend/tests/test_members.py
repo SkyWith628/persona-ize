@@ -212,6 +212,12 @@ def test_production_guard_requires_https_public_base_url_for_social_login() -> N
     assert any("PUBLIC_BASE_URL" in e for e in plain.errors)
     ok = inspect_production_settings(_settings(**base, public_base_url="https://persona.example.com"))
     assert not any("PUBLIC_BASE_URL" in e for e in ok.errors)
+    # 끝의 '/'는 괜찮다. 경로가 붙으면 제공자 콘솔의 Redirect URI와 어긋나므로 막는다
+    slash = inspect_production_settings(_settings(**base, public_base_url="https://persona.example.com/"))
+    assert not any("PUBLIC_BASE_URL" in e for e in slash.errors)
+    for bad in ("https://persona.example.com/app", "https://", "https://a b.example.com"):
+        res = inspect_production_settings(_settings(**base, public_base_url=bad))
+        assert any("PUBLIC_BASE_URL" in e for e in res.errors), bad
     # 소셜 로그인이 꺼져 있으면 이 검사는 없다 (예전 설정은 그대로 통과한다)
     assert not any("PUBLIC_BASE_URL" in e for e in inspect_production_settings(_settings()).errors)
     half = inspect_production_settings(_settings(kakao_client_id="kid"))

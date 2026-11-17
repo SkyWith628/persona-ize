@@ -43,7 +43,8 @@ class FakeGraphStore:
     event_meta: dict[str, EventInfo] = field(default_factory=dict)  # Event uuid → 유형·중요도
     searches: list[tuple[str, str, str | None, int]] = field(default_factory=list)
     nodes: list[GraphNodeInfo] = field(default_factory=list)  # neighborhood가 돌려줄 노드
-    # (source uuid, target uuid) → relationship_facts가 돌려줄 사실
+    # (source uuid, target uuid) → relationship_facts가 돌려줄 사실. 근거 메시지 시각(observed_at)은
+    # 실제 저장소가 Cypher로 채우는 값이라, 여기서는 테스트가 사실에 직접 넣는다 (없으면 None)
     relationships: dict[tuple[str, str], list[RelationshipFact]] = field(default_factory=dict)
     fail_on: str | None = None  # 이 이름의 에피소드에서 예외
 

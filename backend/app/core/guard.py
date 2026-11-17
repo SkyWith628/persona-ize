@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from urllib.parse import unquote, urlsplit
@@ -30,6 +31,8 @@ from urllib.parse import unquote, urlsplit
 from app.core.config import Settings
 
 log = logging.getLogger(__name__)
+
+_SOCIAL_BASE_URL = re.compile(r"https://[^/\s]+")  # 소셜 로그인 redirect_uri의 앞부분 (경로 없이)
 
 DEV_DB_PASSWORD = "persona-dev-only"  # .env.example·docker-compose.yml의 개발 기본값
 DEV_NEO4J_PASSWORD = "neo4j-dev-only"
@@ -218,11 +221,14 @@ def inspect_production_settings(settings: Settings) -> GuardReport:
             "가입이 열려 있는데 REGISTER_INVITE_CODE가 비어 있습니다 — 주소를 아는 누구나 가입할 수 있습니다."
         )
     if settings.oauth_provider_names:
-        base = settings.public_base_url.strip()
-        if not base.startswith("https://"):
+        # 경로 없는 `https://도메인`이어야 한다 — 이 값 뒤에 콜백 경로를 붙여 제공자 콘솔에 등록한
+        # Redirect URI와 글자까지 맞춘다. 앞머리만 보면 `https://도메인/app`처럼 경로가 붙은 값도
+        # 통과해 제공자가 redirect_uri 불일치로 거절한다 (2026-11-17, PR 7의 검사를 가져옴).
+        base = settings.public_base_url.strip().rstrip("/")
+        if not _SOCIAL_BASE_URL.fullmatch(base):
             errors.append(
-                "소셜 로그인이 켜져 있는데 PUBLIC_BASE_URL이 https:// 주소가 아닙니다 — redirect_uri를 "
-                "요청의 Host 헤더로 만들게 됩니다. 서비스 주소(https://도메인)를 넣으세요."
+                "소셜 로그인이 켜져 있는데 PUBLIC_BASE_URL이 https://도메인 형식이 아닙니다 (경로 없이) — "
+                "비어 있으면 redirect_uri를 요청의 Host 헤더로 만들게 됩니다. 서비스 주소를 넣으세요."
             )
     half = [
         name
