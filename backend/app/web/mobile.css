@@ -1,6 +1,9 @@
 /* Persona_ize 모바일 웹(/m). 빌드 없는 CSS — 색은 모두 사용자 정의 속성, 밝게/어둡게는 기기 설정을 따른다.
-   PC 웹 앱의 css/tokens.css와는 따로 논다(이 파일 하나로 끝난다). 360px 너비에서 가로로 넘치지 않게
-   줄을 이루는 칸은 모두 min-width: 0 이고, 긴 글은 body의 overflow-wrap으로 꺾인다. */
+   PC 웹 앱의 css/tokens.css와는 따로 논다(이 파일 하나로 끝난다). 색 값은 아래 :root 두 묶음에만 적고
+   규칙에서는 변수만 쓴다. 360px 너비에서 가로로 넘치지 않게 줄을 이루는 칸은 모두 min-width: 0 이고,
+   긴 글은 body의 overflow-wrap으로 꺾인다.
+   영역은 테두리·그림자 대신 면 색(--bg 위의 --card)으로 나누고, 위계는 글자 크기·굵기로 만든다.
+   누르는 것은 44px 이상, 입력 글자는 16px 이상(iOS가 화면을 확대하지 않게). */
 
 :root {
   --bg: #f4f5f7;
@@ -21,13 +24,21 @@
   --person: #7b8490;
   --event: #d97a1e;
   --bar: rgba(255, 255, 255, 0.94);
-  --shadow: 0 1px 2px rgba(16, 24, 40, 0.06);
   --backdrop: rgba(15, 20, 28, 0.45);
+  /* 소셜 로그인 버튼: 각 서비스의 버튼 지침을 따른 고정 색 */
+  --google-bg: #ffffff;
+  --google-line: #747775;
+  --google-ink: #1f1f1f;
+  --kakao-bg: #fee500;
+  --kakao-ink: rgba(0, 0, 0, 0.85);
+  --kakao-mark: #000000;
 
   --tabbar-h: 58px;
   --topbar-h: 52px;
   --gutter: 16px;
-  --radius: 12px;
+  --radius: 14px;
+  --radius-s: 10px;
+  --tap: 44px; /* 누를 수 있는 것의 최소 높이 */
   --font: system-ui, -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", sans-serif;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
@@ -52,8 +63,10 @@
     --person: #8b95a1;
     --event: #f0a04b;
     --bar: rgba(25, 29, 35, 0.94);
-    --shadow: none;
     --backdrop: rgba(0, 0, 0, 0.6);
+    --google-bg: #131314;
+    --google-line: #8e918f;
+    --google-ink: #e3e3e3;
   }
 }
 
@@ -89,16 +102,17 @@ h1:focus { outline: none; }
   width: 100%;
   max-width: 720px;
   margin: 0 auto;
-  padding: 12px var(--gutter) 24px;
+  padding: 16px var(--gutter) 24px;
 }
 #app .column {
   padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom) + 84px);
 }
 #login, #pending, #consent { padding-top: max(40px, 12vh); padding-bottom: 96px; max-width: 440px; }
-#login { display: flex; flex-direction: column; gap: 14px; }
+#login { display: flex; flex-direction: column; gap: 16px; }
 #login .brand { margin-bottom: 0; }
-.lead { color: var(--muted); font-size: 0.95rem; margin-top: -8px; }
-.brand { font-size: 1.6rem; margin-bottom: 20px; letter-spacing: -0.01em; }
+.lead { color: var(--muted); font-size: 1rem; margin-top: -8px; margin-bottom: 8px; }
+/* 첫 화면에서 가장 큰 글자: 크기·굵기 대비로 위계를 만든다 */
+.brand { font-size: 2rem; font-weight: 800; line-height: 1.15; letter-spacing: -0.02em; margin-bottom: 24px; }
 
 .topbar {
   position: sticky;
@@ -122,7 +136,10 @@ h1:focus { outline: none; }
 .topbar h1 {
   flex: 1;
   min-width: 0;
-  font-size: 1.15rem;
+  font-size: 1.3rem;
+  font-weight: 800;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -170,24 +187,23 @@ h1:focus { outline: none; }
 
 .screens { border: 0; margin: 0; padding: 0; min-width: 0; }
 .screens:disabled { opacity: 0.6; }
-.screen, .view { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.screen, .view { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 
 /* ---------- 카드 ---------- */
 
+/* 테두리·그림자 없이 면 색(--bg 위의 --card)으로 나눈다 */
 .card {
   background: var(--card);
-  border: 1px solid var(--line);
   border-radius: var(--radius);
-  box-shadow: var(--shadow);
-  padding: 14px;
+  padding: 16px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
   min-width: 0;
 }
 .disclosure > summary { padding: 10px 0; margin: -10px 0; cursor: pointer; font-weight: 600; border-radius: 8px; }
 .disclosure[open] > summary { margin-bottom: 0; }
-.card-title { font-size: 0.82rem; font-weight: 600; color: var(--muted); letter-spacing: 0.01em; }
+.card-title { font-size: 0.86rem; font-weight: 600; color: var(--muted); letter-spacing: 0.01em; }
 .note { font-size: 0.82rem; color: var(--muted); }
 .outside-note { font-size: 0.82rem; color: var(--muted); padding: 0 4px; margin-top: -6px; }
 .row-text { font-size: 0.95rem; }
@@ -195,7 +211,7 @@ h1:focus { outline: none; }
 .small { font-size: 0.82rem; }
 .ok { color: var(--ok); }
 .strong { font-weight: 600; }
-.headline { font-size: 1.05rem; font-weight: 700; }
+.headline { font-size: 1.3rem; font-weight: 800; line-height: 1.3; letter-spacing: -0.02em; }
 .pre { white-space: pre-wrap; }
 .selectable { -webkit-user-select: text; user-select: text; }
 .stack { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
@@ -212,39 +228,41 @@ h1:focus { outline: none; }
 
 input[type="text"], input[type="password"], input[type="email"], select, textarea {
   width: 100%;
-  min-height: 44px;
-  padding: 10px 12px;
+  min-height: 48px;
+  padding: 10px 14px;
   background: var(--field);
   border: 1px solid var(--field-line);
-  border-radius: 10px;
+  border-radius: var(--radius-s);
+  font-size: 1rem; /* 16px보다 작으면 iOS가 입력할 때 화면을 확대한다 */
 }
-textarea { min-height: 104px; resize: vertical; line-height: 1.5; display: block; }
-textarea.mono { font-family: var(--mono); font-size: 0.86rem; min-height: 132px; }
+textarea { min-height: 112px; padding: 12px 14px; resize: vertical; line-height: 1.5; display: block; }
+textarea.mono { font-family: var(--mono); font-size: 1rem; min-height: 132px; }
 ::placeholder { color: var(--muted); opacity: 0.8; }
 input:focus-visible, select:focus-visible, textarea:focus-visible { outline-offset: 0; border-color: var(--accent); }
 
-input[type="range"] { width: 100%; min-height: 44px; margin: 0; accent-color: var(--accent); background: none; }
+input[type="range"] { width: 100%; min-height: var(--tap); margin: 0; accent-color: var(--accent); background: none; }
 .scale-ends { display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--muted); margin-top: -8px; }
 
 /* ---------- 버튼 ---------- */
 
+/* 카드 안에서는 가로를 다 채운다(카드가 세로 flex). 주 버튼은 묶음의 맨 아래에 두고 한 단계 크고 굵게 */
 .btn {
-  min-height: 46px;
+  min-height: 48px;
   padding: 10px 16px;
-  border-radius: 10px;
+  border-radius: var(--radius-s);
   border: 1px solid var(--field-line);
   background: var(--card);
   font-weight: 600;
   text-align: center;
 }
-.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.btn.primary { min-height: 52px; background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 700; }
 .btn.danger { color: var(--bad); border-color: var(--bad); }
 .btn.danger.solid { background: var(--bad); color: var(--card); }
 .btn:disabled, :disabled .btn { opacity: 0.45; }
 .btn:not(:disabled):active { filter: brightness(0.94); }
 
 .text-btn, .link-btn {
-  min-height: 44px;
+  min-height: var(--tap);
   padding: 8px 10px;
   border: 0;
   background: none;
@@ -257,12 +275,12 @@ input[type="range"] { width: 100%; min-height: 44px; margin: 0; accent-color: va
 .link-row { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px; margin: -4px -6px; }
 
 .icon-btn {
-  width: 44px;
-  height: 44px;
+  width: var(--tap);
+  height: var(--tap);
   flex: none;
   border: 0;
   background: none;
-  border-radius: 10px;
+  border-radius: var(--radius-s);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -273,7 +291,7 @@ input[type="range"] { width: 100%; min-height: 44px; margin: 0; accent-color: va
 .chips::-webkit-scrollbar { display: none; }
 .chip {
   flex: none;
-  min-height: 44px;
+  min-height: var(--tap);
   max-width: 60vw;
   padding: 8px 16px;
   border-radius: 22px;
@@ -284,40 +302,39 @@ input[type="range"] { width: 100%; min-height: 44px; margin: 0; accent-color: va
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.chip[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+/* 고른 칩: 색 + 굵은 글자 + 테두리(색만으로 구분하지 않는다) */
+.chip[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 700; }
 
-.segmented { display: flex; border: 1px solid var(--field-line); border-radius: 10px; overflow: hidden; }
+/* 테두리 대신 가라앉은 면(--bg)으로 묶는다. 고른 칸: 채운 면 + 굵은 글자 */
+.segmented { display: flex; gap: 4px; padding: 4px; border-radius: var(--radius); background: var(--bg); }
 .segmented button {
   flex: 1;
   min-width: 0;
-  min-height: 44px;
+  min-height: var(--tap);
   padding: 6px 4px;
   border: 0;
-  border-left: 1px solid var(--field-line);
-  background: var(--card);
+  border-radius: var(--radius-s);
+  background: none;
+  color: var(--muted);
   font-size: 0.92rem;
 }
-.segmented button:first-child { border-left: 0; }
-.segmented button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.segmented button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); font-weight: 700; }
 .segmented button:focus-visible { outline-offset: -3px; }
 
 /* ---------- 로그인 · 가입 ---------- */
 
 a { color: var(--accent); text-underline-offset: 2px; }
 a.btn, .btn.social { display: flex; align-items: center; justify-content: center; gap: 10px; color: inherit; text-decoration: none; }
-.social-list { display: flex; flex-direction: column; gap: 10px; }
+.social-list { display: flex; flex-direction: column; gap: 12px; }
 .btn.social svg { width: 20px; height: 20px; flex: none; }
 /* 각 서비스의 버튼 지침을 따른 고정 색 (기기 밝기와 무관하게 읽히는 조합). */
-.btn.social.google { background: #ffffff; border-color: #747775; color: #1f1f1f; }
-.btn.social.kakao { background: #fee500; border-color: #fee500; color: rgba(0, 0, 0, 0.85); }
-.btn.social.kakao svg { color: #000000; }
-@media (prefers-color-scheme: dark) {
-  .btn.social.google { background: #131314; border-color: #8e918f; color: #e3e3e3; }
-}
+.btn.social.google { background: var(--google-bg); border-color: var(--google-line); color: var(--google-ink); }
+.btn.social.kakao { background: var(--kakao-bg); border-color: var(--kakao-bg); color: var(--kakao-ink); }
+.btn.social.kakao svg { color: var(--kakao-mark); }
 .divider { display: flex; align-items: center; gap: 12px; font-size: 0.82rem; color: var(--muted); }
 .divider::before, .divider::after { content: ""; flex: 1; border-top: 1px solid var(--line); }
 
-.alert { background: var(--bad-soft); color: var(--bad); border-radius: 10px; padding: 10px 12px; font-size: 0.92rem; }
+.alert { background: var(--bad-soft); color: var(--bad); border-radius: var(--radius-s); padding: 12px 14px; font-size: 0.92rem; }
 .alert:focus { outline: none; }
 .field-error { font-size: 0.82rem; color: var(--bad); }
 .field > .note { margin-top: -2px; }
@@ -330,13 +347,13 @@ input[aria-invalid="true"] { border-color: var(--bad); }
 
 /* ---------- 목록 ---------- */
 
-.list { list-style: none; margin: -6px -14px; padding: 0; }
+.list { list-style: none; margin: -6px -16px; padding: 0; }
 .list > li { border-top: 1px solid var(--line); }
 .list > li:first-child { border-top: 0; }
 .list-btn {
   width: 100%;
-  min-height: 56px;
-  padding: 10px 14px;
+  min-height: 60px;
+  padding: 10px 16px;
   border: 0;
   background: none;
   text-align: left;
@@ -347,14 +364,14 @@ input[aria-invalid="true"] { border-color: var(--bad); }
 .list-btn::after { content: "›"; color: var(--muted); font-size: 1.3rem; line-height: 1; }
 .list-btn > .stack { flex: 1; }
 .list-btn:focus-visible { outline-offset: -3px; border-radius: var(--radius); }
-.list-item { padding: 10px 14px; }
+.list-item { padding: 12px 16px; }
 .clamp2 { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
 
 /* ---------- 작성 결과 ---------- */
 
 .result-text { font-size: 1.05rem; white-space: pre-wrap; -webkit-user-select: text; user-select: text; }
 .preserved { font-size: 0.86rem; color: var(--ok); display: flex; flex-wrap: wrap; gap: 4px 14px; list-style: none; margin: 0; padding: 0; }
-.warning { background: var(--warn-bg); color: var(--warn-ink); border-radius: 10px; padding: 10px 12px; font-size: 0.88rem; }
+.warning { background: var(--warn-bg); color: var(--warn-ink); border-radius: var(--radius-s); padding: 12px 14px; font-size: 0.88rem; }
 .warning .strong { display: block; margin-bottom: 2px; }
 .warning ul, .plain-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 
@@ -416,19 +433,20 @@ progress { width: 100%; height: 8px; accent-color: var(--accent); }
 
 /* ---------- 대화상자 ---------- */
 
+/* 어두운 배경 막 위에 뜨는 면 하나. 테두리 없음 */
 dialog {
   width: min(420px, calc(100vw - 32px));
-  border: 1px solid var(--line);
-  border-radius: 14px;
+  border: 0;
+  border-radius: var(--radius);
   background: var(--card);
   color: var(--ink);
-  padding: 18px;
+  padding: 20px;
 }
 dialog::backdrop { background: var(--backdrop); }
-dialog form { display: flex; flex-direction: column; gap: 12px; }
-dialog h2 { font-size: 1.05rem; }
-dialog p { font-size: 0.92rem; color: var(--muted); }
-.dialog-actions { display: flex; gap: 8px; }
+dialog form { display: flex; flex-direction: column; gap: 14px; }
+dialog h2 { font-size: 1.2rem; font-weight: 800; line-height: 1.3; letter-spacing: -0.02em; }
+dialog p { font-size: 0.95rem; color: var(--muted); }
+.dialog-actions { display: flex; gap: 8px; margin-top: 4px; }
 .dialog-actions .btn { flex: 1; }
 
 /* ---------- 넓은 화면: 탭을 위로 ---------- */
@@ -440,7 +458,7 @@ dialog p { font-size: 0.92rem; color: var(--muted); }
   .tab { flex-direction: row; gap: 8px; font-size: 0.92rem; max-width: 172px; }
   .tab svg { width: 20px; height: 20px; }
   .topbar { top: var(--tabbar-h); border-bottom: 0; background: var(--bg); -webkit-backdrop-filter: none; backdrop-filter: none; }
-  .topbar h1 { font-size: 1.4rem; }
+  .topbar h1 { font-size: 1.6rem; }
   #app .column { padding-bottom: 96px; }
   .signed-in .banner { bottom: 0; }
   .banner { left: 50%; right: auto; transform: translateX(-50%); width: min(720px, calc(100vw - 32px)); bottom: 16px; border: 1px solid var(--line); border-radius: var(--radius); }
@@ -449,10 +467,11 @@ dialog p { font-size: 0.92rem; color: var(--muted); }
 
 /* ---------- 동의 · 체크 ---------- */
 
-.check-row { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }
-.check-row > input[type="checkbox"] { flex: none; width: 22px; height: 22px; margin: 1px 0 0; accent-color: var(--accent); }
-.check-row > label { flex: 1; min-width: 0; font-size: 0.92rem; }
-.terms-box { display: flex; flex-direction: column; gap: 10px; padding: 12px; border: 1px dashed var(--field-line); border-radius: 10px; }
+/* 체크 상자는 작아도 글(label)까지 눌린다: 줄 높이를 44px 이상으로 둔다 */
+.check-row { display: flex; align-items: flex-start; gap: 12px; min-width: 0; min-height: var(--tap); }
+.check-row > input[type="checkbox"] { flex: none; width: 24px; height: 24px; margin: 10px 0 0; accent-color: var(--accent); }
+.check-row > label { flex: 1; min-width: 0; padding: 10px 0; font-size: 0.95rem; }
+.terms-box { display: flex; flex-direction: column; gap: 10px; padding: 14px; border-radius: var(--radius); background: var(--card); }
 .consent-list { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 8px; font-size: 0.92rem; }
 .count { text-align: right; margin-top: -6px; }
 .links { margin-top: 0; text-align: center; }
@@ -473,7 +492,7 @@ dialog p { font-size: 0.92rem; color: var(--muted); }
 /* ---------- 말투 제안 ---------- */
 
 .suggestion { border-top: 1px solid var(--line); padding-top: 12px; }
-.suggestion-card { display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 10px; background: var(--accent-soft); min-width: 0; }
+.suggestion-card { display: flex; flex-direction: column; gap: 8px; padding: 14px; border-radius: var(--radius-s); background: var(--accent-soft); min-width: 0; }
 .suggestion-rows { margin: 0; display: flex; flex-direction: column; gap: 6px; }
 .suggestion-rows > div { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .suggestion-rows dt { font-size: 0.78rem; color: var(--muted); }
@@ -482,7 +501,7 @@ dialog p { font-size: 0.92rem; color: var(--muted); }
 .signal { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid var(--line); min-width: 0; }
 .signal:first-child { border-top: 0; }
 .signal > .stack { flex: 1; }
-.btn.compact { flex: none; min-height: 40px; padding: 6px 14px; font-size: 0.9rem; }
+.btn.compact { flex: none; min-height: var(--tap); padding: 6px 14px; font-size: 0.9rem; }
 
 /* ---------- 가져오기 진행 ---------- */
 
