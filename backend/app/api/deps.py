@@ -211,6 +211,7 @@ def build_state(settings: Settings) -> AppState:
             # 설정 없는 요청의 [관계 상태] 블록(rewrite-v4부터 프롬프트에 자리가 있다) / 설정 있는 요청의 경고
             register_state_block=settings.register_state_block,
             register_warnings=settings.register_warnings,
+            voice_fingerprint=settings.voice_fingerprint,
         ),
         import_service=import_service,
         deletion_service=DeletionService(

@@ -123,6 +123,9 @@ class RewriteInput(BaseModel):
     # 내 과거 메시지에서 관찰한 말투 상태 블록 (graph-redesign 5.3). 서비스가 채우고 프롬프트가 그대로 넣는다.
     # 저장된 페르소나가 없는 요청에만 채운다 — 설정이 있으면 설정이 이긴다. 요청 본문에서 받지 않는다.
     register_block: str | None = None
+    # 내 말투 지문 블록 (`app.ai.voice`, rewrite-v5부터 프롬프트에 자리가 있다). 서비스가 채운다 —
+    # 요청 본문에서 받지 않는다. 대화 내용은 들어 있지 않다(닫힌 목록의 말버릇과 건수뿐).
+    voice_block: str | None = None
 
 
 class RewriteResult(BaseModel):
