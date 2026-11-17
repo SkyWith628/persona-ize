@@ -486,3 +486,11 @@
 - 결정: PR 8을 기준으로 하고 PR 7은 닫는다. 화면이 PR 8의 API 계약(`/v1/auth/providers`, 승인 대기 202, `expected_status`, 409 코드 넷)에 맞춰져 있고, PR 8에만 마지막 관리자 보호(경합 포함)·서버에 두는 일회용 OAuth state·DB CHECK 제약·`email_verified`·엄격한 이메일 검증·`create_user`가 있다. 독립 비교(bf72296 대 52eb979)에서 PR 7의 계정 가로채기·소셜 가입 동의 누락이 재현됐는데, PR 7은 그 뒤 `11042e5`에서 둘을 고쳤다 — 그래도 위 차이는 남는다.
 - PR 7에서 가져온 것: 운영 검사의 `PUBLIC_BASE_URL`을 경로 없는 `https://도메인`으로 제한(앞머리만 보던 것), 백로그 A10. 가져오지 않은 것: 쿠키에 두는 state(재시작에 강하지만 일회용·서버 만료를 잃는다), 로그인 실패를 계정 기준으로 세기(아이디·이메일을 번갈아 틀릴 때의 한도 — PR 8은 키가 둘이라 두 배다. 잠금으로 이메일과 아이디의 짝이 드러나는 문제와 저울질이 필요해 따로 정한다).
 - **주의 — 0012가 두 가지다**: 이름과 번호는 같고 스키마가 다르다(PR 8에는 `users.email_verified`·CHECK 제약, PR 7에는 `user_identities.email`). 한쪽으로 올린 DB에 다른 쪽 코드를 돌리면 Alembic은 조용하고 요청이 500이 된다. 이 PC의 개발 DB는 PR 8의 0012다. PR 7의 0012를 올린 DB가 있으면 새로 만들거나 손으로 맞춘다. EC2의 DB는 옛 브랜치의 `0008`로 만들어졌을 수 있다(PR 7의 기록) — 재배포 전에 확인한다.
+
+
+## 2026-11-17 EC2 서버는 DB를 새로 만들어 main으로 다시 올린다 (`docs/deploy.md` 16장)
+- 결정: 옛 브랜치(`design/iphone-mobile`) 빌드가 떠 있는 `43-203-31-7.sslip.io`를 PR 8 병합 뒤의 main(태그)으로 바꾼다. PostgreSQL·Neo4j는 새 볼륨으로 시작하고(기존 계정·대화·그래프는 넘기지 않는다), 코드는 rsync가 아니라 git으로 올린다. 목표 설정은 가입 열림 + 승인제(`AUTH_SIGNUP_REQUIRES_APPROVAL=true`) + 초대 코드 없음 + `REQUIRE_CONSENT=false` + 관리자 한 명(`ADMIN_USERNAMES`의 이름, `reset_password.py --create`로 만든다 — 권한 관리자를 만드는 `create_user --admin`은 관리자를 더 둘 때).
+- 이유: 서버 DB는 브랜치의 `0008`로 만들어졌는데 main의 `0008`과 revision id만 같고 내용이 다르다 — alembic이 건너뛰어 `users.consented_at`이 없고 0012는 `users.email` 중복으로 실패한다. 사용자 id가 바뀌므로 그래프(`group_id`)도 비운다. 아이폰 앱은 가입에 초대 코드·`consent`를 보내지 않아 `REQUIRE_CONSENT=true`면 422로 막힌다. 받은 코드가 PR 8인지는 0012의 `email_verified`와 `backend/app/tools/create_user.py`로 가린다.
+- 절차의 요점: PR 8의 승인제는 가입이 202(세션 없음)이고 승인 전 로그인이 403이다. 스모크 테스트는 가입에 201만 받아 승인제 서버에서 실패하고 `smoke-…` 계정을 승인 대기로 남긴다(PR 8이 고치지 않았다) → 처음에는 임시 초대 코드 + 승인제 끔으로 올려 전체 흐름을 확인하고, 관리자 계정을 만든 뒤 목표 설정으로 바꾼다. 운영 검사는 승인제를 비용 상한으로 치지 않으므로 전체 차단기·그래프 하루 상한은 0이 아니어야 한다.
+- 남은 것: 절차서는 코드만 읽고 썼다 — 서버에 접속하지 않았고 명령을 돌려 보지 못했다(인증서 볼륨 복사, 되돌리기, 승인 화면·curl 포함). 스모크 테스트가 승인제를 알게 하기(그 전까지 이 서버는 `deploy.sh --no-smoke` + `--health-only`). 아이폰 앱은 202 본문에서 `csrf_token`을 찾지 못해 가입 화면이 오류로 끝난다(계정은 승인 대기로 만들어진다, 승인 뒤 "로그인"으로 들어간다) — 앱이 202를 안내로 보여 주고 `consent`를 보내게 한 뒤 `REQUIRE_CONSENT=true`.
+- 규칙: 적용된 마이그레이션은 고치지 않고, 같은 revision id를 두 브랜치에서 쓰지 않으며, 배포는 main(태그)에서 git으로만 한다.
