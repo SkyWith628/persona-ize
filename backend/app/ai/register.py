@@ -786,3 +786,18 @@ def build_profile(
         unknown=sum(1 for o in observed if o.label == "unknown"),
         candidate_address=candidate_address,
     )
+
+
+def changed_segment(profile: RegisterProfile) -> Segment | None:
+    """말투가 **바뀐** 구간: 앞에 다른 구간이 있고 확정된 현재 구간. 없으면 None.
+
+    그래프에서 계기 사건을 찾을 시점(이 구간의 시작)을 정하는 조건이다. 제안 카드
+    (`services/suggestion_service.py`)와 그래프 화면의 말투 간선(`services/register_view.py`)이 이 함수
+    하나를 쓴다 — 조건을 한쪽에만 고치면 두 화면이 같은 상대에 대해 다른 구간·다른 계기를 말하게 된다.
+
+    확정이 아닌 현재 구간은 옛것이다(최근 메시지에 없음) — 그 시점의 계기를 찾아 붙이지 않는다.
+    """
+    current = profile.current_speech
+    if current is None or profile.previous_speech is None or current.status != "confirmed":
+        return None
+    return current

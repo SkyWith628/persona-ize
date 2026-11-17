@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from app.domain.conversation import exception_kind
-from app.graph.store import EpisodeRef, GraphEdgeHit, GraphStore
+from app.graph.store import EpisodeRef, GraphEdgeHit, GraphNeighborhood, GraphStore
 
 log = logging.getLogger(__name__)
 
@@ -86,15 +86,19 @@ async def find_trigger(
     *,
     as_of: datetime | None = None,
     window: timedelta = TRIGGER_WINDOW,
+    hood: GraphNeighborhood | None = None,
 ) -> tuple[Trigger | None, list[ScopeHint]]:
     """변화 시점 `changed_at` 앞뒤의 계기 사건과 범위 단서. 못 찾거나 그래프가 실패하면 (None, []).
 
     `contact_uuid`는 상대 엔티티 노드(`find_entity_uuid`로 찾은 것), `as_of`는 평가용 상한이다.
+    `hood`는 호출 쪽이 같은 상대 노드로 이미 읽은 이웃(`store.neighborhood(user_id, contact_uuid)`)이다 —
+    주면 다시 조회하지 않는다(그래프 화면이 한 요청에 같은 질의를 두 번 돌리지 않게).
     """
     try:
         changed_at = _aware(changed_at)
         as_of = _aware(as_of) if as_of is not None else None
-        hood = await store.neighborhood(user_id, contact_uuid)
+        if hood is None:
+            hood = await store.neighborhood(user_id, contact_uuid)
         refs = await store.episode_refs({u for e in hood.edges for u in e.episode_uuids})
         events = {n.uuid: n.name for n in hood.nodes if n.kind == EVENT_KIND and n.uuid != contact_uuid}
 

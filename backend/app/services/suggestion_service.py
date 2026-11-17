@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from app.ai.register import SEGMENT_K, RegisterProfile, build_profile
+from app.ai.register import SEGMENT_K, RegisterProfile, build_profile, changed_segment
 from app.ai.register_source import own_messages as _own_messages
 from app.ai.register_source import recent_before
 from app.ai.register_suggest import (
@@ -175,9 +175,8 @@ async def suggest_persona_for_contact(
         if profile is not None:
             from_register = register_signals(profile, working)
             card = build_card(profile, working, contact.alias)
-            changed = profile.current_speech if profile.previous_speech is not None else None
-            if changed is not None and changed.status != "confirmed":
-                changed = None  # 옛 구간이다 (최근 메시지에 없음) — 그 시점의 계기를 찾아 붙이지 않는다
+            # 계기를 찾을 구간 — 그래프 화면의 말투 간선(`register_view`)과 같은 함수를 쓴다
+            changed = changed_segment(profile)
             if changed is not None and state.graph_store is not None and center is not None:
                 trigger, hints = await find_trigger(
                     state.graph_store, user_id, center, changed.start, as_of=as_of
