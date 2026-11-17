@@ -38,56 +38,26 @@ struct ComposeView: View {
 
     var body: some View {
         ScrollViewReader { proxy in
-            Form {
-                Section("누구에게 보내나요?") {
-                    if session.contacts.isEmpty {
-                        Text("상대 탭에서 상대를 먼저 등록하세요.")
-                    } else {
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 8) {
-                                ForEach(recents) { item in
-                                    Button(item.alias) { contact = item.id }
-                                        .buttonStyle(.bordered)
-                                        .tint(item.id == contact ? .accentColor : .secondary)
-                                        .accessibilityAddTraits(item.id == contact ? .isSelected : [])
-                                }
-                            }
-                        }
-                        Picker("상대 바꾸기", selection: $contact) {
-                            ForEach(session.contacts) { Text($0.alias).tag($0.id) }
-                        }
-                        if !hasPersona && condition != "A" {
-                            Text("상대 탭에서 이 상대의 페르소나를 저장하면 첨삭할 수 있습니다.")
-                        }
+            ScrollView {
+                VStack(alignment: .leading, spacing: Theme.Space.xl) {
+                    contactPicker
+                    draftEditor
+                    if let result {
+                        if result.result.status == .recommended { recommendation(result) } else { kept(result) }
                     }
+                    demoSettings
                 }
-                Section {
-                    TextEditor(text: $draft).frame(minHeight: 90).accessibilityLabel("합성 메시지 초안").focused($editing)
-                    Button { rewrite() } label: {
-                        Label("\(alias)에게 맞게", systemImage: "sparkles").frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.borderedProminent).disabled(blocked)
-                } header: {
-                    Text("초안")
-                } footer: {
-                    Text("시연에는 합성 대화만 입력하세요. 누르면 서버에서 AI가 초안을 처리합니다.")
-                }
-                if let result {
-                    if result.result.status == .recommended { recommendation(result) } else { kept(result) }
-                }
-                Section {
-                    DisclosureGroup("시연 설정") {
-                        Picker("조건", selection: $condition) {
-                            ForEach(Labels.conditions, id: \.0) { Text($0.1).tag($0.0) }
-                        }
-                        TextField("상황 (예: 일정 지연 양해)", text: $situation)
-                    }
-                }
+                .padding(.horizontal, Theme.Space.l)
+                .padding(.vertical, Theme.Space.l)
             }
+            .scrollDismissesKeyboard(.interactively)
+            .screenBackground()
             .onChange(of: result?.id) { id in
                 if id != nil { withAnimation { proxy.scrollTo("result", anchor: .top) } }
             }
         }
+        // 주 행동은 엄지가 닿는 아래에 고정한다. .status 띠는 이 바깥에 붙으므로 버튼 아래(화면 맨 아래)에 놓인다.
+        .safeAreaInset(edge: .bottom, spacing: 0) { actionBar }
         .status(run)
         .navigationTitle("작성")
         .onAppear { pickContact() }
@@ -105,79 +75,207 @@ struct ComposeView: View {
         }
     }
 
+    // MARK: M1 — 상대 고르기
+
+    private var contactPicker: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.m) {
+            Text("누구에게 보내나요?").font(.title2.bold()).foregroundStyle(Theme.ink)
+                .accessibilityAddTraits(.isHeader)
+            if session.contacts.isEmpty {
+                Label("상대 탭에서 상대를 먼저 등록하세요.", systemImage: "person.crop.circle.badge.plus")
+                    .font(.body).foregroundStyle(Theme.ink2)
+                    .card()
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: Theme.Space.s) {
+                        ForEach(recents) { item in
+                            Button(item.alias) { contact = item.id }
+                                .buttonStyle(ChipStyle(selected: item.id == contact))
+                                .accessibilityAddTraits(item.id == contact ? .isSelected : [])
+                        }
+                    }
+                }
+                HStack {
+                    Text("상대 바꾸기").font(.body).foregroundStyle(Theme.ink)
+                    Spacer(minLength: Theme.Space.s)
+                    Picker("상대 바꾸기", selection: $contact) {
+                        ForEach(session.contacts) { Text($0.alias).tag($0.id) }
+                    }
+                    .pickerStyle(.menu).tint(Theme.accentStrong)
+                }
+                .frame(minHeight: Theme.minTouch)
+                .card(padding: Theme.Space.m)
+                if !hasPersona && condition != "A" {
+                    Label("상대 탭에서 이 상대의 페르소나를 저장하면 첨삭할 수 있습니다.", systemImage: "info.circle.fill")
+                        .font(.footnote).foregroundStyle(Theme.warn)
+                        .card(padding: Theme.Space.m, fill: Theme.warnSoft)
+                }
+            }
+        }
+    }
+
+    // MARK: M2 — 초안
+
+    private var draftEditor: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.s) {
+            Text("초안").font(.headline).foregroundStyle(Theme.ink).accessibilityAddTraits(.isHeader)
+            TextEditor(text: $draft)
+                .font(.body).foregroundStyle(Theme.ink)
+                .scrollContentBackground(.hidden)
+                .frame(minHeight: Metric.draftMinHeight)
+                .accessibilityLabel("합성 메시지 초안").focused($editing)
+                .card(padding: Theme.Space.m)
+            Text("시연에는 합성 대화만 입력하세요. 누르면 서버에서 AI가 초안을 처리합니다.")
+                .font(.footnote).foregroundStyle(Theme.muted)
+        }
+    }
+
+    // MARK: 시연 설정 — 조건·상황
+
+    private var demoSettings: some View {
+        DisclosureGroup("시연 설정") {
+            VStack(alignment: .leading, spacing: Theme.Space.m) {
+                HStack {
+                    Text("조건").font(.body).foregroundStyle(Theme.ink)
+                    Spacer(minLength: Theme.Space.s)
+                    Picker("조건", selection: $condition) {
+                        ForEach(Labels.conditions, id: \.0) { Text($0.1).tag($0.0) }
+                    }
+                    .pickerStyle(.menu).tint(Theme.accentStrong)
+                }
+                .frame(minHeight: Theme.minTouch)
+                TextField("상황 (예: 일정 지연 양해)", text: $situation)
+                    .font(.body).foregroundStyle(Theme.ink)
+                    .padding(.horizontal, Theme.Space.m)
+                    .frame(minHeight: Theme.minTouch)
+                    .background(Theme.surface2, in: RoundedRectangle(cornerRadius: Theme.Radius.m, style: .continuous))
+            }
+            .padding(.top, Theme.Space.m)
+        }
+        .font(.subheadline).foregroundStyle(Theme.ink2).tint(Theme.muted)
+        .card()
+    }
+
+    // MARK: 주 행동 — 화면 아래 고정
+
+    /// 한 화면에 주 행동 하나: 추천이 떠 있으면 "키보드에 준비", 아니면 "…에게 맞게".
+    @ViewBuilder
+    private var actionBar: some View {
+        Group {
+            if let result, result.result.status == .recommended {
+                Button { prepare(result) } label: { Label("키보드에 준비", systemImage: "keyboard") }
+                    .disabled(edited.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            } else {
+                Button { rewrite() } label: { Label("\(alias)에게 맞게", systemImage: "sparkles") }
+                    .disabled(blocked)
+            }
+        }
+        .buttonStyle(.primary)
+        .padding(.horizontal, Theme.Space.l)
+        .padding(.vertical, Theme.Space.s)
+        .background(Theme.bg)
+    }
+
     // MARK: M3 — 추천: 문장 → 보존 항목 → 주의 → 넣기
 
     @ViewBuilder
     private func recommendation(_ rewrite: Rewrite) -> some View {
-        Section {
-            if fixing {
-                TextEditor(text: $edited).frame(minHeight: 80).accessibilityLabel("추천 문장 고치기")
-            } else {
-                Text(edited).textSelection(.enabled)
+        VStack(alignment: .leading, spacing: Theme.Space.m) {
+            resultHeader
+            Group {
+                if fixing {
+                    TextEditor(text: $edited)
+                        .scrollContentBackground(.hidden)
+                        .frame(minHeight: Metric.fixMinHeight).accessibilityLabel("추천 문장 고치기")
+                } else {
+                    Text(edited).textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
+            .font(.title3).foregroundStyle(Theme.ink)
+            .card(fill: Theme.accentSoft)
             if !rewrite.result.preserved_items.isEmpty {
-                Text(rewrite.result.preserved_items.map { "✓ " + $0.text }.joined(separator: "   "))
-                    .font(.footnote).foregroundStyle(.green)
-                    .accessibilityLabel("지킨 내용: " + rewrite.result.preserved_items.map(\.text).joined(separator: ", "))
-            }
-            if !rewrite.result.warnings.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
-                    Label("확인해 주세요", systemImage: "exclamationmark.triangle.fill").font(.footnote.bold())
-                    ForEach(rewrite.result.warnings.indices, id: \.self) {
-                        Text(rewrite.result.warnings[$0]).font(.footnote)
+                FlowLayout(spacing: Theme.Space.s) {
+                    ForEach(rewrite.result.preserved_items.indices, id: \.self) {
+                        Tag(text: rewrite.result.preserved_items[$0].text, kind: .ok, systemImage: "checkmark")
                     }
                 }
-                .listRowBackground(Color.yellow.opacity(0.22))
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("지킨 내용: " + rewrite.result.preserved_items.map(\.text).joined(separator: ", "))
             }
-            HStack {
-                Button("다시 만들기") { self.rewrite() }
-                Spacer()
-                Button(fixing ? "고치기 완료" : "직접 고치기") { fixing.toggle() }
-                Spacer()
-                Button("초안 그대로") { reason = ""; rejecting = true }
+            if !rewrite.result.warnings.isEmpty {
+                VStack(alignment: .leading, spacing: Theme.Space.xs) {
+                    Label("확인해 주세요", systemImage: "exclamationmark.triangle.fill")
+                        .font(.footnote.bold()).foregroundStyle(Theme.warn)
+                    ForEach(rewrite.result.warnings.indices, id: \.self) {
+                        Text(rewrite.result.warnings[$0]).font(.footnote).foregroundStyle(Theme.ink)
+                    }
+                }
+                .card(padding: Theme.Space.m, fill: Theme.warnSoft)
             }
-            .buttonStyle(.borderless).font(.footnote)
-            Button { prepare(rewrite) } label: { Text("키보드에 준비").frame(maxWidth: .infinity) }
-                .buttonStyle(.borderedProminent)
-                .disabled(edited.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            Button("초안에 적용") { apply(rewrite) }
-            ForEach(rewrite.result.change_reasons.indices, id: \.self) {
-                Text("바꾼 이유 · " + rewrite.result.change_reasons[$0]).font(.footnote).foregroundStyle(.secondary)
+            VStack(spacing: Theme.Space.s) {
+                HStack(spacing: Theme.Space.s) {
+                    Button("다시 만들기") { self.rewrite() }
+                    Button(fixing ? "고치기 완료" : "직접 고치기") { fixing.toggle() }
+                }
+                HStack(spacing: Theme.Space.s) {
+                    Button("초안 그대로") { reason = ""; rejecting = true }
+                    Button("초안에 적용") { apply(rewrite) }
+                }
             }
-        } header: {
-            Text("\(alias)에게 맞게").id("result")
-        } footer: {
+            .buttonStyle(.secondary)
+            if !rewrite.result.change_reasons.isEmpty {
+                VStack(alignment: .leading, spacing: Theme.Space.xs) {
+                    ForEach(rewrite.result.change_reasons.indices, id: \.self) {
+                        Text("바꾼 이유 · " + rewrite.result.change_reasons[$0])
+                    }
+                }
+                .font(.footnote).foregroundStyle(Theme.muted)
+            }
             Text("넣기만 해요. 전송은 직접 누릅니다." + usageLine)
+                .font(.footnote).foregroundStyle(Theme.muted)
         }
+    }
+
+    private var resultHeader: some View {
+        Label("\(alias)에게 맞게", systemImage: "sparkles")
+            .font(.headline).foregroundStyle(Theme.ink)
+            .accessibilityAddTraits(.isHeader)
+            .id("result")
     }
 
     // MARK: M4 — 추천하지 않는 경우
 
     @ViewBuilder
     private func kept(_ rewrite: Rewrite) -> some View {
-        Section {
-            Label("초안을 그대로 뒀어요", systemImage: "hand.raised.fill").font(.headline)
-            let violations = rewrite.result.validation.violations
-            if violations.isEmpty && rewrite.result.warnings.isEmpty {
-                Text("사실 보존을 확인하지 못해 추천하지 않았습니다. 초안은 그대로 있어요.")
-            }
-            ForEach(violations.indices, id: \.self) { index in
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(Labels.violation(violations[index].check)).font(.subheadline.bold())
-                    Text(violations[index].detail).font(.footnote).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: Theme.Space.m) {
+            resultHeader
+            VStack(alignment: .leading, spacing: Theme.Space.m) {
+                Label("초안을 그대로 뒀어요", systemImage: "hand.raised.fill")
+                    .font(.headline).foregroundStyle(Theme.warn)
+                let violations = rewrite.result.validation.violations
+                if violations.isEmpty && rewrite.result.warnings.isEmpty {
+                    Text("사실 보존을 확인하지 못해 추천하지 않았습니다. 초안은 그대로 있어요.")
+                        .font(.body).foregroundStyle(Theme.ink)
+                }
+                ForEach(violations.indices, id: \.self) { index in
+                    VStack(alignment: .leading, spacing: Theme.Space.xs) {
+                        Text(Labels.violation(violations[index].check)).font(.subheadline.bold()).foregroundStyle(Theme.ink)
+                        Text(violations[index].detail).font(.footnote).foregroundStyle(Theme.ink2)
+                    }
+                }
+                ForEach(rewrite.result.warnings.indices, id: \.self) {
+                    Text(rewrite.result.warnings[$0]).font(.footnote).foregroundStyle(Theme.ink)
                 }
             }
-            ForEach(rewrite.result.warnings.indices, id: \.self) { Text(rewrite.result.warnings[$0]).font(.footnote) }
-            HStack {
+            .card(fill: Theme.warnSoft)
+            HStack(spacing: Theme.Space.s) {
                 Button("닫기") { result = nil }
-                Spacer()
                 Button("다시 만들기") { self.rewrite() }
             }
-            .buttonStyle(.borderless)
-        } header: {
-            Text("\(alias)에게 맞게").id("result")
-        } footer: {
+            .buttonStyle(.secondary)
             Text("입력한 초안은 바뀌지 않았습니다." + usageLine)
+                .font(.footnote).foregroundStyle(Theme.muted)
         }
     }
 
@@ -265,6 +363,72 @@ struct ComposeView: View {
             try await sendFeedback(rewrite, accepted: false, reason: why.isEmpty ? nil : why)
             result = nil
         }
+    }
+}
+
+// MARK: - 이 화면만 쓰는 모양
+
+/// Theme에 없는 치수 (입력 칸 최소 높이).
+private enum Metric {
+    static let draftMinHeight: CGFloat = 120
+    static let fixMinHeight: CGFloat = 96
+}
+
+/// 최근 상대 칩. 44pt 이상, 고른 칩은 강조색 면 + 체크 기호로 구분한다.
+private struct ChipStyle: ButtonStyle {
+    let selected: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: Theme.Space.xs) {
+            if selected { Image(systemName: "checkmark").font(.footnote.weight(.bold)) }
+            configuration.label.lineLimit(1)
+        }
+        .font(.subheadline.weight(.semibold))
+        .foregroundStyle(selected ? Theme.accentInk : Theme.ink2)
+        .padding(.horizontal, Theme.Space.l)
+        .frame(minHeight: Theme.minTouch)
+        .background(selected ? Theme.accent : Theme.surface2, in: Capsule())
+        .opacity(configuration.isPressed ? 0.8 : 1)
+        .contentShape(Capsule())
+    }
+}
+
+/// 꼬리표를 왼쪽부터 채우고 넘치면 다음 줄로 내린다.
+private struct FlowLayout: Layout {
+    var spacing: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? .infinity
+        let rows = arrange(subviews, width: width)
+        let used = rows.frames.map(\.maxX).max() ?? 0
+        return CGSize(width: proposal.width ?? used, height: rows.height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let frames = arrange(subviews, width: bounds.width).frames
+        for (subview, frame) in zip(subviews, frames) {
+            subview.place(at: CGPoint(x: bounds.minX + frame.minX, y: bounds.minY + frame.minY),
+                          proposal: ProposedViewSize(frame.size))
+        }
+    }
+
+    private func arrange(_ subviews: Subviews, width: CGFloat) -> (frames: [CGRect], height: CGFloat) {
+        var frames: [CGRect] = []
+        var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0
+        for subview in subviews {
+            let ideal = subview.sizeThatFits(.unspecified)
+            let size = CGSize(width: min(ideal.width, width), height:
+                ideal.width > width ? subview.sizeThatFits(ProposedViewSize(width: width, height: nil)).height : ideal.height)
+            if x > 0 && x + size.width > width {
+                x = 0
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            frames.append(CGRect(origin: CGPoint(x: x, y: y), size: size))
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
+        return (frames, y + rowHeight)
     }
 }
 

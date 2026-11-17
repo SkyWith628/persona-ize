@@ -22,6 +22,8 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>PersonaAppGroup</key>
 	<string>$(PERSONA_APP_GROUP)</string>
+	<key>PersonaDefaultServerHost</key>
+	<string>$(PERSONA_DEFAULT_SERVER_HOST)</string>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UISupportedInterfaceOrientations</key>

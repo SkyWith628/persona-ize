@@ -62,6 +62,84 @@ struct ImportJob: Decodable {
     var graphActive: Bool { graph_status == "pending" || graph_status == "running" }
 }
 
+/// 로그인에 쓸 서버 주소를 정한다: 사용자가 적은 값이 먼저, 비어 있으면 빌드에 든 기본 주소.
+enum ServerChoice {
+    /// 빌드 설정(`PERSONA_DEFAULT_SERVER_HOST`)이 Info.plist에 남긴 기본 서버. 없으면 nil.
+    static var bundled: String? {
+        defaultServer(host: Bundle.main.object(forInfoDictionaryKey: "PersonaDefaultServerHost") as? String)
+    }
+
+    /// 호스트 이름을 HTTPS 주소로. 비어 있으면 기본 주소가 없는 빌드다.
+    static func defaultServer(host: String?) -> String? {
+        let host = (host ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return host.isEmpty ? nil : "https://" + host
+    }
+
+    /// 입력값이 있으면 그 값, 비어 있으면 기본 주소, 둘 다 없으면 nil.
+    static func resolve(input: String, fallback: String?) -> String? {
+        let input = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        return input.isEmpty ? fallback : input
+    }
+}
+
+/// 로그인을 막는 계정 상태의 오류 code (`POST /v1/auth/login` → 403).
+/// 서버는 비밀번호가 맞은 뒤에만 이 응답을 주고, 세션은 열지 않는다.
+enum AccountState: String {
+    case pending = "account_pending"
+    case suspended = "account_suspended"
+
+    init?(code: String?) {
+        guard let code, let state = AccountState(rawValue: code) else { return nil }
+        self = state
+    }
+
+    /// 오류 응답 `{code, message}`에서 계정 상태를 읽는다. 다른 code나 다른 모양이면 nil.
+    static func from(_ data: Data) -> AccountState? {
+        struct Failure: Decodable { let code: String? }
+        return AccountState(code: (try? JSONDecoder().decode(Failure.self, from: data))?.code)
+    }
+
+    /// 로그인 화면에 보일 안내.
+    var notice: String {
+        switch self {
+        case .pending: return "아직 승인 전이에요. 관리자가 승인하면 로그인할 수 있어요."
+        case .suspended: return "정지된 계정이에요. 관리자에게 문의해 주세요."
+        }
+    }
+}
+
+/// 계정 상태로 막힌 요청. 문구는 서버 메시지 그대로이고, 로그인 화면만 `state.notice`로 바꿔 보인다.
+struct AccountStateError: LocalizedError {
+    let state: AccountState
+    let message: String
+    let status: Int
+    var errorDescription: String? { message }
+}
+
+/// 가입·로그인 응답을 읽은 결과 (서버 `routes/auth.py`).
+/// - 로그인 200·가입 201: `AuthOut` — 세션 쿠키와 `csrf_token`.
+/// - 승인제 가입 202: `{"status": "pending", "username", "email"}` — 쿠키도 CSRF 토큰도 없다.
+enum SignInOutcome: Equatable {
+    /// 세션이 열렸다. 쓰기 요청에 실을 CSRF 토큰.
+    case session(csrf: String)
+    /// 계정은 만들어졌지만 로그인되지 않았다. 관리자가 승인한 뒤 로그인한다.
+    case pendingApproval
+
+    /// 승인제 서버에 가입한 직후 로그인 화면에 보일 안내.
+    static let pendingNotice = "가입됐어요. 관리자가 승인하면 로그인할 수 있어요."
+
+    /// 2xx 응답을 상태 코드와 본문으로 판단한다. 202는 본문과 무관하게 승인 대기다(세션이 없다).
+    /// 그 밖에는 CSRF 토큰이 있어야 세션이고, 토큰 없이 `status: pending`이면 승인 대기로 본다.
+    static func read(status: Int, body: Data) throws -> SignInOutcome {
+        struct Body: Decodable { let csrf_token: String?; let status: String? }
+        let parsed = try? JSONDecoder().decode(Body.self, from: body)
+        if status == 202 { return .pendingApproval }
+        if let csrf = parsed?.csrf_token, !csrf.isEmpty { return .session(csrf: csrf) }
+        if parsed?.status == "pending" { return .pendingApproval }
+        throw ServiceError(message: "서버 응답을 확인하세요.", status: status)
+    }
+}
+
 @MainActor
 final class API {
     private struct Empty: Encodable {}
@@ -76,8 +154,9 @@ final class API {
 
     // MARK: 전송
 
-    private func send<Body: Encodable>(_ method: String, _ path: String, query: [URLQueryItem] = [],
-                                       body: Body?, key: UUID? = nil) async throws -> Data {
+    /// 요청을 보내고 2xx 응답의 본문과 상태 코드를 돌려준다. 그 밖의 응답은 `failure`로 바꿔 던진다.
+    private func exchange<Body: Encodable>(_ method: String, _ path: String, query: [URLQueryItem] = [],
+                                           body: Body?, key: UUID? = nil) async throws -> (data: Data, status: Int) {
         var url = base.appendingPathComponent(path)
         if !query.isEmpty, var parts = URLComponents(url: url, resolvingAgainstBaseURL: false) {
             parts.queryItems = query
@@ -93,17 +172,30 @@ final class API {
         if let key { request.setValue(key.uuidString, forHTTPHeaderField: "Idempotency-Key") }
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw ServiceError(message: "서버 응답을 확인하세요.") }
-        guard (200..<300).contains(http.statusCode) else {
-            throw ServiceError(message: Self.failureMessage(data, status: http.statusCode), status: http.statusCode)
-        }
-        return data
+        guard (200..<300).contains(http.statusCode) else { throw Self.failure(data, status: http.statusCode) }
+        return (data, http.statusCode)
+    }
+
+    private func send<Body: Encodable>(_ method: String, _ path: String, query: [URLQueryItem] = [],
+                                       body: Body?, key: UUID? = nil) async throws -> Data {
+        try await exchange(method, path, query: query, body: body, key: key).data
     }
 
     private func send(_ method: String, _ path: String, query: [URLQueryItem] = []) async throws -> Data {
         try await send(method, path, query: query, body: Empty?.none)
     }
 
-    static func failureMessage(_ data: Data, status: Int) -> String { ServiceError.message(from: data, status: status) }
+    nonisolated static func failureMessage(_ data: Data, status: Int) -> String { ServiceError.message(from: data, status: status) }
+
+    /// 2xx가 아닌 응답을 오류로 바꾼다. 403 `account_pending`·`account_suspended`만 `AccountStateError`,
+    /// 나머지(401·403 forbidden/invalid_invite·409·422·429 …)는 서버 문구를 실은 `ServiceError`.
+    nonisolated static func failure(_ data: Data, status: Int) -> Error {
+        let message = failureMessage(data, status: status)
+        if status == 403, let state = AccountState.from(data) {
+            return AccountStateError(state: state, message: message, status: status)
+        }
+        return ServiceError(message: message, status: status)
+    }
 
     /// 키보드 확장에 넘길 연결 값: 서버 주소, 세션 쿠키 값, CSRF 토큰. 로그인 전이면 nil.
     func keyboardCredentials() -> (server: String, cookie: String, csrf: String)? {
@@ -116,11 +208,14 @@ final class API {
 
     // MARK: 계정
 
-    func signIn(name: String, password: String, register: Bool) async throws {
-        struct Auth: Decodable { let csrf_token: String }
-        let data = try await send("POST", register ? "v1/auth/register" : "v1/auth/login",
-                                  body: ["username": name, "password": password])
-        csrf = (try decode(data) as Auth).csrf_token
+    /// 가입(`register`) 또는 로그인. 세션이 열리면 CSRF 토큰을 기억한다.
+    /// 승인제 서버의 가입(202)은 `.pendingApproval` — 세션이 없으니 다른 요청을 보내면 안 된다.
+    func signIn(name: String, password: String, register: Bool) async throws -> SignInOutcome {
+        let response = try await exchange("POST", register ? "v1/auth/register" : "v1/auth/login",
+                                          body: ["username": name, "password": password])
+        let outcome = try SignInOutcome.read(status: response.status, body: response.data)
+        if case .session(let token) = outcome { csrf = token }
+        return outcome
     }
 
     func logout() async throws { _ = try await send("POST", "v1/auth/logout") }

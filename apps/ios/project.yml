@@ -10,6 +10,8 @@ settings:
     CURRENT_PROJECT_VERSION: "1"
     PERSONA_BUNDLE_ID: com.skywith628.personaize
     PERSONA_APP_GROUP: group.$(PERSONA_BUNDLE_ID)
+    # 기본 서버(호스트만 — 빌드 설정 값의 // 는 주석으로 읽힐 수 있다). 비우면 로그인 화면이 주소를 묻는다.
+    PERSONA_DEFAULT_SERVER_HOST: 43-203-31-7.sslip.io
 targets:
   PersonaIze:
     type: application
@@ -27,6 +29,7 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         CFBundleDisplayName: Persona_ize
         PersonaAppGroup: $(PERSONA_APP_GROUP)
+        PersonaDefaultServerHost: $(PERSONA_DEFAULT_SERVER_HOST)
         UILaunchScreen: {}
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
     entitlements:
