@@ -6,6 +6,7 @@ D 조건에서 그래프 사실은 첨삭 문장을 거의 바꾸지 못했다 �
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, date, datetime
 
 import pytest
@@ -96,6 +97,59 @@ def test_address_term_follows_the_latest_one_and_names_the_previous() -> None:
         RelationshipFact("no-time", "시각 없음", None, "존댓말", "선배님", "target_higher"),
     ]
     assert graph_persona_signals(junk, PersonaSettings()) == []
+
+
+def _seen(fact: RelationshipFact, day: int, hour: int) -> RelationshipFact:
+    """근거 메시지 발화 시각(observed_at)을 붙인 사실."""
+    return replace(fact, observed_at=_t(day, hour))
+
+
+def test_order_and_dates_follow_the_evidence_message_time_not_the_model_valid_at() -> None:
+    # 실측: 모델이 한국 시간을 UTC로 적어 valid_at이 근거 메시지보다 9시간 늦은 사실이 섞인다.
+    # 10/16 23:30 KST(=14:30Z)에 반말, 10/17 08:00 KST(=10/16 23:00Z)에 존댓말·'파트장님'으로 바뀌었다.
+    # 반말 사실의 valid_at만 9시간 밀려(23:30Z) 존댓말 사실(23:00Z)보다 뒤에 온다.
+    casual = replace(
+        _fact("late", 16, "반말", "서연아"),
+        valid_at=datetime(2026, 10, 16, 23, 30, tzinfo=UTC),
+        observed_at=datetime(2026, 10, 16, 14, 30, tzinfo=UTC),
+    )
+    polite = _seen(_fact("ok", 16, "존댓말", "파트장님", "target_higher", hour=23), 16, 23)
+    signals = graph_persona_signals([casual, polite], PersonaSettings(formality=1, address_term="서연아"))
+    assert [(s.field, s.value, s.since) for s in signals] == [
+        ("formality", 4, date(2026, 10, 17)),
+        ("address_term", "파트장님", date(2026, 10, 17)),
+    ]
+    assert signals[0].reason == "그래프: 10/17부터 존댓말 (그 전에는 반말), 상대가 윗사람 — 관계 사실 1건"
+
+    # 날짜: 10/20 22:00 KST(=13:00Z)의 메시지인데 valid_at은 22:00Z(= 10/21 07:00 KST)로 적혔다
+    shifted = _seen(_fact("s", 20, term="선배님", hour=22), 20, 13)
+    (signal,) = graph_persona_signals([shifted], PersonaSettings())
+    assert signal.since == date(2026, 10, 20) and signal.reason.startswith("그래프: 10/20부터")
+
+
+def test_facts_without_an_evidence_time_fall_back_to_valid_at() -> None:
+    # observed_at이 없는 사실(근거 에피소드를 못 찾음)은 예전처럼 valid_at으로 줄을 선다 — 섞여 있어도 된다
+    assert all(f.observed_at is None for f in PROMOTED)
+    mixed = [PROMOTED[0], _seen(replace(PROMOTED[1], valid_at=None), 17, 1), PROMOTED[2]]
+    signals = graph_persona_signals(mixed, default_persona("colleague"))
+    assert [(s.field, s.value, s.since) for s in signals] == [
+        ("formality", 4, date(2026, 10, 17)),
+        ("address_term", "파트장님", date(2026, 10, 21)),
+    ]
+
+
+def test_as_of_cuts_on_the_evidence_message_time() -> None:
+    # 근거 메시지는 10/17 20:00Z, valid_at은 9시간 밀린 10/18 05:00Z
+    fact = _seen(_fact("f", 18, "존댓말", hour=5), 17, 20)
+    base = PersonaSettings(formality=1)
+    # 10/18 00:00Z 시점: 메시지는 이미 있었다 (valid_at 기준이면 빠졌을 사실)
+    assert [s.value for s in graph_persona_signals([fact], base, as_of=_t(18, 0))] == [3]
+    # 10/17 12:00Z 시점: 아직 없던 메시지. 경계는 '이전'(<)이다
+    assert graph_persona_signals([fact], base, as_of=_t(17, 12)) == []
+    assert graph_persona_signals([fact], base, as_of=_t(17, 20)) == []
+    # 반대로 valid_at이 as_of보다 앞이어도 근거 메시지가 뒤면 뺀다
+    early_stamp = _seen(_fact("g", 10, "존댓말"), 19, 1)
+    assert graph_persona_signals([early_stamp], base, as_of=_t(18, 0)) == []
 
 
 @pytest.fixture

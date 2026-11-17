@@ -67,7 +67,13 @@ class GraphNeighborhood:
 
 @dataclass(frozen=True)
 class RelationshipFact:
-    """source → target 방향의 Relationship 사실 하나와 추출기가 채운 속성 (`schema.Relationship`)."""
+    """source → target 방향의 Relationship 사실 하나와 추출기가 채운 속성 (`schema.Relationship`).
+
+    시각이 둘이다. `valid_at`은 모델이 정한 값이라 틀릴 수 있다 — 로컬 그래프 105건 중 13건이 근거 메시지
+    시각보다 정확히 9시간 늦었다(한국 시간을 UTC로 적음, docs/knowledge-graph.md 10절). `observed_at`은
+    근거 에피소드의 발화 시각(수집 코드가 넣은 값) 중 가장 이른 것이라 믿을 수 있다. 순서·날짜를 따질 때는
+    `observed_at`을 먼저 쓴다.
+    """
 
     uuid: str
     fact: str
@@ -75,6 +81,7 @@ class RelationshipFact:
     speech_style: str | None = None  # 반말 | 존댓말 | 혼용
     address_term: str | None = None  # source가 target을 직접 부른 말
     hierarchy: str | None = None  # target_higher | target_lower | equal
+    observed_at: datetime | None = None  # 근거 메시지 중 가장 이른 발화 시각. 근거를 못 찾으면 None
 
 
 class GraphStore(Protocol):
@@ -116,7 +123,8 @@ class GraphStore(Protocol):
     ) -> list[RelationshipFact]:
         """source → target 방향의 Relationship 사실 전부 (무효화된 것 포함, 순서 없음).
 
-        페르소나 갱신 제안(`persona_signals`)이 말투·호칭의 시간 순 변화를 읽는 데 쓴다.
+        페르소나 갱신 제안(`persona_signals`)이 말투·호칭의 시간 순 변화를 읽는 데 쓴다. 사실마다
+        `observed_at`(근거 에피소드 중 가장 이른 발화 시각)을 채운다 — 근거 에피소드가 없으면 None.
         """
         ...
 
@@ -285,8 +293,11 @@ class GraphitiStore:
         result = await self._g.driver.execute_query(
             "MATCH (a:Entity {uuid: $source, group_id: $group_id})"
             "-[r:RELATES_TO {name: 'Relationship'}]->(b:Entity {uuid: $target, group_id: $group_id}) "
+            # 근거 에피소드의 발화 시각 중 가장 이른 것. 근거가 없는 사실도 빠지지 않게 OPTIONAL MATCH
+            "OPTIONAL MATCH (e:Episodic {group_id: $group_id}) WHERE e.uuid IN r.episodes "
+            "WITH r, min(e.valid_at) AS observed_at "
             "RETURN r.uuid AS uuid, r.fact AS fact, r.valid_at AS valid_at, r.speech_style AS speech_style, "
-            "r.address_term AS address_term, r.hierarchy AS hierarchy",
+            "r.address_term AS address_term, r.hierarchy AS hierarchy, observed_at",
             source=source_uuid,
             target=target_uuid,
             group_id=group_id,
@@ -300,6 +311,7 @@ class GraphitiStore:
                 speech_style=_text_or_none(r["speech_style"]),
                 address_term=_text_or_none(r["address_term"]),
                 hierarchy=_text_or_none(r["hierarchy"]),
+                observed_at=_as_datetime(r["observed_at"]),
             )
             for r in records
         ]

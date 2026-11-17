@@ -18,7 +18,12 @@
 
 믿을 만한가
 - **무효화 표시(invalid_at)는 보지 않는다.** 로컬 그래프에서 무효화의 절반 가까이가 같은 대화 안에서 찍힌
-  추출 부산물이었다 (`retriever.py` 설명). 시각(valid_at) 순서만 쓴다.
+  추출 부산물이었다 (`retriever.py` 설명). 시각 순서만 쓴다.
+- **시각은 근거 메시지의 발화 시각(observed_at)이다. 사실의 valid_at이 아니다.** valid_at은 모델이 정한
+  값이고, 로컬 그래프 105건 중 13건이 근거 메시지 시각보다 정확히 9시간 늦었다(한국 시간을 UTC로 적음,
+  docs/knowledge-graph.md 10절). 그대로 쓰면 같은 날 사실의 순서가 뒤집히거나 "MM/DD부터"가 하루 밀린다.
+  근거 에피소드의 시각은 수집 코드가 넣은 값이라 믿을 수 있다 — `trigger.py`·`retriever.py`의 관계 상태
+  슬롯과 같은 기준이다. 저장소가 observed_at을 주지 못한 사실(근거 에피소드 없음)만 valid_at으로 물러난다.
 - 속성은 모델이 추출한 값이라 틀릴 수 있고, 사실 한 건만으로도 제안한다(36건 규모에서는 호칭이 한 번만
   나온다). 그래서 **제안일 뿐**이다 — 저장하지 않으며, 근거에 날짜와 건수를 적어 사용자가 판단하게 한다.
 """
@@ -46,6 +51,11 @@ def _day(moment: datetime) -> str:
     return local_time(moment).strftime("%m/%d")
 
 
+def _when(fact: RelationshipFact) -> datetime | None:
+    """이 사실이 확인된 시각: 근거 메시지 발화 시각, 없을 때만 모델이 적은 valid_at (모듈 설명 참고)."""
+    return fact.observed_at if fact.observed_at is not None else fact.valid_at
+
+
 def _current_run(
     facts: list[RelationshipFact], value_of: str
 ) -> tuple[RelationshipFact, RelationshipFact | None, int] | None:
@@ -70,10 +80,10 @@ def graph_persona_signals(
     facts: list[RelationshipFact], base: PersonaSettings, as_of: datetime | None = None
 ) -> list[Signal]:
     """나 → 상대 관계 사실에서 읽은 갱신 제안. `base`(지금 설정)와 같은 항목은 내지 않는다."""
-    timeline = sorted(
-        (f for f in facts if f.valid_at is not None and (as_of is None or f.valid_at < as_of)),
-        key=lambda f: (f.valid_at, f.uuid),
-    )
+    timed = [(when, f) for f in facts if (when := _when(f)) is not None and (as_of is None or when < as_of)]
+    timed.sort(key=lambda pair: (pair[0], pair[1].uuid))
+    timeline = [f for _, f in timed]
+    at = {f.uuid: when for when, f in timed}  # 아래에서 "언제부터"를 적을 때 쓰는 시각
     signals: list[Signal] = []
 
     styled = [f for f in timeline if f.speech_style in (POLITE, CASUAL)]
@@ -89,14 +99,14 @@ def graph_persona_signals(
         else:
             proposed = FORMALITY_CASUAL if base.formality >= FORMALITY_POLITE else base.formality
         if proposed != base.formality:
-            reason = f"그래프: {_day(start.valid_at)}부터 {style}"  # type: ignore[arg-type]
+            reason = f"그래프: {_day(at[start.uuid])}부터 {style}"
             if previous is not None:
                 reason += f" (그 전에는 {previous.speech_style})"
             if style == POLITE and senior:
                 reason += ", 상대가 윗사람"
             reason += f" — 관계 사실 {count}건"
             signals.append(
-                Signal("formality", proposed, reason, source="graph", since=local_time(start.valid_at).date())  # type: ignore[arg-type]
+                Signal("formality", proposed, reason, source="graph", since=local_time(at[start.uuid]).date())
             )
 
     named = [
@@ -111,11 +121,11 @@ def graph_persona_signals(
         current = (base.address_term or "").strip()
         # 지금 호칭이 같거나 더 구체적이면('지현 팀장님' ⊇ '팀장님') 건드리지 않는다
         if term and term not in current:
-            reason = f"그래프: {_day(start.valid_at)}부터 '{term}'(이)라고 부름"  # type: ignore[arg-type]
+            reason = f"그래프: {_day(at[start.uuid])}부터 '{term}'(이)라고 부름"
             if previous is not None:
                 reason += f" (그 전에는 '{previous.address_term}')"
             reason += f" — 관계 사실 {count}건"
             signals.append(
-                Signal("address_term", term, reason, source="graph", since=local_time(start.valid_at).date())  # type: ignore[arg-type]
+                Signal("address_term", term, reason, source="graph", since=local_time(at[start.uuid]).date())
             )
     return signals
