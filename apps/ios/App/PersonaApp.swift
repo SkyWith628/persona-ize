@@ -69,17 +69,31 @@ final class Runner: ObservableObject {
 }
 
 /// 처리 중 표시와 결과·오류 안내를 화면 아래에 고정한다. 긴 폼에서도 스크롤 없이 보인다.
+/// 처리 중은 중립 면, 안내·오류는 강조색 옅은 면 — 색만이 아니라 기호와 문구로도 구분한다.
 private struct StatusBar: ViewModifier {
     @ObservedObject var run: Runner
 
     func body(content: Content) -> some View {
-        content.disabled(run.busy).safeAreaInset(edge: .bottom) {
+        content.disabled(run.busy).safeAreaInset(edge: .bottom, spacing: 0) {
             if run.busy || !run.notice.isEmpty {
-                HStack(spacing: 8) {
-                    if run.busy { ProgressView() }
-                    Text(run.busy ? "처리 중" : run.notice).font(.footnote)
+                HStack(alignment: .firstTextBaseline, spacing: Theme.Space.s) {
+                    if run.busy {
+                        ProgressView()
+                    } else {
+                        Image(systemName: "info.circle.fill").foregroundStyle(Theme.accent)
+                    }
+                    Text(run.busy ? "처리 중" : run.notice)
+                        .font(.footnote.weight(.medium))
+                        .foregroundStyle(run.busy ? Theme.ink2 : Theme.ink)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                .frame(maxWidth: .infinity).padding(12).background(.regularMaterial)
+                .frame(maxWidth: .infinity, minHeight: Theme.minTouch, alignment: run.busy ? .center : .leading)
+                .padding(.horizontal, Theme.Space.l).padding(.vertical, Theme.Space.s)
+                .background(run.busy ? Theme.surface2 : Theme.accentSoft,
+                            in: RoundedRectangle(cornerRadius: Theme.Radius.m, style: .continuous))
+                .padding(.horizontal, Theme.Space.l).padding(.vertical, Theme.Space.s)
+                .background(Theme.bg)
                 .accessibilityElement(children: .combine)
             }
         }
@@ -125,16 +139,19 @@ private struct Root: View {
     @EnvironmentObject private var session: Session
 
     var body: some View {
-        if session.api == nil {
-            NavigationStack { LoginView() }
-        } else {
-            TabView {
-                NavigationStack { ComposeView() }.tabItem { Label("작성", systemImage: "square.and.pencil") }
-                NavigationStack { ContactsView() }.tabItem { Label("상대", systemImage: "person.2") }
-                NavigationStack { HistoryView() }.tabItem { Label("이력", systemImage: "clock") }
-                NavigationStack { AccountView() }.tabItem { Label("계정", systemImage: "gearshape") }
+        Group {
+            if session.api == nil {
+                NavigationStack { LoginView() }
+            } else {
+                TabView {
+                    NavigationStack { ComposeView() }.tabItem { Label("작성", systemImage: "square.and.pencil") }
+                    NavigationStack { ContactsView() }.tabItem { Label("상대", systemImage: "person.2") }
+                    NavigationStack { HistoryView() }.tabItem { Label("이력", systemImage: "clock") }
+                    NavigationStack { AccountView() }.tabItem { Label("계정", systemImage: "gearshape") }
+                }
             }
         }
+        .tint(Theme.accent)
     }
 }
 
@@ -144,36 +161,177 @@ private struct LoginView: View {
     @AppStorage("server") private var server = ""
     @AppStorage("username") private var username = ""
     @State private var password = ""
+    /// 예전에 적어 둔 주소가 있으면 펼쳐서 보여 준다 — 기본 주소 대신 그 값으로 연결되기 때문이다.
+    @State private var showServer = !(UserDefaults.standard.string(forKey: "server") ?? "").isEmpty
+    /// 가입은 됐지만 승인을 기다리는 아이디. 같은 아이디로 다시 가입하지 않게 가입 버튼을 감춘다.
+    @State private var pendingName = ""
 
-    private var incomplete: Bool { server.isEmpty || username.isEmpty || password.isEmpty }
+    private let defaultServer = ServerChoice.bundled
+
+    /// 지금 연결할 주소: 입력값이 먼저, 비어 있으면 기본 주소.
+    private var address: String? { ServerChoice.resolve(input: server, fallback: defaultServer) }
+    private var name: String { username.trimmingCharacters(in: .whitespaces) }
+    private var incomplete: Bool { address == nil || name.isEmpty || password.isEmpty }
+    private var awaitingApproval: Bool { !pendingName.isEmpty && pendingName == name }
 
     var body: some View {
-        Form {
-            Section {
-                TextField("HTTPS 서버 주소", text: $server).keyboardType(.URL)
-                    .textInputAutocapitalization(.never).autocorrectionDisabled()
-                TextField("아이디 (영문·숫자 3~32자)", text: $username).textContentType(.username)
-                    .textInputAutocapitalization(.never).autocorrectionDisabled()
-                SecureField("비밀번호", text: $password).textContentType(.password)
-                Button("로그인") { sign(register: false) }.disabled(incomplete)
-                Button("새 계정으로 가입") { sign(register: true) }.disabled(incomplete)
-            } header: {
-                Text("서버 로그인")
-            } footer: {
+        ScrollView {
+            VStack(alignment: .leading, spacing: Theme.Space.xl) {
+                intro
+                fields
+                if defaultServer != nil { serverSettings }
                 Text("서버 주소와 아이디만 기기에 기억합니다. 비밀번호와 로그인 상태는 앱을 종료하면 사라집니다.")
+                    .font(.footnote).foregroundStyle(Theme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, Theme.Space.xs)
             }
+            .padding(.horizontal, Theme.Space.l)
+            .padding(.top, Theme.Space.xl).padding(.bottom, Theme.Space.l)
+        }
+        .scrollDismissesKeyboard(.interactively)
+        .background(Theme.bg.ignoresSafeArea())
+        // 주 행동은 엄지가 닿는 아래쪽에. 키보드가 올라오면 함께 올라와 가려지지 않는다.
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            VStack(spacing: Theme.Space.s) {
+                Button("로그인") { sign(register: false) }.buttonStyle(.primary)
+                if !awaitingApproval {
+                    Button("새 계정으로 가입") { sign(register: true) }.buttonStyle(.secondary)
+                }
+            }
+            .disabled(incomplete)
+            .padding(.horizontal, Theme.Space.l).padding(.vertical, Theme.Space.m)
+            .background(Theme.bg)
         }
         .status(run)
         .navigationTitle("Persona_ize")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    /// 첫인상: 큰 제목 하나와 한 줄 소개.
+    private var intro: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.m) {
+            Image(systemName: "text.bubble.fill")
+                .font(.title2)
+                .foregroundStyle(Theme.accent)
+                .frame(width: Theme.controlHeight, height: Theme.controlHeight)
+                .background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: Theme.Radius.l, style: .continuous))
+                .accessibilityHidden(true)
+            Text("사실은 그대로,\n말투만 상대에 맞게")
+                .font(.largeTitle.bold()).foregroundStyle(Theme.ink)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityAddTraits(.isHeader)
+            Text("보낼 글을 받는 사람에 맞는 말투로 다듬어 드립니다.")
+                .font(.body).foregroundStyle(Theme.ink2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, Theme.Space.xs)
+    }
+
+    /// 입력칸: 면(surface) 하나 위에 아이디·비밀번호. 줄 사이는 옅은 선으로만 나눈다.
+    /// 기본 주소가 없는 빌드에서는 서버 주소 줄이 맨 위에 함께 놓인다.
+    private var fields: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.s) {
+            Text(defaultServer == nil ? "서버 로그인" : "로그인")
+                .font(.footnote.weight(.semibold)).foregroundStyle(Theme.muted)
+                .padding(.horizontal, Theme.Space.xs)
+                .accessibilityAddTraits(.isHeader)
+            VStack(spacing: 0) {
+                if defaultServer == nil {
+                    serverField
+                    separator
+                }
+                row("person") {
+                    TextField("아이디 (영문·숫자 3~32자)", text: $username).textContentType(.username)
+                        .textInputAutocapitalization(.never).autocorrectionDisabled()
+                }
+                separator
+                row("lock") {
+                    SecureField("비밀번호", text: $password).textContentType(.password)
+                }
+            }
+            .card(padding: 0)
+        }
+    }
+
+    private var serverField: some View {
+        row("link") {
+            TextField("HTTPS 서버 주소", text: $server).keyboardType(.URL)
+                .textInputAutocapitalization(.never).autocorrectionDisabled()
+        }
+    }
+
+    /// 서버 설정: 평소에는 접어 둔다. 펼치면 주소 입력칸과 지금 쓰는 주소가 나온다.
+    private var serverSettings: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.s) {
+            Button {
+                withAnimation { showServer.toggle() }
+            } label: {
+                HStack(spacing: Theme.Space.s) {
+                    Text("서버 설정")
+                    Image(systemName: showServer ? "chevron.down" : "chevron.right").accessibilityHidden(true)
+                    Spacer()
+                }
+                .font(.footnote.weight(.semibold)).foregroundStyle(Theme.muted)
+                .frame(minHeight: Theme.minTouch)
+                .padding(.horizontal, Theme.Space.xs)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityValue(showServer ? "펼침" : "접힘")
+            if showServer {
+                serverField.card(padding: 0)
+                Group {
+                    Text("비워 두면 기본 주소로 연결합니다.")
+                    if let address { Text("지금 쓰는 주소: \(address)") }
+                }
+                .font(.footnote).foregroundStyle(Theme.muted)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, Theme.Space.xs)
+                if address != defaultServer {
+                    Button("기본 주소로 되돌리기") { server = "" }.buttonStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private var separator: some View {
+        Rectangle().fill(Theme.line).frame(height: 1).padding(.leading, Theme.Space.l)
+    }
+
+    private func row<Field: View>(_ systemImage: String, @ViewBuilder field: () -> Field) -> some View {
+        HStack(spacing: Theme.Space.m) {
+            Image(systemName: systemImage)
+                .font(.body).foregroundStyle(Theme.muted)
+                .frame(width: Theme.Space.xl)
+                .accessibilityHidden(true)
+            field().font(.body).foregroundStyle(Theme.ink)
+        }
+        .padding(.horizontal, Theme.Space.l)
+        .frame(minHeight: Theme.controlHeight)
     }
 
     private func sign(register: Bool) {
+        let name = name
         run {
-            let client = try API(server: server)
-            let name = username.trimmingCharacters(in: .whitespaces)
-            try await client.signIn(name: name, password: password, register: register)
-            password = ""
-            try await session.start(client, username: name)
+            guard let address else { throw ServiceError(message: "HTTPS 서버 주소를 확인하세요.") }
+            let client = try API(server: address)
+            do {
+                switch try await client.signIn(name: name, password: password, register: register) {
+                case .session:
+                    password = ""
+                    try await session.start(client, username: name)
+                    pendingName = ""
+                case .pendingApproval:
+                    // 승인제 가입(202): 계정만 만들어졌고 세션은 없다. 상대 목록을 읽지 않고 로그인으로 유도한다.
+                    password = ""
+                    pendingName = name
+                    run.notice = SignInOutcome.pendingNotice
+                }
+            } catch let error as AccountStateError {
+                // 로그인 403: 서버가 세션을 열지 않았다. 승인 대기면 같은 아이디로 다시 가입하지 않게 한다.
+                if error.state == .pending { pendingName = name }
+                throw ServiceError(message: error.state.notice, status: error.status)
+            }
         }
     }
 }

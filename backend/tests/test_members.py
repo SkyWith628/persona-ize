@@ -466,6 +466,86 @@ def test_login_by_email_shares_the_throttle_and_does_not_reveal_existence() -> N
     assert attempts("other@example.com", "/v1/auth/token") == expected
 
 
+def _wrong(client: TestClient, identifier: str, path: str = "/v1/auth/login") -> tuple[int, str]:
+    return _code(client.post(path, json={"username": identifier, "password": "wrong-pass-1"}))
+
+
+def _email_account(**overrides: Any) -> tuple[TestClient, str]:
+    """이메일로 가입한 계정 하나(real@example.com)와 만들어진 아이디. 쿠키는 비운다."""
+    client = _client(**overrides)
+    username = client.post("/v1/auth/signup", json={"email": "real@example.com", "password": PW}).json()[
+        "username"
+    ]
+    client.cookies.clear()
+    return client, username
+
+
+def test_login_failures_count_per_account_across_username_and_email() -> None:
+    """아이디로 틀리든 이메일로 틀리든 같은 계정의 실패다 (예전에는 키가 둘이라 한도가 두 배였다)."""
+    client, username = _email_account(auth_max_failures=3)
+    unauthorized, locked = (401, "unauthorized"), (429, "too_many_attempts")
+    assert [_wrong(client, username), _wrong(client, "real@example.com"), _wrong(client, username)] == [
+        unauthorized
+    ] * 3
+    # 한도(3)에 닿았다 — 어느 식별자로든, 토큰 발급으로든, 맞는 비밀번호로도 잠겨 있다
+    assert _wrong(client, "real@example.com") == locked
+    assert _wrong(client, username, "/v1/auth/token") == locked
+    for identifier in (username, "real@example.com"):
+        ok = client.post("/v1/auth/login", json={"username": identifier, "password": PW})
+        assert _code(ok) == locked and int(ok.headers["retry-after"]) >= 1
+
+
+def test_login_success_clears_failures_recorded_under_the_other_identifier() -> None:
+    for wrong_as, right_as in (("username", "email"), ("email", "username")):
+        client, username = _email_account(auth_max_failures=3)
+        ids = {"username": username, "email": "real@example.com"}
+        assert [_wrong(client, ids[wrong_as]) for _ in range(2)] == [(401, "unauthorized")] * 2
+        ok = client.post("/v1/auth/login", json={"username": ids[right_as], "password": PW})
+        assert ok.status_code == 200, (wrong_as, right_as, ok.text)
+        client.cookies.clear()
+        # 기록이 지워졌으니 다시 한도만큼 틀릴 수 있다 (남아 있었다면 두 번째에서 429)
+        again = [_wrong(client, ids[wrong_as]) for _ in range(4)]
+        assert again == [(401, "unauthorized")] * 3 + [(429, "too_many_attempts")], (wrong_as, right_as)
+
+
+def test_login_failures_for_unknown_identifiers_are_counted_by_the_typed_value() -> None:
+    """없는 계정은 묶을 계정이 없다 — 입력값마다 따로 세고, 있는 계정과 같은 횟수에 같은 응답이다."""
+    client, username = _email_account(auth_max_failures=3)
+    expected = [(401, "unauthorized")] * 3 + [(429, "too_many_attempts")]
+    assert [_wrong(client, "ghost") for _ in range(4)] == expected
+    assert [_wrong(client, "ghost@example.com") for _ in range(4)] == expected  # 'ghost'와 따로 센다
+    assert [_wrong(client, "GHOST@example.com") for _ in range(2)] == [(429, "too_many_attempts")] * 2
+    # 없는 이름들의 실패는 있는 계정의 기록에 섞이지 않는다
+    assert client.post("/v1/auth/login", json={"username": username, "password": PW}).status_code == 200
+
+
+def test_login_failures_ignore_letter_case_of_email_and_username() -> None:
+    client, username = _email_account(auth_max_failures=3)
+    typed = ["REAL@example.com", " Real@Example.COM ", username.upper()]  # 아이디는 대소문자가 다르면 401
+    assert [_wrong(client, identifier) for identifier in typed] == [(401, "unauthorized")] * 3
+    for identifier in (username, "real@example.com", "rEAL@EXAMPLE.com"):
+        blocked = client.post("/v1/auth/login", json={"username": identifier, "password": PW})
+        assert _code(blocked) == (429, "too_many_attempts"), identifier
+
+
+@pytest.mark.anyio
+async def test_reset_password_lifts_account_lockout_for_username_and_email() -> None:
+    service = AuthService(_settings(auth_max_failures=2), InMemoryAuthRepo())
+    username = (await service.signup_email("real@example.com", PW)).user.username
+    for identifier, ip in ((username, "198.51.100.1"), ("real@example.com", "198.51.100.2")):
+        for _ in range(2):
+            with pytest.raises(DomainError) as failed:
+                await service.login(identifier, "wrong-pass-1", ip)
+            assert failed.value.code == "unauthorized"
+    for identifier, ip in ((username, "198.51.100.2"), ("real@example.com", "198.51.100.1")):
+        with pytest.raises(DomainError) as blocked:  # 두 IP 모두 그 계정으로는 잠겼다 (식별자를 바꿔도)
+            await service.login(identifier, PW, ip)
+        assert blocked.value.code == "too_many_attempts"
+    await service.reset_password(username, "brand-new-password-9")
+    for identifier, ip in ((username, "198.51.100.2"), ("real@example.com", "198.51.100.1")):
+        assert (await service.login(identifier, "brand-new-password-9", ip)).user.username == username
+
+
 @pytest.mark.anyio
 async def test_email_login_spends_one_hash_for_missing_and_passwordless_accounts(
     monkeypatch: pytest.MonkeyPatch,

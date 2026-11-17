@@ -19,10 +19,13 @@
 		84EC4A1FCA087352CD0B8026 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A4171FFD049740E668E8666 /* Models.swift */; };
 		8CF9B06274D9CF74F9B9342F /* KeyboardMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = A477A2B5C3ACD02D7F028452 /* KeyboardMessage.swift */; };
 		8E46E8D7409AC5CE0FA27284 /* ContactGraphView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50B090C82E69E9171A208558 /* ContactGraphView.swift */; };
+		8EB51184D5D46946E5725482 /* LoginLogicTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41314A6AF4974D7E7BC8DC46 /* LoginLogicTests.swift */; };
 		9B70E05335D615D4C86E74B8 /* API.swift in Sources */ = {isa = PBXBuildFile; fileRef = 773518E568FD0C17A2B259C6 /* API.swift */; };
 		CE74257DE59EC0A74A7F07CC /* KeyboardController.swift in Sources */ = {isa = PBXBuildFile; fileRef = CACE38E6845FA3BA652D0016 /* KeyboardController.swift */; };
+		E168C5F8EA7873C05DDF60E5 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF857FE7F3E3E29B7A785076 /* Theme.swift */; };
 		E3DF94799C566F25BE3F006B /* PersonaApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63C0760AE82A2E59E63C00B8 /* PersonaApp.swift */; };
 		F04E99E38678FFFEF0675296 /* KeyboardLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13FC5556657E000B7CA763ED /* KeyboardLink.swift */; };
+		F179CA0A610DACB9BB6A4B21 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF857FE7F3E3E29B7A785076 /* Theme.swift */; };
 		FC1755DFC8B089D67EAF023C /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A4171FFD049740E668E8666 /* Models.swift */; };
 		FEAD15EF0D375FAA2AB90FEC /* KeyboardLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13FC5556657E000B7CA763ED /* KeyboardLink.swift */; };
 /* End PBXBuildFile section */
@@ -66,6 +69,7 @@
 		1D1E5E4FB150A18EF37F8615 /* AccountView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountView.swift; sourceTree = "<group>"; };
 		21D15657CF1892500780613C /* PersonaIze.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = PersonaIze.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		2A4171FFD049740E668E8666 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		41314A6AF4974D7E7BC8DC46 /* LoginLogicTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginLogicTests.swift; sourceTree = "<group>"; };
 		50B090C82E69E9171A208558 /* ContactGraphView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactGraphView.swift; sourceTree = "<group>"; };
 		63C0760AE82A2E59E63C00B8 /* PersonaApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonaApp.swift; sourceTree = "<group>"; };
 		72CC54FD92EDDDBDA4BE8660 /* ImportParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImportParser.swift; sourceTree = "<group>"; };
@@ -76,6 +80,7 @@
 		AB1AE5CAF335B93CE53F90D7 /* PersonaKeyboard.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = PersonaKeyboard.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		AB64B4FC4B755A0344DD0C95 /* App.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = App.entitlements; sourceTree = "<group>"; };
 		AF241E3315A6E054AA49B6FA /* Keyboard.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Keyboard.entitlements; sourceTree = "<group>"; };
+		AF857FE7F3E3E29B7A785076 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 		CACE38E6845FA3BA652D0016 /* KeyboardController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardController.swift; sourceTree = "<group>"; };
 		D02744E7766F1F302B2886AD /* ImportParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImportParserTests.swift; sourceTree = "<group>"; };
 		DA71B1FF087D052BF97AF339 /* HistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryView.swift; sourceTree = "<group>"; };
@@ -87,6 +92,7 @@
 			isa = PBXGroup;
 			children = (
 				D02744E7766F1F302B2886AD /* ImportParserTests.swift */,
+				41314A6AF4974D7E7BC8DC46 /* LoginLogicTests.swift */,
 			);
 			path = Tests;
 			sourceTree = "<group>";
@@ -97,6 +103,7 @@
 				13FC5556657E000B7CA763ED /* KeyboardLink.swift */,
 				A477A2B5C3ACD02D7F028452 /* KeyboardMessage.swift */,
 				2A4171FFD049740E668E8666 /* Models.swift */,
+				AF857FE7F3E3E29B7A785076 /* Theme.swift */,
 			);
 			path = Shared;
 			sourceTree = "<group>";
@@ -266,6 +273,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				82B69B66A9BF6F9AFA9E2201 /* ImportParserTests.swift in Sources */,
+				8EB51184D5D46946E5725482 /* LoginLogicTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -277,6 +285,7 @@
 				F04E99E38678FFFEF0675296 /* KeyboardLink.swift in Sources */,
 				0478ABC65A20EFFF015255FE /* KeyboardMessage.swift in Sources */,
 				84EC4A1FCA087352CD0B8026 /* Models.swift in Sources */,
+				F179CA0A610DACB9BB6A4B21 /* Theme.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -295,6 +304,7 @@
 				8CF9B06274D9CF74F9B9342F /* KeyboardMessage.swift in Sources */,
 				FC1755DFC8B089D67EAF023C /* Models.swift in Sources */,
 				E3DF94799C566F25BE3F006B /* PersonaApp.swift in Sources */,
+				E168C5F8EA7873C05DDF60E5 /* Theme.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -454,6 +464,7 @@
 				MTL_FAST_MATH = YES;
 				PERSONA_APP_GROUP = "group.$(PERSONA_BUNDLE_ID)";
 				PERSONA_BUNDLE_ID = com.skywith628.personaize;
+				PERSONA_DEFAULT_SERVER_HOST = "43-203-31-7.sslip.io";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SWIFT_COMPILATION_MODE = wholemodule;
@@ -539,6 +550,7 @@
 				ONLY_ACTIVE_ARCH = YES;
 				PERSONA_APP_GROUP = "group.$(PERSONA_BUNDLE_ID)";
 				PERSONA_BUNDLE_ID = com.skywith628.personaize;
+				PERSONA_DEFAULT_SERVER_HOST = "43-203-31-7.sslip.io";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;

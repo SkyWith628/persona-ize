@@ -18,7 +18,7 @@
 | `POST /v1/auth/register` `{username, password, invite_code?, consent?}` | 가입 + 로그인. 아이디는 영문·숫자·`_`·`-` 3~32자, 대소문자만 다른 이름은 409. 비밀번호 8자 이상. 초대 코드가 틀리면 403 `invalid_invite`, 동의가 필요한데 없으면 422 `consent_required`. 운영 모드에서 관리자 이름은 화면 가입 불가(409) |
 | `GET /v1/auth/providers` (인증 불필요) | 가입 정책과 켜진 소셜 로그인: `{signup_open, requires_approval, invite_required, require_consent, google, kakao}` |
 | `POST /v1/auth/signup` `{email, password, display_name?, invite_code?, consent?}` | 이메일 가입. 문(가입 닫힘 403 → 초대 코드 → 동의)은 `register`와 같다. 이메일은 소문자로 저장, 중복 409. 아이디는 서버가 이메일 앞부분에서 만든다(응답 `username`). 응답은 `register`와 같다 |
-| `POST /v1/auth/login` `{username, password}` | 로그인. `username`에 **아이디 또는 이메일**. 비밀번호가 맞은 뒤에만 403 `account_pending`(승인 대기)·`account_suspended`(정지). 같은 곳(IP)에서 같은 아이디를 계속 틀리면 그 조합만 429 `too_many_attempts` + `Retry-After`(IP 단독·아이디 단독은 훨씬 높은 횟수에서) |
+| `POST /v1/auth/login` `{username, password}` | 로그인. `username`에 **아이디 또는 이메일**. 비밀번호가 맞은 뒤에만 403 `account_pending`(승인 대기)·`account_suspended`(정지). 같은 곳(IP)에서 같은 아이디를 계속 틀리면 그 조합만 429 `too_many_attempts` + `Retry-After`(IP 단독·아이디 단독은 훨씬 높은 횟수에서). 실패는 **계정 기준**으로 센다 — 아이디로 틀리든 이메일로 틀리든 같은 계정의 횟수이고 한쪽으로 성공하면 함께 지워진다(없는 계정은 입력값 기준, 2026-11-17) |
 | `POST /v1/auth/token` `{username, password, client?}` | Bearer 토큰 발급: `{access_token, token_type: "bearer", expires_at, user_id, username}`. `client`는 `mobile`·`desktop`·`api` |
 | `GET /v1/auth/oauth/{google\|kakao}/start?next=/경로` | 소셜 로그인 시작 → 제공자로 302. 링크로 바로 연다. 설정되지 않은 제공자는 404 |
 | `POST /v1/auth/oauth/{google\|kakao}/start` `{next?, consent?, invite_code?}` | 같은 시작인데 새 계정에 필요한 동의·초대 코드를 함께 보낸다 → `{authorize_url}`(그 주소로 이동). 초대 코드가 틀리면 403 `invalid_invite`. 진행 중인 소셜 로그인이 서버 상한에 닿아 있으면 429 `too_many_attempts` + `Retry-After` |

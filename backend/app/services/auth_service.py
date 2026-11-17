@@ -17,10 +17,14 @@
 
 회원관리·소셜 로그인 (2026-11-16, `design/iphone-mobile` c001cbb에서 옮김 — 위 규칙 위에 얹었다):
 - 로그인 식별자는 아이디 또는 이메일(`@`가 있으면 이메일 — 아이디에는 `@`가 못 들어간다). 이메일 로그인도
-  같은 `FailureLimits`를 지나고(키는 소문자로 바꾼 입력값), 없는 이메일·틀린 비밀번호·비밀번호 없는 계정이
-  모두 같은 401에 같은 해시 비용이다. 아이디와 이메일을 번갈아 대면 같은 계정에 쌍 한도의 두 배까지
-  시도할 수 있다 — 키를 계정으로 합치면 "이 이메일이 그 아이디의 것"이 잠금으로 드러나므로 합치지 않았다
-  (IP 한도는 공통).
+  같은 `FailureLimits`를 지나고, 없는 이메일·틀린 비밀번호·비밀번호 없는 계정이 모두 같은 401에 같은
+  해시 비용이다.
+- 실패 제한의 "이름"은 **계정**이다(2026-11-17): 계정을 찾았으면 키는 그 계정 아이디의 소문자 — 아이디로
+  틀리든 이메일로 틀리든 한 계정의 실패로 세고, 한쪽으로 성공하면 함께 지운다. 계정이 없을 때만 소문자로
+  바꾼 입력값이 키다. 예전에는 키가 입력값이라 아이디와 이메일을 번갈아 대면 한도의 두 배까지 시도할 수
+  있었다. 식별자 하나만 보면 있는 계정과 없는 계정이 여전히 같은 횟수에 같은 응답이다. 남는 것: 아이디로
+  잠근 직후 이메일을 대면 첫 시도가 429라 "이 이메일이 그 아이디의 것"임을 알 수 있다(반대도) — 한도를
+  지키는 쪽을 골랐다(`docs/decisions.md`).
 - 상태: active만 로그인된다. pending(승인 대기)·suspended(정지)는 **비밀번호가 맞은 뒤에만** 403
   `account_pending`·`account_suspended`로 알린다(틀리면 여전히 401). 열려 있던 세션·Bearer 토큰은
   `Session.is_active`가 사용자 상태를 함께 보므로 다음 요청부터 끊긴다.
@@ -437,21 +441,24 @@ class AuthService:
     async def login(self, username: str, password: str, client_ip: str | None = None) -> AuthResult:
         """이름(또는 이메일)·비밀번호 확인 뒤 새 세션. 쿠키 로그인과 Bearer 토큰 발급이 함께 쓴다.
 
-        `username`에 `@`가 있으면 이메일로 찾는다. 실패 제한의 키는 어느 쪽이든 소문자로 바꾼 입력값이다.
+        `username`에 `@`가 있으면 이메일로 찾는다. 실패 제한은 계정 기준이다 — 찾은 계정의 아이디(소문자)가
+        키라서 아이디·이메일 어느 쪽으로 틀려도 같은 기록에 쌓인다. 계정이 없으면 소문자로 바꾼 입력값이 키다.
+        그래서 잠금 확인보다 조회가 먼저다(계정이 있든 없든 조회 한 번 — 잠겨 있으면 해시는 계산하지 않는다).
         """
         username = username.strip()
-        name = username.lower()
+        typed = username.lower()
         ip = client_key(client_ip) if client_ip else None
         now = datetime.now(UTC)
+        if "@" in username:  # 아이디에는 @가 들어갈 수 없다
+            found = await self._repo.find_user_by_email(typed)
+        else:
+            found = await self._repo.find_user_by_username(username)
+        name = found[0].username.lower() if found is not None else typed
         wait = self._login_limits.retry_after(name, ip, now)
         if wait is not None:
             raise TooManyAttemptsError(
                 f"로그인 시도가 너무 많습니다. {wait}초 뒤에 다시 시도하세요.", retry_after=wait
             )
-        if "@" in username:  # 아이디에는 @가 들어갈 수 없다
-            found = await self._repo.find_user_by_email(name)
-        else:
-            found = await self._repo.find_user_by_username(username)
         # 없는 이름·이메일, 비밀번호 없는(소셜 전용) 계정이어도 해시 한 번을 똑같이 계산한다 —
         # 응답 시간으로 가입 여부를 알아낼 수 없게.
         stored = found[1] if found is not None and found[1] else _DECOY_HASH
@@ -562,9 +569,8 @@ class AuthService:
             raise NotFoundError("그 이름의 사용자가 없습니다 (대소문자를 구분합니다).")
         user = found[0]
         await self._repo.update_password(user.id, await hash_password_async(new_password))
+        # 로그인 실패는 계정 기준 키(아이디 소문자)로 쌓인다 — 이메일로 틀린 기록도 이 한 번으로 지워진다.
         self._login_limits.forget_name(user.username.lower())
-        if user.email:
-            self._login_limits.forget_name(user.email)  # 이메일로 틀린 기록도 함께 지운다
         return await self._repo.revoke_all_sessions(user.id, datetime.now(UTC))
 
     async def set_role(self, username: str, role: Role) -> User:
