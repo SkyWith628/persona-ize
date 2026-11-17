@@ -393,6 +393,75 @@ export function signalMatches(settings, signal) {
   return current === view.value;
 }
 
+// 카드가 물을 때 말투 변화 신호로는 정하지 않는 항목 (backend/app/services/suggestion_service.py의 ASKED_FIELDS)
+const ASKED_FIELDS = ["formality", "address_term"];
+
+/** 카드에서 근거 메시지 id만 뺀 사본. 카드가 없으면 그대로 돌려준다. */
+function withoutEvidenceIds(card) {
+  if (!card || typeof card !== "object") return card;
+  const strip = (part) => (part && typeof part === "object" ? { ...part, message_ids: [] } : part);
+  return {
+    ...card,
+    speech_previous: strip(card.speech_previous),
+    speech_current: strip(card.speech_current),
+    address: strip(card.address),
+    trigger: strip(card.trigger),
+    scope_hints: Array.isArray(card.scope_hints) ? card.scope_hints.map(strip) : card.scope_hints,
+  };
+}
+
+function changeValueLabel(field, value) {
+  if (value === null || (Array.isArray(value) && !value.length)) return "없음";
+  return signalView({ field, value }).valueLabel || String(value);
+}
+
+/**
+ * 가져오기 직후의 "이 상대에게 쓰는 말투" 제안: 제안 응답과 지금 설정으로, 저장할 설정과 바뀌는 항목을 만든다.
+ * 저장은 하지 않는다 — 사용자가 한 번 확인하고 누를 때만 저장한다.
+ *
+ * state: "none"(내 메시지 없음) · "few"(표본이 적음) · "same"(지금 설정과 같음) · "ask"(값을 정해 주지 않고 묻는다) · "ok"
+ * - settings: 저장할 설정 전체("ok"일 때만, 아니면 null)
+ * - changes: [{ field, label, from, to }] — 지금 설정에서 바뀌는 항목
+ * - rows: 근거 줄(말투 · 호칭 · 계기 · 범위 단서). cardView의 rows에서 근거 메시지 id만 뺀 것 —
+ *   방금 가져온 화면에서는 건수와 날짜면 충분하고, id는 상대 화면의 제안에서 볼 수 있다
+ * - asking: 카드가 묻는 중인가(상황에 따라 다른 말투일 수 있다). 이때 화면은 왜 묻는지(askReason)를 함께 보여 준다
+ *
+ * 제안 값은 서버가 합쳐 준 settings를 쓴다. 표본이 적어 settings가 없으면 보여 줄 신호(말투 변화·그래프)만
+ * 지금 설정에 덮어쓴다. 카드가 물을 때 서버는 격식·호칭을 settings에서 빼지만, 여기서는 카드가 정해 둔 값
+ * (proposed)을 다시 얹는다 — 이 화면의 저장 버튼이 곧 그 물음에 대한 사용자의 답이기 때문이다.
+ * 카드가 값을 정해 두지 않았으면(두 말투가 섞인 경우 등) 격식·호칭은 건드리지 않는다.
+ */
+export function importProposal(data, current) {
+  const base = normalizeSettings(current);
+  const view = cardView(withoutEvidenceIds(data?.card));
+  const asking = Boolean(view?.ask);
+  const out = { state: suggestionState(data), settings: null, changes: [], rows: view?.rows ?? [], asking, askReason: view?.askReason ?? "" };
+  if (out.state !== "ok") return out;
+
+  let proposed;
+  if (!isFewMessages(data) && data.settings && typeof data.settings === "object") {
+    proposed = normalizeSettings(data.settings);
+  } else {
+    const signals = visibleSignals(data).filter(
+      (s) => !(asking && signalSource(s) === "register" && ASKED_FIELDS.includes(String(s.field))),
+    );
+    proposed = applySignals(base, signals).settings;
+  }
+  if (asking) proposed = applySignals(proposed, cardSignals(data.card)).settings;
+  for (const field of Object.keys(FIELD_LABEL)) {
+    if (JSON.stringify(base[field]) === JSON.stringify(proposed[field])) continue;
+    out.changes.push({
+      field,
+      label: FIELD_LABEL[field],
+      from: changeValueLabel(field, base[field]),
+      to: changeValueLabel(field, proposed[field]),
+    });
+  }
+  if (out.changes.length) out.settings = proposed;
+  else out.state = asking ? "ask" : "same";
+  return out;
+}
+
 /**
  * 표현 칩 입력: 새 표현을 더한다. 쉼표로 여러 개를 한 번에 넣을 수 있다.
  * 돌려주는 error는 화면에 그대로 보여 줄 문장(없으면 null).
