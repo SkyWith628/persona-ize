@@ -190,6 +190,14 @@ class RewriteService:
                 f"Idempotency-Key는 {IDEMPOTENCY_KEY_MAX}자 이내의 보이는 문자여야 합니다."
             )
 
+    def validate_input(self, inp: RewriteInput, idempotency_key: str | None = None) -> None:
+        """`rewrite`가 맨 먼저 하는 입력 검사만 따로 돈다 (상대와 무관: 초안·상황 길이, 저장 못 할 문자, 키).
+
+        묶음 경로(`POST /v1/rewrites/batch`)가 상대마다 나누기 전에 한 번 불러, 모든 상대에 똑같이 걸릴
+        본문 오류를 요청 전체의 422로 돌려보낸다. 사용량은 쓰지 않는다.
+        """
+        self._validate(inp, idempotency_key)
+
     async def resolve_auto(self, user_id: str, contact: Contact, persona: PersonaVersion | None) -> Condition:
         """이 상대에 쓸 수 있는 가장 풍부한 조건.
 

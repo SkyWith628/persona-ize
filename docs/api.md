@@ -83,6 +83,7 @@ settings: `formality·friendliness·directness`(1~5), `length`(shorter/same/long
 | 메서드·경로 | 내용 |
 |---|---|
 | `POST /v1/rewrites` `{contact_id, draft_text, situation?, condition?, adjust?, channel?, persona_version?}` + `Idempotency-Key` 헤더 | 추천 생성 |
+| `POST /v1/rewrites/batch` `{contact_ids: [1~5개, 중복 불가], draft_text, …단건과 같은 나머지 필드}` + `Idempotency-Key` 헤더(91자 이내) | 같은 초안을 여러 상대에게, 상대마다 그 상대의 말투로. 200 `{items: [{contact_id, rewrite, error}]}` — 순서는 `contact_ids`와 같고, `rewrite`는 단건 응답과 같은 모양(이력에도 단건처럼 저장), 실패한 상대만 `error: {code, message}`(단건의 오류 코드)이고 나머지는 계속한다. 상대 1명 = 요청 1건으로 한도를 센다. 멱등 키는 상대마다 `<키>:<contact_id>`로 파생. 빈 목록·5개 초과·중복은 422. 모든 상대에 똑같이 걸리는 입력 오류(빈·한도를 넘는 초안, 긴 상황 설명, 저장 못 할 문자, 91자를 넘거나 보이지 않는 문자가 든 키)도 단건처럼 요청 전체가 422이고 아무것도 처리하지 않는다 — 항목별 `error`는 상대마다 다를 수 있는 것(없는 상대, 저장된 설정 없음, 한도 초과, 모델 실패)만이다 |
 | `GET /v1/rewrites?contact_id=&limit=&before=` | 첨삭 이력 (최근 순, 최대 100). `before=<ISO 시각>`으로 다음 쪽 |
 | `GET /v1/rewrites/{id}` | 결과 조회 |
 | `GET /v1/rewrites/{id}/evidence` | 참고한 내 과거 표현의 **지금 남아 있는 원문**: `{items: [{id, source_message_ids, messages: [{speaker_role, sent_at, text}]}], missing, refs_recorded}`. 결과에는 원문 사본을 저장하지 않으므로 대화방을 지우면 여기서도 사라진다(`missing` = 원문이 전부 지워진 근거 수). 출처 참조를 남기기 전(2026-11-11 이전)의 결과는 `refs_recorded: false`, `items: []` |

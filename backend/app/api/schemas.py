@@ -587,3 +587,53 @@ class EvidenceOut(BaseModel):
 
 class RewritesDeletedOut(BaseModel):
     deleted: int
+
+
+# 묶음 첨삭 한 번에 받을 상대 수. 상대 1명 = 모델 호출 1번이라 요청 하나가 쓸 비용의 상한이기도 하다.
+REWRITE_BATCH_MAX_CONTACTS = 5
+
+
+class RewriteBatchCreate(StoredBody):
+    """같은 초안을 여러 상대에게 — "의미는 한 번, 말투는 상대마다".
+
+    `RewriteCreate`에서 `contact_id`만 `contact_ids`로 바뀐 본문이다. 나머지 필드는 이름·뜻이 같고 모든
+    상대에 똑같이 적용한다. `RewriteCreate`에 필드를 더하면 여기에도 더한다 (두 본문의 필드가 같은지는
+    `test_rewrites_batch_api.py`가 지킨다).
+    """
+
+    contact_ids: list[UUID] = Field(
+        min_length=1,
+        max_length=REWRITE_BATCH_MAX_CONTACTS,
+        description="첨삭할 상대들 (1~5명, 중복 불가). 응답의 items는 이 순서를 따른다",
+    )
+    draft_text: str
+    draft_version: int = Field(1, ge=1, le=INT4_MAX)
+    situation: str = ""
+    condition: RequestedCondition = Field("B", description="A~D 또는 auto. 상대마다 따로 정해진다")
+    persona_version: int | None = Field(None, ge=-INT4_MAX, le=INT4_MAX)
+    adjust: Adjust | None = Field(None, description="이번 요청만의 조정. 저장된 페르소나는 바뀌지 않는다")
+    channel: Channel = "web"
+
+    @model_validator(mode="after")
+    def _distinct_contacts(self) -> RewriteBatchCreate:
+        # 같은 상대가 두 번 있으면 한 요청이 한도를 두 번 쓰고 같은 결과를 두 건 남긴다 — 실수로 본다.
+        if len(set(self.contact_ids)) != len(self.contact_ids):
+            raise ValueError("contact_ids에 같은 상대가 두 번 들어 있습니다.")
+        return self
+
+
+class RewriteBatchErrorOut(BaseModel):
+    code: str = Field(description="단건 경로의 오류 코드와 같다 (not_found, usage_exceeded 등)")
+    message: str
+
+
+class RewriteBatchItemOut(BaseModel):
+    """상대 한 명의 결과. `rewrite`와 `error` 가운데 하나만 채워진다."""
+
+    contact_id: UUID
+    rewrite: RewriteOut | None = None
+    error: RewriteBatchErrorOut | None = None
+
+
+class RewriteBatchOut(BaseModel):
+    items: list[RewriteBatchItemOut]
