@@ -93,7 +93,7 @@ nano .env.production
 | 설정 | 값 |
 |---|---|
 | `SITE_ADDRESS` | 서비스 도메인(앞에 `https://`를 붙이지 않는다) |
-| `POSTGRES_PASSWORD`, `NEO4J_PASSWORD` | `openssl rand -base64 32 \| tr -d '/+='` 로 각각 만든다. Neo4j는 8자 이상 |
+| `POSTGRES_PASSWORD`, `NEO4J_PASSWORD` | `openssl rand -base64 32 \| tr -d '/+='` 로 각각 만든다. Neo4j는 8자 이상. 영문·숫자·`-`·`_`만 쓴다(접속 주소에 그대로 들어가서, 다른 문자가 있으면 `deploy.sh`가 멈춘다) |
 | `ANTHROPIC_API_KEY` | Console에서 만든 키 |
 | `REGISTER_INVITE_CODE` | 가입할 때 요구할 코드(`openssl rand -hex 6`). 비우면 주소를 아는 누구나 가입해 API 비용을 쓴다 |
 | `ADMIN_USERNAMES` | 관리자로 쓸 아이디 |
@@ -673,7 +673,7 @@ cd ~/persona-ize && cp .env.production.example .env.production && chmod 600 .env
 | `SITE_ADDRESS` | `43-203-31-7.sslip.io` | `https://` 없이 |
 | `TRUSTED_HOSTS` | 비워 둔다 | compose가 `SITE_ADDRESS`를 넣는다 |
 | `HSTS_MAX_AGE` | `300` 그대로 | 옛 Caddyfile은 1년(31536000)을 보냈다. 새 서버가 며칠 안정된 뒤 올린다 |
-| `POSTGRES_PASSWORD` · `NEO4J_PASSWORD` | 각각 `openssl rand -base64 32 \| tr -d '/+='` 로 **새로** | 새 볼륨이라 이 값으로 초기화된다. 옛 값을 다시 쓰지 않는다. 개발용 기본값·8자 미만(Neo4j)은 거부된다 |
+| `POSTGRES_PASSWORD` · `NEO4J_PASSWORD` | 각각 `openssl rand -base64 32 \| tr -d '/+='` 로 **새로** | 새 볼륨이라 이 값으로 초기화된다. 옛 값을 다시 쓰지 않는다. 개발용 기본값·8자 미만(Neo4j)·영문·숫자·`-`·`_` 밖의 문자는 거부된다 |
 | `ANTHROPIC_API_KEY` | Console의 키 | `~/pz-old/env.prod.bak`의 키를 옮겨 적거나 새로 발급. Console 월 한도가 걸려 있는지 본다 |
 | `ADMIN_USERNAMES` | 관리자 아이디 **하나** | 대소문자까지 같아야 한다. 이 이름은 화면 가입으로 만들 수 없다(7단계에서 서버에서 만든다). 이 계정은 회원 관리에서 정지·삭제되지 않는다(409 `protected_admin`). 비워 두고 권한(role) 관리자만 두는 길은 3장 7단계 |
 | `AUTH_ALLOW_REGISTER` | `true` | 가입 열림 |

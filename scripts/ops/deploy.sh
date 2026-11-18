@@ -147,6 +147,17 @@ preflight() {
 		echo "오류: NEO4J_PASSWORD는 개발용 기본값이 아닌 8자 이상이어야 합니다." >&2
 		problems=1
 	fi
+	# 두 비밀번호는 compose가 접속 주소(postgresql+asyncpg://사용자:비밀번호@...)와 NEO4J_AUTH(neo4j/비밀번호)에
+	# 그대로 끼워 넣는다. @ / # : ? % 같은 문자가 있으면 주소가 깨져 backend가 DB에 붙지 못한다.
+	for key in POSTGRES_PASSWORD NEO4J_PASSWORD; do
+		value="$(env_get "$key")"
+		case "$value" in
+		*[!A-Za-z0-9_-]*)
+			echo "오류: $key 에는 영문·숫자·-·_ 만 쓰세요 (접속 주소에 그대로 들어갑니다. openssl rand -base64 32 | tr -d '/+=' 로 만드세요)." >&2
+			problems=1
+			;;
+		esac
+	done
 	[ "$problems" -eq 0 ] || die "$ENV_FILE 을 고친 뒤 다시 실행하세요."
 
 	# 여기부터는 경고만 — 의도한 설정일 수 있다
