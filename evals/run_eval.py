@@ -33,6 +33,18 @@ C/D 조건은 과거 대화가 필요하다. `--dataset`(기본 data/synthetic/s
   `suggestion_applied`(빈칸 = 안 씀 / `none` = 적용할 것이 없었음 / `formality=4;address_term=…` /
   정답 설정이면 `override:…`).
 
+실패 신호 열 (2026-11-18, docs/design.md "실패 유형 점검") — MAST 유형 번호를 열 이름에 붙였다. 숫자와
+참/거짓뿐이고 문장은 넣지 않는다. 모두 참고 신호다(실패 판정이 아니다)
+- `fm11_first_checks`: 1차 시도가 걸린 검증 종류(`fact_added;preserve_missing`). 통과했으면 빈칸.
+- `fm13_attempts`: 생성 시도 횟수. `fm23_length_ratio`: 결과 길이 ÷ 초안 길이.
+- `fm24_no_examples`: C·D인데 프롬프트에 문체 예시가 하나도 없었다(검색 실패·이력 없음).
+- `fm25_evidence_unused`: 문체 예시가 있었는데 모델이 근거(`evidence_ids`)를 하나도 적지 않았다.
+- `fm32_register_warned`: 말투 경고가 붙었다(`REGISTER_POST_CHECK`가 켜져 있을 때만 생긴다).
+- `fm33_fallback`: 원문 유지로 끝났다 — 멀쩡한 결과를 버린 것인지 표본으로 읽어 본다.
+
+말투 지문 (2026-11-18): `--voice`를 주면 C·D 입력에 서비스와 같은 방법으로 `voice_block`을 채운다
+(`--prompt rewrite-v5`와 함께 써야 프롬프트에 들어간다). 주지 않으면 입력은 예전 그대로다.
+
 결과: evals/results/eval-<시각>.csv (요약) + .jsonl (원시, 커밋 제외)
 """
 
@@ -67,7 +79,7 @@ from app.api.deps import AppState, build_state  # noqa: E402
 from app.core.config import Settings  # noqa: E402
 from app.domain.contact import Contact  # noqa: E402
 from app.domain.persona import PersonaSettings  # noqa: E402
-from app.domain.rewrite import RewriteInput  # noqa: E402
+from app.domain.rewrite import RetrievedExample, RewriteInput, RewriteResult  # noqa: E402
 from app.services.synthetic_loader import load_synthetic, persona_from_aliases  # noqa: E402
 
 DEFAULT_CASES = ROOT / "evals" / "eval_cases.csv"
@@ -86,6 +98,16 @@ SPEECH_LEVEL_FORMALITY: dict[str, tuple[int, int, int]] = {
     "존댓말": (3, 5, 3),
 }
 MAX_ADDRESS_TERM = 30  # PersonaSettings.address_term 길이 상한
+# 실패 신호 열 (MAST 유형 번호). 값은 `failure_signals`가 만든다.
+SIGNAL_FIELDS = [
+    "fm11_first_checks",
+    "fm13_attempts",
+    "fm23_length_ratio",
+    "fm24_no_examples",
+    "fm25_evidence_unused",
+    "fm32_register_warned",
+    "fm33_fallback",
+]
 
 # 관계 유형별 기본 페르소나는 app.services.synthetic_loader.DEFAULT_PERSONAS (시연 준비와 공유).
 
@@ -133,6 +155,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         choices=["trust", "artifacts", "ignore"],
         default=None,
         help="GRAPH_INVALIDATION_MODE 덮어쓰기 (그래프 검색의 무효화 처리)",
+    )
+    p.add_argument(
+        "--voice",
+        action="store_true",
+        help="C·D 입력에 말투 지문(voice_block)을 채운다 — 서비스의 VOICE_FINGERPRINT와 같은 값",
     )
     args = p.parse_args(argv)
     if args.apply_suggestion == "matching" and args.gold is None:
@@ -281,13 +308,50 @@ def parse_ids(raw: str) -> set[str]:
     return {x.strip() for x in raw.split(";") if x.strip()}
 
 
+def failure_signals(
+    result: RewriteResult, draft: str, fitted: list[RetrievedExample], condition: str
+) -> dict[str, object]:
+    """결과 한 건의 실패 신호 (MAST 유형 번호, docs/design.md "실패 유형 점검"). 문장은 넣지 않는다.
+
+    `fitted`는 프롬프트에 실제로 들어간 예시(`fit_examples`를 거친 목록)다. `fm25`의 `evidence_ids`는
+    모델이 스스로 적는 값이라 참고 신호일 뿐이다 — 비었다고 예시를 안 쓴 것은 아니다. `fm32`는 워크플로의
+    말투 경고 문구(`_WARN_REGISTER_*`)에 "말투"가 들어 있다는 데 기댄다.
+    """
+    first = result.attempt_log[0] if result.attempt_log else None
+    n_style = sum(1 for ex in fitted if ex.purpose == "style")
+    return {
+        "fm11_first_checks": ";".join(sorted({v.check for v in first.violations})) if first else "",
+        "fm13_attempts": result.attempts,
+        "fm23_length_ratio": f"{len(result.result_text) / max(len(draft), 1):.2f}",
+        "fm24_no_examples": condition in RETRIEVAL_CONDITIONS and n_style == 0,
+        "fm25_evidence_unused": n_style > 0 and not result.evidence_ids,
+        "fm32_register_warned": any("말투" in w for w in result.warnings),
+        "fm33_fallback": result.status == "fallback_original",
+    }
+
+
+async def voice_block_for(
+    state: AppState, user_id: str, contact: Contact, as_of: datetime | None
+) -> str | None:
+    """이 상대에게 보낸 내 메시지의 말투 지문. 서비스(`RewriteService._voice_block`)와 같은 입력·같은 함수다.
+
+    평가에서는 실패를 삼키지 않는다 — 지문 없이 돌아간 결과를 지문 켠 결과로 읽으면 안 된다.
+    """
+    from app.ai.register_source import own_messages, recent_before
+    from app.ai.voice import render_voice_block
+
+    messages = recent_before(await own_messages(state.conversations, user_id, contact.id), as_of)
+    return render_voice_block([text for _, _, text in messages]) if messages else None
+
+
 async def prepare_contacts(
     state: AppState, args: argparse.Namespace, characters: dict[str, dict[str, str]]
 ) -> dict[str, Contact]:
     """relation → Contact. 검색 조건이 있으면 데이터셋을 적재하고 저장소의 상대를 쓴다."""
     # 제안 적용은 과거 메시지를 읽으므로 A/B만 돌려도 데이터셋을 적재한다 (플래그가 꺼져 있으면 예전과 같다).
     wants_suggestion = getattr(args, "apply_suggestion", "off") != "off"
-    if wants_suggestion or any(c in RETRIEVAL_CONDITIONS for c in args.condition_list):
+    wants_all = getattr(args, "load_dataset", False)  # layer_diff: 조건과 상관없이 과거 대화를 적재한다
+    if wants_all or wants_suggestion or any(c in RETRIEVAL_CONDITIONS for c in args.condition_list):
         need_graph = "D" in args.condition_list
         if need_graph and not state.graph_enabled:
             raise SystemExit(
@@ -390,6 +454,7 @@ async def _run_with_state(state: AppState, args: argparse.Namespace) -> Path:
         "context_recall",
         "context_hit",
         "warning_hit",
+        *SIGNAL_FIELDS,
         "validator_version",
         "persona_formality",
         "persona_address_term",
@@ -431,6 +496,12 @@ async def _run_with_state(state: AppState, args: argparse.Namespace) -> Path:
                 gold_row = gold_for(gold, (character["name"], case["relation"]), case.get("as_of", ""))
                 persona, changed = apply_suggestion(persona, suggestion, mode=apply_mode, gold=gold_row)
                 suggestion_applied = ";".join(changed) or "none"
+            # 말투 지문은 과거 표현을 쓰는 조건(C·D)에만 붙인다 (서비스와 같다). --voice가 없으면 None.
+            voice = (
+                await voice_block_for(state, args.user, contact, as_of)
+                if getattr(args, "voice", False)
+                else None
+            )
             for cond in args.condition_list:
                 for rep in range(1, args.repeat + 1):
                     inp = RewriteInput(
@@ -441,6 +512,7 @@ async def _run_with_state(state: AppState, args: argparse.Namespace) -> Path:
                         situation=case.get("situation", ""),
                         condition=cond,  # type: ignore[arg-type]
                         as_of=as_of,
+                        voice_block=voice if cond in RETRIEVAL_CONDITIONS else None,
                     )
                     retrieved = await workflow.retrievers[cond].retrieve(  # type: ignore[index]
                         user_id=inp.user_id,
@@ -455,7 +527,8 @@ async def _run_with_state(state: AppState, args: argparse.Namespace) -> Path:
                         if relevant and cond in RETRIEVAL_CONDITIONS
                         else ""
                     )
-                    context = [ex for ex in fit_examples(retrieved) if ex.purpose == "context"]
+                    fitted = fit_examples(retrieved)
+                    context = [ex for ex in fitted if ex.purpose == "context"]
                     context_ids = sorted({mid for ex in context for mid in ex.source_message_ids})
                     context_text = " | ".join(ex.text for ex in context)
                     context_recall = (
@@ -498,6 +571,7 @@ async def _run_with_state(state: AppState, args: argparse.Namespace) -> Path:
                         "context_recall": context_recall,
                         "context_hit": keyword_hit(expected_context, context_text),
                         "warning_hit": keyword_hit(expected_context, " | ".join(result.warnings)),
+                        **failure_signals(result, inp.draft_text, fitted, cond),
                         "validator_version": getattr(result, "validator_version", ""),
                         "persona_formality": persona.formality,
                         "persona_address_term": persona.address_term or "",

@@ -699,3 +699,175 @@ async def test_suggestion_accuracy_segment_k_reaches_the_profile() -> None:
         seen[k] = row["observed_speech"]
     # K=2(기본): 합쇼체 2건으로 구간이 열린다. K=3: 열리지 않고 두 값 상태(혼용)로 드러난다
     assert seen == {None: "합쇼체", 3: "혼용"}
+
+
+# ---- 실패 신호 열 · 말투 지문 · 층별 겹침 (2026-11-18) -------------------------------------------
+
+
+def _result(**over: Any) -> Any:
+    from app.domain.rewrite import RewriteResult, ValidationReport
+
+    base: dict[str, Any] = {
+        "status": "recommended",
+        "result_text": "내일 오전까지 보내드리겠습니다.",
+        "intent": "report",
+        "preserved_items": [],
+        "validation": ValidationReport(passed=True),
+        "attempts": 1,
+        "model_version": "fake",
+        "prompt_version": "rewrite-v3",
+        "retrieval_version": "none",
+        "latency_ms": 1,
+    }
+    return RewriteResult(**{**base, **over})
+
+
+def _example(ex_id: str, purpose: str = "style") -> Any:
+    from app.domain.rewrite import RetrievedExample
+
+    return RetrievedExample(id=ex_id, purpose=purpose, text="예시", speaker_role="me")  # type: ignore[arg-type]
+
+
+def test_failure_signals_are_numbers_and_flags_only() -> None:
+    from app.domain.rewrite import AttemptRecord, Violation
+
+    draft = "내일 오전까지 보낼게요."
+    ok = run_eval.failure_signals(_result(evidence_ids=["s1"]), draft, [_example("s1")], "C")
+    assert list(ok) == run_eval.SIGNAL_FIELDS
+    assert ok["fm11_first_checks"] == "" and ok["fm13_attempts"] == 1
+    assert not any(ok[k] for k in ("fm24_no_examples", "fm25_evidence_unused", "fm32_register_warned"))
+    assert ok["fm33_fallback"] is False
+    assert ok["fm23_length_ratio"] == f"{len('내일 오전까지 보내드리겠습니다.') / len(draft):.2f}"
+
+    # 예시를 받고도 근거를 적지 않았다 / C인데 문체 예시가 없다(사실 맥락만 있는 것은 예시가 아니다)
+    assert run_eval.failure_signals(_result(), draft, [_example("s1")], "C")["fm25_evidence_unused"] is True
+    empty = run_eval.failure_signals(_result(), draft, [_example("g1", "context")], "D")
+    assert (empty["fm24_no_examples"], empty["fm25_evidence_unused"]) == (True, False)
+    assert run_eval.failure_signals(_result(), draft, [], "B")["fm24_no_examples"] is False  # B는 원래 없다
+
+    violations = [
+        Violation(check="fact_added", detail="'금요일'이 추가됨"),
+        Violation(check="preserve_missing", detail="'내일 오전'이 빠짐"),
+        Violation(check="fact_added", detail="'3시'가 추가됨"),
+    ]
+    fallback = run_eval.failure_signals(
+        _result(
+            status="fallback_original",
+            result_text=draft,
+            attempts=2,
+            attempt_log=[AttemptRecord(attempt=1, passed=False, violations=violations)],
+            warnings=["결과의 말투(반말/존댓말)가 설정한 격식과 다릅니다. 보내기 전에 확인하세요."],
+        ),
+        draft,
+        [],
+        "A",
+    )
+    assert fallback["fm11_first_checks"] == "fact_added;preserve_missing"  # 종류만, 문장은 없다
+    assert (fallback["fm13_attempts"], fallback["fm33_fallback"], fallback["fm32_register_warned"]) == (
+        2,
+        True,
+        True,
+    )
+    assert "금요일" not in "".join(str(v) for v in fallback.values())
+
+
+@pytest.mark.anyio
+async def test_run_eval_writes_the_signal_columns(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    rows = await _run_eval(
+        tmp_path, monkeypatch, ["--conditions", "A,C", "--case", "E001", "--user", "eval-tools-signals"]
+    )
+    a, c = rows
+    assert set(run_eval.SIGNAL_FIELDS) <= set(a)
+    assert (a["fm13_attempts"], a["fm23_length_ratio"], a["fm33_fallback"]) == ("1", "1.00", "False")
+    assert a["fm24_no_examples"] == "False"
+    # fake 프로바이더는 받은 예시를 근거로 적는다 — 예시가 들어갔고 근거도 있으니 둘 다 거짓이다
+    assert c["retrieved_ids"] and c["evidence_ids"]
+    assert (c["fm24_no_examples"], c["fm25_evidence_unused"]) == ("False", "False")
+
+
+@pytest.mark.anyio
+async def test_run_eval_voice_fills_the_block_only_when_asked_and_only_for_c_d(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert run_eval.parse_args([]).voice is False
+    monkeypatch.setattr(run_eval, "RESULTS_DIR", tmp_path)
+    seen: dict[tuple[bool, str], str | None] = {}
+    for voice in (False, True):
+        argv = [
+            "--conditions",
+            "B,C",
+            "--case",
+            "E003",
+            "--user",
+            "eval-tools-voice",
+            "--prompt",
+            "rewrite-v5",
+        ]
+        args = run_eval.parse_args([*argv, *(["--voice"] if voice else []), "--out", str(tmp_path / "v.csv")])
+        state = build_state(_settings())
+        real = state.workflow.run
+
+        async def spy(
+            inp: Any, contact: Any, persona: Any, *, _voice: bool = voice, _real: Any = real
+        ) -> Any:
+            seen[(_voice, inp.condition)] = inp.voice_block
+            return await _real(inp, contact, persona)
+
+        monkeypatch.setattr(state.workflow, "run", spy)
+        try:
+            await run_eval._run_with_state(state, args)
+        finally:
+            await state.close()
+    assert seen[(False, "B")] is None and seen[(False, "C")] is None  # 플래그 없이는 예전 입력 그대로
+    assert seen[(True, "B")] is None  # B는 과거 대화를 쓰지 않는 조건이다
+    assert seen[(True, "C")] and "내 메시지" in seen[(True, "C")]  # type: ignore[operator]
+
+
+def test_layer_overlap_bounds() -> None:
+    import layer_diff
+
+    same = {"style": ["네 팀장님, 맡겠습니다.", "확인했습니다."], "prompt": "[설정] 격식 높음"}
+    other = {"style": ["ㅇㅋㅋㅋ"], "prompt": "ㅋㅋㅋ"}
+    none = {"style": [], "prompt": "[설정] 격식 높음"}
+    assert layer_diff.overlap(same, dict(same)) == (1.0, 1.0)
+    ids, prompt = layer_diff.overlap(same, other)
+    assert ids == 0.0 and prompt == 0.0
+    assert layer_diff.overlap(none, dict(none))[0] is None  # 예시가 없으면 닮음을 말할 수 없다
+    assert layer_diff.overlap(same, none)[0] is None
+    with pytest.raises(SystemExit):
+        layer_diff.parse_args(["--provider", "anthropic"])  # --generate 없이 실제 모델을 고를 수 없다
+
+
+@pytest.mark.anyio
+async def test_layer_diff_compares_every_pair_without_calling_the_model_or_keeping_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import layer_diff
+
+    out = tmp_path / "layers.csv"
+    args = layer_diff.parse_args(
+        ["--conditions", "B,C", "--case", "E001", "--user", "eval-tools-layers", "--voice", "--out", str(out)]
+    )
+    state = build_state(_settings().model_copy(update={"prompt_version": "rewrite-v5"}))
+
+    async def boom(*_: Any, **__: Any) -> Any:
+        raise AssertionError("--generate 없이는 모델을 부르지 않는다")
+
+    monkeypatch.setattr(state.workflow.provider, "generate", boom)
+    try:
+        await layer_diff.run_with_state(state, args)
+    finally:
+        await state.close()
+    raw = out.read_text("utf-8")
+    with out.open(encoding="utf-8", newline="") as fp:
+        rows = list(csv.DictReader(fp))
+    assert list(rows[0]) == layer_diff.FIELDS
+    assert len(rows) == 2 * 6  # 조건 2 × 상대 4명의 쌍 6
+    b = [r for r in rows if r["condition"] == "B"]
+    c = [r for r in rows if r["condition"] == "C"]
+    assert all(r["style_similarity"] == "" and r["voice_a"] == "False" for r in b)  # B는 예시도 지문도 없다
+    assert all(0 <= float(r["style_similarity"]) < 1 for r in c)  # 상대마다 예시 글이 다르다
+    assert any(r["voice_a"] == "True" or r["voice_b"] == "True" for r in c)
+    assert all(r["result_similarity"] == "" and 0 < float(r["prompt_similarity"]) < 1 for r in rows)
+    case = next(x for x in run_eval.load_cases(run_eval.DEFAULT_CASES, "all") if x["case_id"] == "E001")
+    assert case["original_text"] not in raw and "팀장님" not in raw  # 숫자와 관계 이름뿐이다

@@ -12,6 +12,7 @@ mode: work
 - 접점 파일 검사: `.venv/Scripts/python.exe scripts/validate_data_files.py`
 - 합성 대화 적재(멱등): `.venv/Scripts/python.exe scripts/import_synthetic.py --user demo [--graph]` (DATABASE_URL 필요, 첫 실행에 e5 모델 다운로드. `--graph`는 Neo4j에 haiku로 수집, 메시지당 10~15초)
 - 평가: `.venv/Scripts/python.exe evals/run_eval.py --conditions A,B,C,D [--provider anthropic --repeat 3 --embedding fake]` — C/D는 `--dataset`을 `--user eval`로 적재한 뒤 검색하고 `recall`(relevant_msg_ids 대비) 열을 채운다. D는 그래프 수집까지 한다(처음 한 번만 느리다)
+- 층별 비교(같은 초안 × 모든 상대, `--generate` 없이는 모델 호출 없음): `.venv/Scripts/python.exe evals/layer_diff.py --embedding fake [--conditions B,C --voice --prompt rewrite-v5]`. `run_eval.py --voice`는 C·D 입력에 말투 지문을 채운다(없으면 평가에 지문이 안 들어간다). 결과 CSV의 `fm*` 열은 `docs/design.md` "실패 유형 점검"의 유형 번호
 - 제안 정확도(모델 호출 없음, 정답은 `evals/gold_personas.csv` — 형식은 `gold_personas.example.csv`): `.venv/Scripts/python.exe evals/suggestion_accuracy.py --embedding fake [--no-graph --segment-k 1|2|3 --register-min-messages N]` (`.env`에 DATABASE_URL이 있으면 `--user`(기본 eval)의 대화를 그 DB에 적재한다). 첨삭 비교에 제안·정답 설정을 입히려면 `run_eval.py --apply-suggestion all|matching --gold …` / `--persona-override FILE`, 무효화 처리 비교는 `--invalidation trust|artifacts|ignore`
 - 그래프 스파이크: `cd graph/graphiti_p0 && ../../.venv/Scripts/python.exe -m pytest -q` / `ingest.py --dry-run` / `--limit 5`
 - 서버: `cd backend && ../.venv/Scripts/python.exe -m uvicorn app.main:app --reload`

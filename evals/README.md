@@ -10,6 +10,7 @@
 | [preserve_rules.md](preserve_rules.md) | 보존 항목 분류표와 검증 규칙 — `backend/app/ai/preserve.py`의 근거 |
 | [style_rubric.md](style_rubric.md) | 스타일 5점 루브릭 (블라인드 평가·LLM judge 공용) |
 | `run_eval.py` | 사례 × 조건(A/B/C/D)을 백엔드 워크플로로 실행해 `results/`에 CSV 저장 |
+| `layer_diff.py` | 같은 초안을 모든 상대에게 돌려 층별(문체 예시·프롬프트·결과)로 두 상대가 얼마나 닮았는지 숫자로 냄. `--generate` 없이는 모델 호출 없음. 아래 "층별 비교" 절 |
 | `suggestion_accuracy.py` | 제안 정확도: 말투 제안이 정답 설정과 얼마나 맞는지 채점 (문장을 만들지 않음, 모델 호출 없음). 아래 "제안 정확도" 절 |
 | `gold_personas.csv` | **정답 설정 타임라인** — 평가 담당이 쓴다 (아직 없음). 형식은 아래 절 |
 | [gold_personas.example.csv](gold_personas.example.csv) | 위 파일의 **예시**. 개발자가 형식을 보여 주려고 쓴 것이고 팀의 정답이 아니다 |
@@ -135,3 +136,35 @@ python evals/run_eval.py --conditions C --apply-suggestion matching --gold evals
   `suggestion_applied`(무엇을 바꿨는지. 빈칸 = 이 기능을 안 씀, `none` = 바꿀 것이 없었음).
 - `--invalidation trust|artifacts|ignore`는 그래프(D)가 "무효가 된 사실"을 어떻게 다룰지 바꿔 보는 실험용입니다.
 - 플래그를 하나도 안 쓰면 예전과 똑같이 돕니다(열 네 개만 늘어납니다).
+
+## 실패 신호 열 (`run_eval.py`)
+
+결과 CSV의 `fm*` 열은 `docs/design.md` "실패 유형 점검 (MAST)" 표의 유형 번호를 따른다. 숫자와 참/거짓뿐이고 참고 신호다.
+
+| 열 | 뜻 |
+|---|---|
+| `fm11_first_checks` | 1차 시도가 걸린 검증 종류 (`fact_added;preserve_missing`). 통과했으면 빈칸 |
+| `fm13_attempts` | 생성 시도 횟수 |
+| `fm23_length_ratio` | 결과 길이 ÷ 초안 길이 |
+| `fm24_no_examples` | C·D인데 프롬프트에 문체 예시가 없었다 |
+| `fm25_evidence_unused` | 문체 예시가 있었는데 모델이 근거를 하나도 적지 않았다 (모델이 스스로 적는 값이라 참고만) |
+| `fm32_register_warned` | 말투 경고가 붙었다 (`REGISTER_POST_CHECK`를 켠 실행에서만) |
+| `fm33_fallback` | 원문 유지로 끝났다 — 표본을 읽어 멀쩡한 결과를 버렸는지 본다 |
+
+`--voice`를 주면 C·D 입력에 말투 지문을 채운다(서비스의 `VOICE_FINGERPRINT`와 같은 값, `--prompt rewrite-v5`와 함께).
+주지 않으면 입력은 예전 그대로이고, 그 경우 평가 수치에는 지문의 효과가 들어 있지 않다.
+
+## 층별 비교 (`layer_diff.py`)
+
+"상대가 달라도 결과가 비슷하다"가 어느 층에서 생기는지 좁힌다. 사례의 초안을 등장인물 전원에게 돌리고 상대 쌍마다 잰다.
+
+```bash
+python evals/layer_diff.py --embedding fake                               # 조건 C, 모델 호출 없음
+python evals/layer_diff.py --conditions B,C --voice --prompt rewrite-v5   # 지문을 켰을 때 프롬프트가 얼마나 갈리는지
+python evals/layer_diff.py --voice --prompt rewrite-v5 --generate --provider anthropic --case E001   # 결과 문장까지 (비용)
+```
+
+- `style_similarity`: 두 상대의 문체 예시 글이 닮은 정도. `prompt_similarity`: 초안을 뺀 프롬프트. `result_similarity`: 결과 문장(`--generate`).
+- 프롬프트 유사도는 낮은데 결과 유사도가 높으면 지시문 쪽을, 프롬프트 유사도부터 높으면 검색·설정·지문 쪽을 본다.
+- 글자 유사도는 거칠다(호칭 하나만 달라도 거의 같다). 블라인드 평가를 대신하지 않는다.
+- 출력은 `results/layer-diff-<시각>.csv`, 사례 id·관계 이름·숫자뿐이다. `.env`에 `DATABASE_URL`이 있으면 그 DB에 `--user`의 대화를 적재한다.
