@@ -7,6 +7,7 @@ struct ComposeView: View {
     @StateObject private var run = Runner()
     @AppStorage("lastContact") private var contact = ""
     @AppStorage("recentContacts") private var recentIDs = ""
+    @AppStorage(Prefs.experiment) private var experiment = false
     @State private var draft = ""
     @State private var situation = ""
     @State private var condition = "D"
@@ -36,6 +37,19 @@ struct ComposeView: View {
         Recents.pick(stored: recentIDs, contacts: session.contacts)
     }
 
+    /// 칩으로 보일 상대: 최근 상대에 지금 고른 상대가 없으면 맨 앞에 넣는다 (메뉴에서 고른 상대도 칩으로 보인다).
+    private var chips: [Contact] {
+        Recents.chips(recents: recents, selected: contact, contacts: session.contacts)
+    }
+
+    /// 칩에 없는 나머지 상대. "다른 상대" 메뉴에 들어간다.
+    private var others: [Contact] {
+        let shown = Set(chips.map(\.id))
+        return session.contacts.filter { !shown.contains($0.id) }
+    }
+
+    private var hasWarnings: Bool { !(result?.result.warnings.isEmpty ?? true) }
+
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
@@ -45,7 +59,7 @@ struct ComposeView: View {
                     if let result {
                         if result.result.status == .recommended { recommendation(result) } else { kept(result) }
                     }
-                    demoSettings
+                    if experiment { demoSettings }
                 }
                 .padding(.horizontal, Theme.Space.l)
                 .padding(.vertical, Theme.Space.l)
@@ -68,6 +82,10 @@ struct ComposeView: View {
         .onChange(of: recentIDs) { _ in session.syncKeyboard() }
         .onChange(of: situation) { _ in invalidate() }
         .onChange(of: condition) { _ in invalidate() }
+        .onChange(of: experiment) { on in
+            // 실험 설정을 끄면 숨은 값이 남아 결과를 바꾸지 않게 기본으로 되돌린다.
+            if !on { condition = "D"; situation = "" }
+        }
         .alert("초안을 그대로 둘까요?", isPresented: $rejecting) {
             TextField("추천이 맞지 않은 이유 (선택)", text: $reason)
             Button("초안 그대로") { reject() }
@@ -82,31 +100,35 @@ struct ComposeView: View {
             Text("누구에게 보내나요?").font(.title2.bold()).foregroundStyle(Theme.ink)
                 .accessibilityAddTraits(.isHeader)
             if session.contacts.isEmpty {
-                Label("상대 탭에서 상대를 먼저 등록하세요.", systemImage: "person.crop.circle.badge.plus")
+                Label("상대 탭에서 상대를 먼저 추가해 주세요.", systemImage: "person.crop.circle.badge.plus")
                     .font(.body).foregroundStyle(Theme.ink2)
                     .card()
             } else {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: Theme.Space.s) {
-                        ForEach(recents) { item in
+                        ForEach(chips) { item in
                             Button(item.alias) { contact = item.id }
                                 .buttonStyle(ChipStyle(selected: item.id == contact))
                                 .accessibilityAddTraits(item.id == contact ? .isSelected : [])
                         }
+                        // 칩에 다 못 담은 상대는 같은 줄의 메뉴 칩 하나로 고른다.
+                        if !others.isEmpty {
+                            Menu {
+                                ForEach(others) { item in Button(item.alias) { contact = item.id } }
+                            } label: {
+                                Label("다른 상대", systemImage: "chevron.down")
+                                    .labelStyle(.titleAndIcon)
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(Theme.accentStrong)
+                                    .padding(.horizontal, Theme.Space.l)
+                                    .frame(minHeight: Theme.minTouch)
+                                    .background(Theme.surface2, in: Capsule())
+                            }
+                        }
                     }
                 }
-                HStack {
-                    Text("상대 바꾸기").font(.body).foregroundStyle(Theme.ink)
-                    Spacer(minLength: Theme.Space.s)
-                    Picker("상대 바꾸기", selection: $contact) {
-                        ForEach(session.contacts) { Text($0.alias).tag($0.id) }
-                    }
-                    .pickerStyle(.menu).tint(Theme.accentStrong)
-                }
-                .frame(minHeight: Theme.minTouch)
-                .card(padding: Theme.Space.m)
                 if !hasPersona && condition != "A" {
-                    Label("상대 탭에서 이 상대의 페르소나를 저장하면 첨삭할 수 있습니다.", systemImage: "info.circle.fill")
+                    Label("상대 탭에서 이 상대에게 쓸 말투를 정하면 다듬을 수 있어요.", systemImage: "info.circle.fill")
                         .font(.footnote).foregroundStyle(Theme.warn)
                         .card(padding: Theme.Space.m, fill: Theme.warnSoft)
                 }
@@ -123,17 +145,17 @@ struct ComposeView: View {
                 .font(.body).foregroundStyle(Theme.ink)
                 .scrollContentBackground(.hidden)
                 .frame(minHeight: Metric.draftMinHeight)
-                .accessibilityLabel("합성 메시지 초안").focused($editing)
+                .accessibilityLabel("초안").focused($editing)
                 .card(padding: Theme.Space.m)
-            Text("시연에는 합성 대화만 입력하세요. 누르면 서버에서 AI가 초안을 처리합니다.")
+            Text("버튼을 누르면 초안을 서버로 보내 AI가 다듬어요. 지금은 지어낸 대화만 넣어 주세요.")
                 .font(.footnote).foregroundStyle(Theme.muted)
         }
     }
 
-    // MARK: 시연 설정 — 조건·상황
+    // MARK: 실험 설정 — 조건·상황 (계정 탭에서 켰을 때만 보인다)
 
     private var demoSettings: some View {
-        DisclosureGroup("시연 설정") {
+        DisclosureGroup("실험 설정") {
             VStack(alignment: .leading, spacing: Theme.Space.m) {
                 HStack {
                     Text("조건").font(.body).foregroundStyle(Theme.ink)
@@ -159,18 +181,32 @@ struct ComposeView: View {
     // MARK: 주 행동 — 화면 아래 고정
 
     /// 한 화면에 주 행동 하나: 추천이 떠 있으면 "키보드에 준비", 아니면 "…에게 맞게".
+    /// 확인할 것(주의)이 있는 추천은 안전한 쪽("초안 그대로")이 주 버튼이고, 준비는 좁은 보조 버튼으로 물러난다.
     @ViewBuilder
     private var actionBar: some View {
         Group {
             if let result, result.result.status == .recommended {
-                Button { prepare(result) } label: { Label("키보드에 준비", systemImage: "keyboard") }
-                    .disabled(edited.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                let empty = edited.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                if hasWarnings {
+                    HStack(spacing: Theme.Space.s) {
+                        Button("그래도 준비") { prepare(result) }
+                            .buttonStyle(.secondary)
+                            .frame(width: Metric.sideAction)
+                            .disabled(empty)
+                        Button("초안 그대로") { reason = ""; rejecting = true }
+                            .buttonStyle(.primary)
+                    }
+                } else {
+                    Button { prepare(result) } label: { Label("키보드에 준비", systemImage: "keyboard") }
+                        .buttonStyle(.primary)
+                        .disabled(empty)
+                }
             } else {
                 Button { rewrite() } label: { Label("\(alias)에게 맞게", systemImage: "sparkles") }
+                    .buttonStyle(.primary)
                     .disabled(blocked)
             }
         }
-        .buttonStyle(.primary)
         .padding(.horizontal, Theme.Space.l)
         .padding(.vertical, Theme.Space.s)
         .background(Theme.bg)
@@ -213,17 +249,29 @@ struct ComposeView: View {
                 }
                 .card(padding: Theme.Space.m, fill: Theme.warnSoft)
             }
-            VStack(spacing: Theme.Space.s) {
-                HStack(spacing: Theme.Space.s) {
-                    Button("다시 만들기") { self.rewrite() }
-                    Button(fixing ? "고치기 완료" : "직접 고치기") { fixing.toggle() }
+            // 보조 행동은 한 줄로 조용하게. 주 행동은 화면 아래 버튼 하나다.
+            HStack(spacing: Theme.Space.s) {
+                Button { self.rewrite() } label: { Label("다시 만들기", systemImage: "arrow.clockwise") }
+                Button { fixing.toggle() } label: {
+                    Label(fixing ? "고치기 완료" : "직접 고치기", systemImage: fixing ? "checkmark" : "pencil")
                 }
-                HStack(spacing: Theme.Space.s) {
-                    Button("초안 그대로") { reason = ""; rejecting = true }
-                    Button("초안에 적용") { apply(rewrite) }
+                Spacer(minLength: 0)
+                Menu {
+                    Button { apply(rewrite) } label: { Label("초안을 이 문장으로 바꾸기", systemImage: "arrow.up.doc") }
+                    if !hasWarnings {
+                        Button { reason = ""; rejecting = true } label: {
+                            Label("초안 그대로 두기", systemImage: "arrow.uturn.backward")
+                        }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .frame(width: Theme.minTouch, height: Theme.minTouch)
+                        .contentShape(Rectangle())
                 }
+                .accessibilityLabel("더 보기")
             }
-            .buttonStyle(.secondary)
+            .buttonStyle(QuietButtonStyle())
+            .foregroundStyle(Theme.accentStrong)
             if !rewrite.result.change_reasons.isEmpty {
                 VStack(alignment: .leading, spacing: Theme.Space.xs) {
                     ForEach(rewrite.result.change_reasons.indices, id: \.self) {
@@ -232,13 +280,13 @@ struct ComposeView: View {
                 }
                 .font(.footnote).foregroundStyle(Theme.muted)
             }
-            Text("넣기만 해요. 전송은 직접 누릅니다." + usageLine)
+            Text("넣기만 해요. 보내기는 직접 눌러요." + usageLine)
                 .font(.footnote).foregroundStyle(Theme.muted)
         }
     }
 
     private var resultHeader: some View {
-        Label("\(alias)에게 맞게", systemImage: "sparkles")
+        Label("\(alias)에게 맞게 다듬었어요", systemImage: "sparkles")
             .font(.headline).foregroundStyle(Theme.ink)
             .accessibilityAddTraits(.isHeader)
             .id("result")
@@ -255,7 +303,7 @@ struct ComposeView: View {
                     .font(.headline).foregroundStyle(Theme.warn)
                 let violations = rewrite.result.validation.violations
                 if violations.isEmpty && rewrite.result.warnings.isEmpty {
-                    Text("사실 보존을 확인하지 못해 추천하지 않았습니다. 초안은 그대로 있어요.")
+                    Text("내용이 달라질 수 있어서 추천하지 않았어요. 초안은 그대로예요.")
                         .font(.body).foregroundStyle(Theme.ink)
                 }
                 ForEach(violations.indices, id: \.self) { index in
@@ -274,13 +322,13 @@ struct ComposeView: View {
                 Button("다시 만들기") { self.rewrite() }
             }
             .buttonStyle(.secondary)
-            Text("입력한 초안은 바뀌지 않았습니다." + usageLine)
+            Text("입력한 초안은 바뀌지 않았어요." + usageLine)
                 .font(.footnote).foregroundStyle(Theme.muted)
         }
     }
 
     private var usageLine: String {
-        usage.map { " 오늘 \($0.rewrites) / \($0.rewrite_limit)회 사용." } ?? ""
+        usage.map { " 오늘 \($0.rewrites) / \($0.rewrite_limit)회 썼어요." } ?? ""
     }
 
     // MARK: 동작
@@ -321,6 +369,8 @@ struct ComposeView: View {
             answered = false
             key = UUID()
             recentIDs = Recents.push(contact, onto: recentIDs)
+            // 추천이면 가볍게, 초안을 그대로 둔 경우나 확인할 것이 있으면 주의 진동.
+            Haptic.notify(response.result.status == .recommended && response.result.warnings.isEmpty ? .success : .warning)
         }
     }
 
@@ -352,7 +402,8 @@ struct ComposeView: View {
         run {
             try KeyboardMessage.save(text)
             try await sendFeedback(rewrite, accepted: true, text: text)
-            run.notice = "Persona_ize 키보드에서 문장을 확인하고 넣으세요."
+            run.notice = "준비했어요. Persona_ize 키보드에서 확인하고 넣어 주세요."
+            Haptic.notify(.success)
         }
     }
 
@@ -372,6 +423,20 @@ struct ComposeView: View {
 private enum Metric {
     static let draftMinHeight: CGFloat = 120
     static let fixMinHeight: CGFloat = 96
+    /// 주의가 있을 때 주 버튼 옆으로 물러난 보조 버튼의 너비.
+    static let sideAction: CGFloat = 120
+}
+
+/// 카드 안의 조용한 보조 행동: 면 없이 강조색 글자와 기호만. 누를 수 있는 높이는 44pt를 지킨다.
+private struct QuietButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.subheadline.weight(.semibold))
+            .padding(.horizontal, Theme.Space.s)
+            .frame(minHeight: Theme.minTouch)
+            .opacity(configuration.isPressed ? 0.6 : 1)
+            .contentShape(Rectangle())
+    }
 }
 
 /// 최근 상대 칩. 44pt 이상, 고른 칩은 강조색 면 + 체크 기호로 구분한다.
@@ -440,6 +505,13 @@ enum Recents {
         guard !id.isEmpty else { return stored }
         let rest = stored.split(separator: ",").map(String.init).filter { $0 != id }
         return ([id] + rest).prefix(limit).joined(separator: ",")
+    }
+
+    /// 칩 줄에 보일 상대. 고른 상대가 최근 목록에 없으면 맨 앞에 넣고 개수는 그대로 둔다.
+    static func chips(recents: [Contact], selected: String, contacts: [Contact]) -> [Contact] {
+        guard !recents.contains(where: { $0.id == selected }),
+              let chosen = contacts.first(where: { $0.id == selected }) else { return recents }
+        return [chosen] + recents.prefix(limit - 1)
     }
 
     /// 기록 순서대로 아직 있는 상대를 고르고, 모자라면 목록 앞에서 채운다.

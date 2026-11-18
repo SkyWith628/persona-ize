@@ -47,8 +47,8 @@ struct ServiceError: LocalizedError {
         }
         let failure = try? JSONDecoder().decode(Failure.self, from: data)
         if let message = failure?.message, !message.isEmpty { return message }
-        if let detail = failure?.detail?.first?.msg { return "입력을 확인하세요: \(detail)" }
-        return status == 401 ? "로그인이 만료되었습니다. 다시 로그인하세요." : "서버 응답을 확인하세요."
+        if let detail = failure?.detail?.first?.msg { return "입력을 확인해 주세요: \(detail)" }
+        return status == 401 ? "로그인이 만료됐어요. 다시 로그인해 주세요." : "서버 응답을 확인해 주세요."
     }
 }
 
@@ -58,7 +58,7 @@ enum ServerAddress {
         guard let parts = URLComponents(string: text.trimmingCharacters(in: .whitespacesAndNewlines)),
               parts.scheme?.lowercased() == "https", let host = parts.host, !host.isEmpty,
               parts.user == nil, parts.password == nil, parts.query == nil, parts.fragment == nil,
-              let url = parts.url else { throw ServiceError(message: "HTTPS 서버 주소를 확인하세요.") }
+              let url = parts.url else { throw ServiceError(message: "HTTPS 서버 주소를 확인해 주세요.") }
         return url
     }
 }

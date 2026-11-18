@@ -116,7 +116,7 @@ final class LoginLogicTests: XCTestCase {
     }
 
     func testUnreadableFailureBodyFallsBackToGenericMessage() {
-        XCTAssertEqual((API.failure(Data("<html>".utf8), status: 502) as? ServiceError)?.message, "서버 응답을 확인하세요.")
+        XCTAssertEqual((API.failure(Data("<html>".utf8), status: 502) as? ServiceError)?.message, "서버 응답을 확인해 주세요.")
     }
 
     // MARK: 계정 상태 안내

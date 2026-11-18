@@ -34,7 +34,7 @@ struct HistoryView: View {
                     .listRowSeparatorTint(Theme.line)
                 }
             } header: {
-                Text("최근 첨삭 \(rewrites.count)건")
+                Text("최근에 다듬은 글 \(rewrites.count)건")
                     .font(.footnote.weight(.semibold))
                     .foregroundStyle(Theme.muted)
                     .textCase(nil)
@@ -49,7 +49,7 @@ struct HistoryView: View {
     }
 
     static func status(_ rewrite: Rewrite) -> String {
-        rewrite.result.status == .recommended ? "추천" : "원문 유지"
+        rewrite.result.status == .recommended ? "추천" : "초안 유지"
     }
 
     private func load() async throws {
@@ -74,6 +74,7 @@ private struct StatusTag: View {
 private struct RewriteRow: View {
     let rewrite: Rewrite
     let alias: String
+    @AppStorage(Prefs.experiment) private var experiment = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s) {
@@ -101,7 +102,7 @@ private struct RewriteRow: View {
     }
 
     private var meta: some View {
-        Text([alias, "조건 \(rewrite.condition)", Labels.date(rewrite.created_at)].joined(separator: " · "))
+        Text(Labels.meta(alias: alias, rewrite: rewrite, experiment: experiment))
             .font(.footnote)
             .foregroundStyle(Theme.muted)
     }
@@ -117,11 +118,11 @@ private struct EmptyHistory: View {
                 .font(.largeTitle)
                 .foregroundStyle(Theme.muted)
                 .accessibilityHidden(true)
-            Text("아직 받은 추천이 없습니다.")
+            Text("아직 다듬은 글이 없어요.")
                 .font(.headline)
                 .foregroundStyle(Theme.ink)
             Text(filtered ? "다른 상대를 고르거나 ‘전체’로 바꿔 보세요."
-                          : "문장을 다듬으면 여기에 최근 20건이 쌓입니다.")
+                          : "문장을 다듬으면 여기에 최근 20건이 쌓여요.")
                 .font(.footnote)
                 .foregroundStyle(Theme.muted)
         }
@@ -136,6 +137,7 @@ private struct RewriteDetailView: View {
     let rewrite: Rewrite
     let alias: String
     @StateObject private var run = Runner()
+    @AppStorage(Prefs.experiment) private var experiment = false
 
     var body: some View {
         let result = rewrite.result
@@ -149,18 +151,18 @@ private struct RewriteDetailView: View {
                         .lineSpacing(Theme.Space.xs)
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
-                    Text("\(alias) · 조건 \(rewrite.condition) · \(Labels.date(rewrite.created_at))")
+                    Text(Labels.meta(alias: alias, rewrite: rewrite, experiment: experiment))
                         .font(.footnote)
                         .foregroundStyle(Theme.muted)
                 }
                 .card()
 
                 if !result.warnings.isEmpty {
-                    DetailBlock(title: "주의", systemImage: "exclamationmark.triangle.fill", tint: Theme.warn,
+                    DetailBlock(title: "확인해 주세요", systemImage: "exclamationmark.triangle.fill", tint: Theme.warn,
                                 fill: Theme.warnSoft, lines: result.warnings)
                 }
                 if !result.preserved_items.isEmpty {
-                    DetailBlock(title: "보존 항목", systemImage: "lock.fill", tint: Theme.ok,
+                    DetailBlock(title: "지킨 내용", systemImage: "lock.fill", tint: Theme.ok,
                                 lines: [result.preserved_items.map(\.text).joined(separator: ", ")])
                 }
                 if !result.change_reasons.isEmpty {
@@ -177,7 +179,8 @@ private struct RewriteDetailView: View {
                 Button("키보드에 준비") {
                     run {
                         try KeyboardMessage.save(result.result_text)
-                        run.notice = "Persona_ize 키보드에서 문장을 확인하고 넣으세요."
+                        run.notice = "준비했어요. Persona_ize 키보드에서 확인하고 넣어 주세요."
+                        Haptic.notify(.success)
                     }
                 }
                 .buttonStyle(.primary)
@@ -187,7 +190,7 @@ private struct RewriteDetailView: View {
             }
         }
         .status(run)
-        .navigationTitle("첨삭 결과")
+        .navigationTitle("다듬은 글")
         .navigationBarTitleDisplayMode(.inline)
     }
 }

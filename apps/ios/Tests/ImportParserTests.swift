@@ -60,9 +60,9 @@ final class APITests: XCTestCase {
 
     func testFailureMessagePrefersServerMessageThenValidationDetail() {
         XCTAssertEqual(API.failureMessage(Data(#"{"code":"conflict","message":"버전이 다릅니다."}"#.utf8), status: 409), "버전이 다릅니다.")
-        XCTAssertEqual(API.failureMessage(Data(#"{"detail":[{"msg":"too short"}]}"#.utf8), status: 422), "입력을 확인하세요: too short")
-        XCTAssertEqual(API.failureMessage(Data(), status: 401), "로그인이 만료되었습니다. 다시 로그인하세요.")
-        XCTAssertEqual(API.failureMessage(Data("<html>".utf8), status: 502), "서버 응답을 확인하세요.")
+        XCTAssertEqual(API.failureMessage(Data(#"{"detail":[{"msg":"too short"}]}"#.utf8), status: 422), "입력을 확인해 주세요: too short")
+        XCTAssertEqual(API.failureMessage(Data(), status: 401), "로그인이 만료됐어요. 다시 로그인해 주세요.")
+        XCTAssertEqual(API.failureMessage(Data("<html>".utf8), status: 502), "서버 응답을 확인해 주세요.")
     }
 }
 
@@ -140,6 +140,26 @@ final class RecentsTests: XCTestCase {
         let contacts = ["a", "b", "c", "d"].map(contact)
         XCTAssertEqual(Recents.pick(stored: "x,c", contacts: contacts).map(\.id), ["c", "a", "b"])
         XCTAssertEqual(Recents.pick(stored: "", contacts: Array(contacts.prefix(2))).map(\.id), ["a", "b"])
+    }
+
+    func testChipsShowTheSelectedContactEvenWhenItIsNotRecent() {
+        let contacts = ["a", "b", "c", "d", "e"].map(contact)
+        let recents = Recents.pick(stored: "a,b,c", contacts: contacts)
+        // 최근 목록에 있는 상대를 고르면 칩 줄은 그대로다.
+        XCTAssertEqual(Recents.chips(recents: recents, selected: "b", contacts: contacts).map(\.id), ["a", "b", "c"])
+        // 메뉴에서 고른 상대는 맨 앞 칩이 되고, 칩 수는 늘지 않는다.
+        XCTAssertEqual(Recents.chips(recents: recents, selected: "e", contacts: contacts).map(\.id), ["e", "a", "b"])
+        // 없는 상대·빈 값은 최근 목록을 그대로 둔다.
+        XCTAssertEqual(Recents.chips(recents: recents, selected: "x", contacts: contacts).map(\.id), ["a", "b", "c"])
+        XCTAssertEqual(Recents.chips(recents: [], selected: "", contacts: []).map(\.id), [])
+    }
+
+    func testDateIsWrittenInKoreanRegardlessOfDeviceLanguage() {
+        let text = Labels.date("2026-11-18T02:05:00Z")
+        XCTAssertTrue(text.contains("2026년") && text.contains("11월"), text)
+        XCTAssertTrue(text.contains("오전") || text.contains("오후"), text)
+        // 읽을 수 없는 값은 앞부분을 그대로 보인다.
+        XCTAssertEqual(Labels.date("2026-11-18 soon"), "2026-11-18 soon")
     }
 
     func testViolationAndStepLabels() {

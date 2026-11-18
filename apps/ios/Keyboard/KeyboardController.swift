@@ -99,7 +99,7 @@ final class KeyboardController: UIInputViewController {
     private func renderIdle() {
         var canRewrite = false
         if !hasFullAccess {
-            content.addArrangedSubview(notice("설정 → 일반 → 키보드 → 키보드 → Persona_ize에서 ‘전체 접근 허용’을 켜면 입력창의 초안을 여기서 바로 다듬습니다.", symbol: "lock.fill"))
+            content.addArrangedSubview(notice("설정 → 일반 → 키보드 → 키보드 → Persona_ize에서 ‘전체 접근 허용’을 켜면 입력창의 초안을 여기서 바로 다듬을 수 있어요.", symbol: "lock.fill"))
         } else if let link, let person = link.current {
             canRewrite = true
             content.addArrangedSubview(row([
@@ -107,7 +107,7 @@ final class KeyboardController: UIInputViewController {
                 button("상대 바꾸기") { [weak self] in self?.phase = .picking }
             ]))
         } else if link != nil {
-            content.addArrangedSubview(notice("Persona_ize 앱의 상대 탭에서 페르소나를 저장한 상대가 있어야 다듬을 수 있어요.", symbol: "person.crop.circle.badge.plus"))
+            content.addArrangedSubview(notice("Persona_ize 앱의 상대 탭에서 말투를 정한 상대가 있어야 다듬을 수 있어요.", symbol: "person.crop.circle.badge.plus"))
         } else {
             content.addArrangedSubview(notice("Persona_ize 앱에서 로그인하면 입력창의 초안을 여기서 바로 다듬을 수 있어요.", symbol: "info.circle.fill"))
         }
@@ -148,7 +148,7 @@ final class KeyboardController: UIInputViewController {
         chips.spacing = Theme.Space.s
         for person in link?.ordered ?? [] {
             let current = person.id == link?.current?.id
-            let chip = button(person.ready ? person.alias : "\(person.alias) (페르소나 없음)",
+            let chip = button(person.ready ? person.alias : "\(person.alias) (말투 없음)",
                               kind: current ? .primary : .secondary,
                               symbol: current ? "checkmark" : nil) { [weak self] in self?.choose(person.id) }
             chip.isEnabled = person.ready
@@ -167,7 +167,7 @@ final class KeyboardController: UIInputViewController {
             scroll.heightAnchor.constraint(equalToConstant: 48)
         ])
         content.addArrangedSubview(scroll)
-        content.addArrangedSubview(label("상대를 새로 만들거나 말투를 바꾸려면 Persona_ize 앱을 여세요.", style: .footnote, color: Theme.Palette.muted))
+        content.addArrangedSubview(label("상대를 새로 만들거나 말투를 바꾸려면 Persona_ize 앱을 열어 주세요.", style: .footnote, color: Theme.Palette.muted))
     }
 
     /// M3: 추천 문장 → 지킨 내용 → 주의 → 넣기.
@@ -195,12 +195,18 @@ final class KeyboardController: UIInputViewController {
             content.addArrangedSubview(panel(warning, symbol: "exclamationmark.triangle.fill", tint: Theme.Palette.warn,
                                              fill: Theme.Palette.warnSoft, compact: true))
         }
+        // 확인할 것이 있으면 안전한 쪽(초안 그대로)이 주 버튼이다. 넣기는 보조 버튼으로 물러난다.
+        let risky = !rewrite.result.warnings.isEmpty
         content.addArrangedSubview(row([
             button("다시 만들기") { [weak self] in self?.start() },
-            button("초안 그대로") { [weak self] in self?.phase = .idle },
-            button("입력창에 넣기", kind: .primary) { [weak self] in self?.insert(rewrite) }
+            button(risky ? "그래도 넣기" : "초안 그대로", kind: .secondary) { [weak self] in
+                if risky { self?.insert(rewrite) } else { self?.phase = .idle }
+            },
+            button(risky ? "초안 그대로" : "입력창에 넣기", kind: .primary) { [weak self] in
+                if risky { self?.phase = .idle } else { self?.insert(rewrite) }
+            }
         ]))
-        content.addArrangedSubview(label("넣기만 해요. 전송은 직접 누릅니다." + usageLine, style: .caption2, color: Theme.Palette.muted))
+        content.addArrangedSubview(label("넣기만 해요. 보내기는 직접 눌러요." + usageLine, style: .caption2, color: Theme.Palette.muted))
     }
 
     /// M4: 검증에 실패해 추천하지 않은 경우.
@@ -208,7 +214,7 @@ final class KeyboardController: UIInputViewController {
         content.addArrangedSubview(label("초안을 그대로 뒀어요", style: .headline))
         let reasons = rewrite.result.validation.violations.map { ViolationText.title($0.check) + " — " + $0.detail }
             + rewrite.result.warnings
-        let detail = label(reasons.isEmpty ? "사실 보존을 확인하지 못해 추천하지 않았습니다." : reasons.joined(separator: "\n"),
+        let detail = label(reasons.isEmpty ? "내용이 달라질 수 있어서 추천하지 않았어요." : reasons.joined(separator: "\n"),
                            style: .footnote)
         detail.numberOfLines = 5
         content.addArrangedSubview(panel(detail, symbol: "exclamationmark.triangle.fill", tint: Theme.Palette.warn,
@@ -219,7 +225,7 @@ final class KeyboardController: UIInputViewController {
     }
 
     private var usageLine: String {
-        usage.map { " 오늘 \($0.rewrites) / \($0.rewrite_limit)회 사용." } ?? ""
+        usage.map { " 오늘 \($0.rewrites) / \($0.rewrite_limit)회 썼어요." } ?? ""
     }
 
     // MARK: 동작
@@ -272,6 +278,7 @@ final class KeyboardController: UIInputViewController {
         let replace = { [weak self] in
             for _ in 0..<plan.deletions { proxy.deleteBackward() }
             proxy.insertText(rewrite.result.result_text)
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
             self?.draft = ""
             self?.phase = .idle
             if let link { Task { await KeyboardClient(link: link).accept(rewrite.id) } }

@@ -82,7 +82,7 @@ private struct StatusBar: ViewModifier {
                     } else {
                         Image(systemName: "info.circle.fill").foregroundStyle(Theme.accent)
                     }
-                    Text(run.busy ? "처리 중" : run.notice)
+                    Text(run.busy ? "처리하고 있어요" : run.notice)
                         .font(.footnote.weight(.medium))
                         .foregroundStyle(run.busy ? Theme.ink2 : Theme.ink)
                         .multilineTextAlignment(.leading)
@@ -104,11 +104,24 @@ extension View {
     func status(_ run: Runner) -> some View { modifier(StatusBar(run: run)) }
 }
 
+/// 기기에 기억하는 설정 이름.
+enum Prefs {
+    /// 실험 설정(조건·상황·토큰 수)을 화면에 보일지. 평가·시연 때만 켠다.
+    static let experiment = "experiment"
+}
+
+/// 결과를 손끝으로 알리는 짧은 진동.
+enum Haptic {
+    @MainActor static func notify(_ kind: UINotificationFeedbackGenerator.FeedbackType) {
+        UINotificationFeedbackGenerator().notificationOccurred(kind)
+    }
+}
+
 enum Labels {
     static let relationships = [("superior", "상사"), ("colleague", "동료·동기"), ("subordinate", "후배"), ("friend", "친구"),
                                 ("family", "가족"), ("partner", "연인"), ("acquaintance", "지인·거래처")]
-    static let conditions = [("D", "D 페르소나 + 과거 표현 + 맥락"), ("C", "C 페르소나 + 과거 표현"),
-                             ("B", "B 페르소나"), ("A", "A 기준선(페르소나 없음)")]
+    static let conditions = [("D", "D 말투 + 예전 표현 + 지난 일"), ("C", "C 말투 + 예전 표현"),
+                             ("B", "B 말투"), ("A", "A 기준선(말투 없음)")]
 
     /// 페르소나 5단계의 말 풀이 (와이어프레임 M6). 값은 1~5.
     static let formality = ["반말·캐주얼", "편한 말", "보통", "정중", "매우 정중"]
@@ -119,9 +132,16 @@ enum Labels {
 
     static func violation(_ check: String) -> String { ViolationText.title(check) }
 
+    /// 이력 한 줄의 부가 정보: 상대 · 시각. 실험 설정을 켠 경우에만 조건(A~D)을 함께 보인다.
+    static func meta(alias: String, rewrite: Rewrite, experiment: Bool) -> String {
+        let parts = [alias, experiment ? "조건 \(rewrite.condition)" : nil, date(rewrite.created_at)]
+        return parts.compactMap { $0 }.joined(separator: " · ")
+    }
+
     static func relationship(_ value: String) -> String { relationships.first { $0.0 == value }?.1 ?? value }
 
-    /// 서버 시각(ISO 8601, 소수 초 포함 가능)을 기기 형식으로. 못 읽으면 앞부분을 그대로 보인다.
+    /// 서버 시각(ISO 8601, 소수 초 포함 가능)을 한국어 표기로. 못 읽으면 앞부분을 그대로 보인다.
+    /// 화면 문구가 모두 한국어라 날짜도 기기 언어와 상관없이 한국어로 쓴다 (앱의 기본 언어가 영어라 그대로 두면 영어로 나왔다).
     static func date(_ iso: String) -> String {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -131,7 +151,7 @@ enum Labels {
             date = formatter.date(from: iso)
         }
         guard let date else { return String(iso.prefix(16)).replacingOccurrences(of: "T", with: " ") }
-        return date.formatted(date: .abbreviated, time: .shortened)
+        return date.formatted(Date.FormatStyle(date: .abbreviated, time: .shortened, locale: Locale(identifier: "ko_KR")))
     }
 }
 
@@ -180,7 +200,7 @@ private struct LoginView: View {
                 intro
                 fields
                 if defaultServer != nil { serverSettings }
-                Text("서버 주소와 아이디만 기기에 기억합니다. 비밀번호와 로그인 상태는 앱을 종료하면 사라집니다.")
+                Text("서버 주소와 아이디만 기기에 기억해요. 비밀번호와 로그인 상태는 앱을 끄면 사라져요.")
                     .font(.footnote).foregroundStyle(Theme.muted)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, Theme.Space.xs)
@@ -220,7 +240,7 @@ private struct LoginView: View {
                 .font(.largeTitle.bold()).foregroundStyle(Theme.ink)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityAddTraits(.isHeader)
-            Text("보낼 글을 받는 사람에 맞는 말투로 다듬어 드립니다.")
+            Text("보낼 글을 받는 사람에 맞는 말투로 다듬어 드려요.")
                 .font(.body).foregroundStyle(Theme.ink2)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -281,7 +301,7 @@ private struct LoginView: View {
             if showServer {
                 serverField.card(padding: 0)
                 Group {
-                    Text("비워 두면 기본 주소로 연결합니다.")
+                    Text("비워 두면 기본 주소로 연결해요.")
                     if let address { Text("지금 쓰는 주소: \(address)") }
                 }
                 .font(.footnote).foregroundStyle(Theme.muted)
@@ -313,7 +333,7 @@ private struct LoginView: View {
     private func sign(register: Bool) {
         let name = name
         run {
-            guard let address else { throw ServiceError(message: "HTTPS 서버 주소를 확인하세요.") }
+            guard let address else { throw ServiceError(message: "HTTPS 서버 주소를 확인해 주세요.") }
             let client = try API(server: address)
             do {
                 switch try await client.signIn(name: name, password: password, register: register) {

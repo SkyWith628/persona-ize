@@ -136,7 +136,7 @@ enum SignInOutcome: Equatable {
         if status == 202 { return .pendingApproval }
         if let csrf = parsed?.csrf_token, !csrf.isEmpty { return .session(csrf: csrf) }
         if parsed?.status == "pending" { return .pendingApproval }
-        throw ServiceError(message: "서버 응답을 확인하세요.", status: status)
+        throw ServiceError(message: "서버 응답을 확인해 주세요.", status: status)
     }
 }
 
@@ -171,7 +171,7 @@ final class API {
         }
         if let key { request.setValue(key.uuidString, forHTTPHeaderField: "Idempotency-Key") }
         let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse else { throw ServiceError(message: "서버 응답을 확인하세요.") }
+        guard let http = response as? HTTPURLResponse else { throw ServiceError(message: "서버 응답을 확인해 주세요.") }
         guard (200..<300).contains(http.statusCode) else { throw Self.failure(data, status: http.statusCode) }
         return (data, http.statusCode)
     }

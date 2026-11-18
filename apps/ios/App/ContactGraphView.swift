@@ -84,10 +84,10 @@ struct ContactGraphView: View {
             if let graph {
                 if !graph.enabled {
                     GraphEmptyState(systemImage: "point.3.connected.trianglepath.dotted",
-                                    text: "이 서버는 맥락 그래프를 쓰지 않습니다. D 조건은 C와 같게 동작합니다.")
+                                    text: "아직 기억하고 있는 일이 없어요. 이 서버는 지난 일 정리 기능을 쓰지 않아요.")
                 } else if graph.nodes.isEmpty {
                     GraphEmptyState(systemImage: "point.3.connected.trianglepath.dotted",
-                                    text: "아직 \(contact.alias)의 그래프가 없습니다. 과거 대화를 가져오면 서버가 수집합니다. 대화 속 이름이 상대 별칭과 같아야 이 상대의 그래프로 묶입니다.")
+                                    text: "아직 \(contact.alias)와(과) 있었던 일을 정리한 게 없어요. 예전 대화를 올리면 정리해 드려요. 대화 속 이름이 상대 별칭과 같아야 이 상대의 일로 묶여요.")
                 } else {
                     Section {
                         GraphDiagram(graph: graph, selected: $selected)
@@ -112,13 +112,13 @@ struct ContactGraphView: View {
                             .listRowBackground(Color.clear)
                         }
                     }
-                    Section("사실 \(facts.count)건") {
+                    Section("기억하고 있는 일 \(facts.count)건") {
                         ForEach(facts) { edge in
                             VStack(alignment: .leading, spacing: Theme.Space.xs) {
                                 Text(edge.fact).font(.body).foregroundStyle(edge.current ? Theme.ink : Theme.muted)
                                 Text(caption(edge, in: graph)).font(.footnote).foregroundStyle(Theme.muted)
                                 if !edge.current {
-                                    Tag(text: "지난 사실", systemImage: "clock.arrow.circlepath")
+                                    Tag(text: "지난 일", systemImage: "clock.arrow.circlepath")
                                 }
                             }
                             .padding(.vertical, Theme.Space.xs)
@@ -132,7 +132,7 @@ struct ContactGraphView: View {
         .screenBackground()
         .tint(Theme.accent)
         .status(run)
-        .navigationTitle("\(contact.alias) 맥락 그래프")
+        .navigationTitle("\(contact.alias)와(과) 있었던 일")
         .navigationBarTitleDisplayMode(.inline)
         .task { run { try await load() } }
         .refreshable { try? await load() }
@@ -196,14 +196,14 @@ private struct GraphLegend: View {
             HStack(spacing: Theme.Space.s) {
                 DashLine().stroke(Theme.muted, style: StrokeStyle(lineWidth: GraphMetrics.lineWidth, dash: GraphMetrics.dash))
                     .frame(width: GraphMetrics.legendLine, height: GraphMetrics.legendMark)
-                Text("점선은 지난 사실만 남은 연결")
+                Text("점선은 지난 일만 남은 연결")
             }
-            Text("노드를 누르면 그 노드의 사실만 봅니다.")
+            Text("동그라미를 누르면 그와 관련된 일만 보여요.")
         }
         .font(.footnote).foregroundStyle(Theme.muted)
         .padding(.top, Theme.Space.xs)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("● 사람 ■ 사건 · 점선은 지난 사실만 남은 연결 · 노드를 누르면 그 노드의 사실만 봅니다.")
+        .accessibilityLabel("● 사람 ■ 사건 · 점선은 지난 일만 남은 연결 · 동그라미를 누르면 그와 관련된 일만 보여요.")
     }
 
     private func item<Mark: View>(_ text: String, @ViewBuilder mark: () -> Mark) -> some View {

@@ -105,9 +105,9 @@ struct KeyboardClient {
 
     private func send(_ request: URLRequest) async throws -> Data {
         let (data, response) = try await Self.session.data(for: request)
-        guard let http = response as? HTTPURLResponse else { throw ServiceError(message: "서버 응답을 확인하세요.") }
+        guard let http = response as? HTTPURLResponse else { throw ServiceError(message: "서버 응답을 확인해 주세요.") }
         guard (200..<300).contains(http.statusCode) else {
-            let message = http.statusCode == 401 ? "로그인이 풀렸어요. Persona_ize 앱에서 다시 로그인하세요."
+            let message = http.statusCode == 401 ? "로그인이 풀렸어요. Persona_ize 앱에서 다시 로그인해 주세요."
                 : ServiceError.message(from: data, status: http.statusCode)
             throw ServiceError(message: message, status: http.statusCode)
         }

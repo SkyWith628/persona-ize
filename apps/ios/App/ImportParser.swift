@@ -8,11 +8,11 @@ enum ImportParser {
     ///   - contact: 상대 별칭 (JSON 배열 입력의 화자 지정에 쓴다).
     static func parse(_ text: String, me: String, contact: String) throws -> ImportPayload {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { throw ServiceError(message: "가져올 대화를 붙여 넣으세요.") }
+        guard !trimmed.isEmpty else { throw ServiceError(message: "가져올 대화를 붙여 넣어 주세요.") }
         if trimmed.hasPrefix("{") { return try telegram(trimmed, me: me) }
         if trimmed.hasPrefix("[") {
             guard let messages = try? JSONDecoder().decode([ImportMessage].self, from: Data(trimmed.utf8)) else {
-                throw ServiceError(message: "JSON 배열을 읽지 못했습니다. id·speaker·sent_at·text가 필요합니다.")
+                throw ServiceError(message: "JSON 배열을 읽지 못했어요. id·speaker·sent_at·text가 필요해요.")
             }
             return ImportPayload(speaker_map: me.isEmpty ? [:] : [me: "me", contact: "contact"], messages: messages)
         }
@@ -23,7 +23,7 @@ enum ImportParser {
             let parts = line.split(separator: "|", omittingEmptySubsequences: false)
                 .map { $0.trimmingCharacters(in: .whitespaces) }
             guard parts.count >= 3, !parts[0].isEmpty, !parts[1].isEmpty else {
-                throw ServiceError(message: "\(index + 1)번째 줄: '날짜 시각 | 화자 | 내용' 형식이 아닙니다.")
+                throw ServiceError(message: "\(index + 1)번째 줄: '날짜 시각 | 화자 | 내용' 형식이 아니에요.")
             }
             let speaker = parts[1]
             if speaker != "me", speaker != "contact" { speakerMap[speaker] = speaker == me ? "me" : "contact" }
@@ -47,9 +47,9 @@ enum ImportParser {
     static func telegram(_ json: String, me: String) throws -> ImportPayload {
         guard let root = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any],
               let items = root["messages"] as? [[String: Any]] else {
-            throw ServiceError(message: "텔레그램 내보내기 파일(result.json)을 읽지 못했습니다.")
+            throw ServiceError(message: "텔레그램 내보내기 파일(result.json)을 읽지 못했어요.")
         }
-        guard !me.isEmpty else { throw ServiceError(message: "내 이름으로 쓸 화자를 텔레그램 표시 이름 그대로 입력하세요.") }
+        guard !me.isEmpty else { throw ServiceError(message: "대화에 나오는 내 이름을 텔레그램 표시 이름 그대로 넣어 주세요.") }
         var messages: [ImportMessage] = []
         var speakerMap: [String: String] = [:]
         for item in items where item["type"] as? String == "message" {
@@ -67,9 +67,9 @@ enum ImportParser {
             speakerMap[speaker] = speaker == me ? "me" : "contact"
             messages.append(ImportMessage(id: "tg\(id)", speaker: speaker, sent_at: sentAt, text: String(text.prefix(4000))))
         }
-        guard !messages.isEmpty else { throw ServiceError(message: "가져올 일반 메시지가 없습니다.") }
+        guard !messages.isEmpty else { throw ServiceError(message: "가져올 메시지가 없어요.") }
         guard speakerMap[me] == "me" else {
-            throw ServiceError(message: "‘\(me)’ 화자가 파일에 없습니다. 화자: \(speakerMap.keys.sorted().joined(separator: ", "))")
+            throw ServiceError(message: "‘\(me)’ 이름이 파일에 없어요. 파일에 있는 이름: \(speakerMap.keys.sorted().joined(separator: ", "))")
         }
         return ImportPayload(speaker_map: speakerMap, messages: messages)
     }
