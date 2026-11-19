@@ -155,7 +155,7 @@ struct AccountView: View {
 }
 
 /// 키보드 켜는 방법의 한 단계: 번호 동그라미와 한 문장.
-private struct KeyboardStep: View {
+struct KeyboardStep: View {
     let number: Int
     let text: String
 
