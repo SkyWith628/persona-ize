@@ -33,6 +33,30 @@ enum ImportParser {
         return ImportPayload(speaker_map: speakerMap, messages: messages)
     }
 
+    /// 서버가 원문을 읽는 형식(카카오톡 내보내기)의 화자 지정표. 서버는 모든 화자에 역할이 있어야 받는다.
+    /// - Parameters:
+    ///   - speakers: 미리보기가 돌려준 화자 (서버가 추천한 역할 포함).
+    ///   - me: 내 이름. 비어 있으면 서버 추천을 따른다 (1:1 방은 방 제목의 이름이 상대, 나머지가 나).
+    /// 내 이름이 아닌 화자는 모두 상대로 둔다.
+    static func roles(for speakers: [ImportPreview.Speaker], me: String) throws -> [String: String] {
+        let names = speakers.map(\.name)
+        guard !names.isEmpty else { throw ServiceError(message: "가져올 메시지가 없어요.") }
+        let listed = names.sorted().joined(separator: ", ")
+        var map: [String: String] = [:]
+        if me.isEmpty {
+            for speaker in speakers { map[speaker.name] = speaker.suggested_role == "me" ? "me" : "contact" }
+            guard map.values.contains("me") else {
+                throw ServiceError(message: "누가 나인지 알 수 없어요. 대화에 나오는 내 이름을 넣어 주세요. 파일에 있는 이름: \(listed)")
+            }
+        } else {
+            guard names.contains(me) else {
+                throw ServiceError(message: "‘\(me)’ 이름이 파일에 없어요. 파일에 있는 이름: \(listed)")
+            }
+            for name in names { map[name] = name == me ? "me" : "contact" }
+        }
+        return map
+    }
+
     /// 시간대가 없으면 한국 시간(+09:00)으로 본다.
     static func timestamp(_ raw: String) -> String {
         var when = raw

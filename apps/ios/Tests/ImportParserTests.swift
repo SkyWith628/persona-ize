@@ -35,6 +35,35 @@ final class ImportParserTests: XCTestCase {
         }
     }
 
+    func testRolesFollowServerSuggestionWhenMyNameIsBlank() throws {
+        let speakers = [ImportPreview.Speaker(name: "김민수", count: 6, suggested_role: "me"),
+                        ImportPreview.Speaker(name: "박지현", count: 5, suggested_role: "contact")]
+
+        XCTAssertEqual(try ImportParser.roles(for: speakers, me: ""), ["김민수": "me", "박지현": "contact"])
+    }
+
+    func testRolesUseMyNameAndTreatEveryoneElseAsContact() throws {
+        let speakers = [ImportPreview.Speaker(name: "김민수", count: 6, suggested_role: nil),
+                        ImportPreview.Speaker(name: "박지현", count: 5, suggested_role: "me"),
+                        ImportPreview.Speaker(name: "최유진", count: 1, suggested_role: nil)]
+
+        XCTAssertEqual(try ImportParser.roles(for: speakers, me: "김민수"),
+                       ["김민수": "me", "박지현": "contact", "최유진": "contact"])
+    }
+
+    func testRolesNeedSomeoneToBeMe() {
+        let speakers = [ImportPreview.Speaker(name: "김민수", count: 6, suggested_role: nil),
+                        ImportPreview.Speaker(name: "박지현", count: 5, suggested_role: nil)]
+
+        XCTAssertThrowsError(try ImportParser.roles(for: speakers, me: "")) {
+            XCTAssertTrue($0.localizedDescription.contains("김민수, 박지현"))
+        }
+        XCTAssertThrowsError(try ImportParser.roles(for: speakers, me: "민수")) {
+            XCTAssertTrue($0.localizedDescription.hasPrefix("‘민수’"))
+        }
+        XCTAssertThrowsError(try ImportParser.roles(for: [], me: "김민수"))
+    }
+
     func testEmptyInputIsRejected() {
         XCTAssertThrowsError(try ImportParser.parse(" \n ", me: "", contact: "박지현"))
     }

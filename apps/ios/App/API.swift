@@ -62,6 +62,24 @@ struct ImportJob: Decodable {
     var graphActive: Bool { graph_status == "pending" || graph_status == "running" }
 }
 
+/// 원문 미리보기(`POST /v1/imports/parse`) 응답에서 앱이 쓰는 부분: 화자와 서버가 추천한 역할.
+struct ImportPreview: Decodable {
+    struct Speaker: Decodable, Equatable {
+        let name: String
+        let count: Int
+        let suggested_role: String?
+    }
+
+    let speakers: [Speaker]
+}
+
+/// 원문 가져오기(`POST /v1/conversations/{id}/imports/raw`): 서버가 원문을 읽는다 (카카오톡 내보내기).
+struct RawImportPayload: Encodable, Equatable {
+    let format: String
+    let text: String
+    let speaker_map: [String: String]
+}
+
 /// 로그인에 쓸 서버 주소를 정한다: 사용자가 적은 값이 먼저, 비어 있으면 빌드에 든 기본 주소.
 enum ServerChoice {
     /// 빌드 설정(`PERSONA_DEFAULT_SERVER_HOST`)이 Info.plist에 남긴 기본 서버. 없으면 nil.
@@ -277,6 +295,16 @@ final class API {
 
     func importMessages(conversation: String, payload: ImportPayload) async throws -> ImportJob {
         try decode(await send("POST", "v1/conversations/\(conversation)/imports", body: payload))
+    }
+
+    /// 서버 파서로 원문을 읽어 본다 (저장 없음). 읽지 못하면 서버 문구가 오류로 온다.
+    func previewImport(text: String, format: String) async throws -> ImportPreview {
+        let body = ["format": format, "text": text]
+        return try decode(await send("POST", "v1/imports/parse", body: body))
+    }
+
+    func importRaw(conversation: String, payload: RawImportPayload) async throws -> ImportJob {
+        try decode(await send("POST", "v1/conversations/\(conversation)/imports/raw", body: payload))
     }
 
     func importJob(_ id: String) async throws -> ImportJob { try decode(await send("GET", "v1/imports/\(id)")) }

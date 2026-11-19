@@ -375,8 +375,9 @@ private struct ConversationView: View {
                 .listRowSeparator(.hidden)
                 switch method {
                 case .kakao:
-                    guide("카카오톡 내보내기(.txt)는 기기와 버전에 따라 형식이 달라 아직 자동으로 읽지 못해요. 대화를 복사해 ‘붙여넣기’ 형식으로 넣어 주세요.",
-                          systemImage: "exclamationmark.circle")
+                    guide("채팅방 메뉴 → 대화 내용 내보내기로 만든 파일(.txt, PC는 .csv)을 첨부해 주세요. 1:1 대화는 내 이름을 비워 둬도 누가 나인지 알아서 정해요.",
+                          systemImage: "info.circle")
+                    inputs
                 case .telegram:
                     guide("PC용 텔레그램에서만 만들 수 있어요. 대화방 메뉴 → 채팅 기록 내보내기 → JSON으로 만든 result.json을 첨부해 주세요.",
                           systemImage: "info.circle")
@@ -419,7 +420,7 @@ private struct ConversationView: View {
             run { try await loadMessages() }
         }
         .task(id: job?.id) { await followGraph() }
-        .fileImporter(isPresented: $picking, allowedContentTypes: [.plainText, .json]) { picked in
+        .fileImporter(isPresented: $picking, allowedContentTypes: [.plainText, .commaSeparatedText, .json]) { picked in
             run { text = try Self.read(try picked.get()) }
         }
         .confirmationDialog("이 대화방의 대화와 말투 분석을 지워요. 되돌릴 수 없어요.",
@@ -448,7 +449,7 @@ private struct ConversationView: View {
             .background(Theme.surface2, in: RoundedRectangle(cornerRadius: Theme.Radius.m, style: .continuous))
             .listRowSeparator(.hidden)
         Button { editing = false; picking = true } label: {
-            Label("대화 파일 첨부하기 (.txt · .json)", systemImage: "paperclip")
+            Label("대화 파일 첨부하기 (.txt · .csv · .json)", systemImage: "paperclip")
         }
         .buttonStyle(.secondary)
         .listRowSeparator(.hidden)
@@ -514,9 +515,17 @@ private struct ConversationView: View {
         editing = false
         run {
             guard let api = session.api else { return }
-            let payload = try ImportParser.parse(text, me: meName.trimmingCharacters(in: .whitespaces),
-                                                 contact: contact.alias)
-            job = try await api.importMessages(conversation: conversation.id, payload: payload)
+            let me = meName.trimmingCharacters(in: .whitespaces)
+            if method == .kakao {
+                // 카카오톡 내보내기는 서버가 읽는다 (웹과 같은 파서). 앱은 화자만 지정한다.
+                let preview = try await api.previewImport(text: text, format: "kakao")
+                let roles = try ImportParser.roles(for: preview.speakers, me: me)
+                let payload = RawImportPayload(format: "kakao", text: text, speaker_map: roles)
+                job = try await api.importRaw(conversation: conversation.id, payload: payload)
+            } else {
+                let payload = try ImportParser.parse(text, me: me, contact: contact.alias)
+                job = try await api.importMessages(conversation: conversation.id, payload: payload)
+            }
             text = ""
             try await loadMessages()
         }
