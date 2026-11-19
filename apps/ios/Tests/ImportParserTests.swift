@@ -42,13 +42,13 @@ final class ImportParserTests: XCTestCase {
         XCTAssertEqual(try ImportParser.roles(for: speakers, me: ""), ["김민수": "me", "박지현": "contact"])
     }
 
-    func testRolesUseMyNameAndTreatEveryoneElseAsContact() throws {
+    func testRolesUseMyNameOverServerSuggestion() throws {
         let speakers = [ImportPreview.Speaker(name: "김민수", count: 6, suggested_role: nil),
                         ImportPreview.Speaker(name: "박지현", count: 5, suggested_role: "me"),
                         ImportPreview.Speaker(name: "최유진", count: 1, suggested_role: nil)]
 
-        XCTAssertEqual(try ImportParser.roles(for: speakers, me: "김민수"),
-                       ["김민수": "me", "박지현": "contact", "최유진": "contact"])
+        XCTAssertEqual(try ImportParser.roles(for: speakers, me: "김민수", contact: ["박지현"]),
+                       ["김민수": "me", "박지현": "contact", "최유진": "skip"])
     }
 
     func testRolesNeedSomeoneToBeMe() {
@@ -62,6 +62,31 @@ final class ImportParserTests: XCTestCase {
             XCTAssertTrue($0.localizedDescription.hasPrefix("‘민수’"))
         }
         XCTAssertThrowsError(try ImportParser.roles(for: [], me: "김민수"))
+    }
+
+    func testGroupChatKeepsOnlyThisContactAndSkipsTheRest() throws {
+        let speakers = [ImportPreview.Speaker(name: "김민수", count: 6, suggested_role: nil),
+                        ImportPreview.Speaker(name: "박지현", count: 5, suggested_role: nil),
+                        ImportPreview.Speaker(name: "최유진", count: 1, suggested_role: nil)]
+
+        XCTAssertEqual(try ImportParser.roles(for: speakers, me: "김민수", contact: ["", "박지현"].filter { !$0.isEmpty }),
+                       ["김민수": "me", "박지현": "contact", "최유진": "skip"])
+        // 적어 준 이름이 별칭보다 먼저다.
+        XCTAssertEqual(try ImportParser.roles(for: speakers, me: "김민수", contact: ["최유진", "박지현"]),
+                       ["김민수": "me", "박지현": "skip", "최유진": "contact"])
+    }
+
+    func testGroupChatNeedsToKnowWhichSpeakerIsThisContact() {
+        let speakers = [ImportPreview.Speaker(name: "김민수", count: 6, suggested_role: "me"),
+                        ImportPreview.Speaker(name: "박지현", count: 5, suggested_role: nil),
+                        ImportPreview.Speaker(name: "최유진", count: 1, suggested_role: nil)]
+
+        XCTAssertThrowsError(try ImportParser.roles(for: speakers, me: "", contact: ["팀장님"])) {
+            XCTAssertTrue($0.localizedDescription.contains("상대 이름"))
+            XCTAssertTrue($0.localizedDescription.contains("김민수, 박지현, 최유진"))
+        }
+        // 내 이름은 상대가 될 수 없다.
+        XCTAssertThrowsError(try ImportParser.roles(for: speakers, me: "", contact: ["김민수"]))
     }
 
     func testEmptyInputIsRejected() {

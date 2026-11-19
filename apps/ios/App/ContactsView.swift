@@ -358,6 +358,7 @@ private struct ConversationView: View {
     @State private var method = Method.paste
     @State private var text = ""
     @State private var meName = ""
+    @State private var contactName = ""
     @State private var job: ImportJob?
     @State private var picking = false
     @State private var confirming = false
@@ -375,7 +376,7 @@ private struct ConversationView: View {
                 .listRowSeparator(.hidden)
                 switch method {
                 case .kakao:
-                    guide("채팅방 메뉴 → 대화 내용 내보내기로 만든 파일(.txt, PC는 .csv)을 첨부해 주세요. 1:1 대화는 내 이름을 비워 둬도 누가 나인지 알아서 정해요.",
+                    guide("채팅방 메뉴 → 대화 내용 내보내기로 만든 파일(.txt, PC는 .csv)을 첨부해 주세요. 1:1 대화는 내 이름을 비워 둬도 누가 나인지 알아서 정해요. 여러 명이 있는 대화는 이 상대와 내 말만 가져와요.",
                           systemImage: "info.circle")
                     inputs
                 case .telegram:
@@ -454,6 +455,9 @@ private struct ConversationView: View {
         .buttonStyle(.secondary)
         .listRowSeparator(.hidden)
         TextField("대화에 나오는 내 이름 (예: 김민수)", text: $meName)
+        if method == .kakao {
+            TextField("상대 이름 (여러 명이 있는 대화일 때)", text: $contactName)
+        }
         Button("가져오기") { importText() }
             .buttonStyle(.primary)
             .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -519,7 +523,9 @@ private struct ConversationView: View {
             if method == .kakao {
                 // 카카오톡 내보내기는 서버가 읽는다 (웹과 같은 파서). 앱은 화자만 지정한다.
                 let preview = try await api.previewImport(text: text, format: "kakao")
-                let roles = try ImportParser.roles(for: preview.speakers, me: me)
+                // 단체방이면 이 상대 한 명만 남긴다: 적어 준 이름이 먼저, 없으면 상대 별칭.
+                let partner = [contactName.trimmingCharacters(in: .whitespaces), contact.alias].filter { !$0.isEmpty }
+                let roles = try ImportParser.roles(for: preview.speakers, me: me, contact: partner)
                 let payload = RawImportPayload(format: "kakao", text: text, speaker_map: roles)
                 job = try await api.importRaw(conversation: conversation.id, payload: payload)
             } else {
