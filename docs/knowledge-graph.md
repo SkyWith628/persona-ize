@@ -1,4 +1,4 @@
-# 지식그래프 구조 (2026-11-17 기준)
+# 지식그래프 구조 (2026-11-19 기준)
 
 코드에서 읽어 정리한 현재 구조다. 정본은 `backend/app/graph/`이고, 이 문서와 코드가 다르면 코드가 맞다.
 스키마의 배경과 스파이크 기록은 `graph/graph_schema.md`·`graph/graph-spike-report.md`, 재설계 논의는 `docs/graph-redesign-2026-11-16.md`.
@@ -20,6 +20,7 @@ flowchart LR
   G --> V["GET /v1/contacts/{id}/graph: 화면"]
   M -->|규칙 계산, 저장 안 함| S[말투 프로필 app/ai/register]
   S --> T
+  S -->|말투 간선: 읽을 때 계산| V
 ```
 
 ## 2. 논리 스키마 (`schema.py`)
@@ -110,9 +111,9 @@ PostgreSQL 쪽 상태:
 | 경로 | 코드 | 읽는 것 | 쓰이는 곳 |
 |---|---|---|---|
 | 사실 맥락 검색 (D) | `retriever.py` `GraphContextRetriever` (`graph-context-v3`) | 상대 주변의 사실 문장 | 첨삭 프롬프트의 [사실 맥락] 블록 (`purpose=context`, 어조 조정에만) |
-| 설정 갱신 제안 | `persona_signals.py` | 나 → 상대 Relationship의 `speech_style`·`address_term`·`hierarchy` | `/v1/contacts/{id}/persona/suggestion` (제안일 뿐, 저장 안 함) |
-| 계기·범위 단서 | `trigger.py` | 변화 시점 ±7일의 `Event`와 Relationship 사실 문장 | 말투 프로필 제안 카드의 근거 |
-| 화면 | `GET /v1/contacts/{id}/graph` | 상대 주변 노드·엣지 | 맥락 그래프 화면 |
+| 설정 갱신 제안 | `persona_signals.py` | 나 → 상대 Relationship의 `speech_style`·`address_term`·`hierarchy`, 근거 메시지의 발화 시각(`observed_at`) | `/v1/contacts/{id}/persona/suggestion` (제안일 뿐, 저장 안 함) |
+| 계기·범위 단서 | `trigger.py` | 변화 시점 ±7일의 `Event`와 Relationship 사실 문장 | 말투 프로필 제안 카드의 근거, 화면 응답의 말투 간선 |
+| 화면 | `GET /v1/contacts/{id}/graph` | 상대 주변 노드·엣지, 말투 간선(`register`) | 맥락 그래프 화면 |
 
 **"상대 주변"의 범위**는 검색·계기 조회·화면이 같다(`GraphStore.neighborhood`, 질의 검색은 같은 기준의 필터). 설정 갱신 제안만 나 → 상대 방향의 Relationship 사실을 직접 읽는다(`relationship_facts`). 범위의 기준: 양 끝 중 하나가 상대 노드이거나, 상대와 이어진 `Event` 노드인 엣지. Person 이웃은 기준으로 삼지 않는다 — 사용자 노드는 모든 방에 걸쳐 있어 걸러지는 것이 없다. 상대 노드를 이름으로 못 찾으면 사실 맥락을 비운다.
 
@@ -125,6 +126,16 @@ PostgreSQL 쪽 상태:
 5. 재정렬: 유사도 0.75 + 최근성 0.15(반감기 30일) + 원래 순위 0.10. 사건 유형(conflict·apology·refusal·promise 1.0 … status 0.75)과 중요도로 가중한다. 가중 전 점수가 1위보다 0.12 넘게 낮으면 버리되 최소 2건은 남긴다.
 6. 결과 = 관계 상태 슬롯 + 상위 `GRAPH_SEARCH_TOP_K`(기본 4)건. 모델 호출은 없다.
 
+### 화면 응답의 말투 간선 (`services/register_view.py`, 11/17 추가)
+
+`GET /v1/contacts/{id}/graph` 응답의 `register`는 내가 이 상대에게 쓰는 말투를 (나)→(상대) 간선 하나처럼 보여 주는 값이다. Neo4j에 저장하지 않고 PostgreSQL 메시지(최근 500건까지)에서 읽을 때 규칙으로 계산한다.
+
+- 내용: 시간 순 말투 구간(`level` hapsyo / haeyo / hae, `start`, `end`, `count`, `status` confirmed / candidate / previous, 근거 메시지 최대 5개), 현재 호칭(`address`), 본 메시지 수(`based_on_messages`).
+- 계기 사건(`trigger`: 사건 이름과 날짜)은 **말투가 바뀐 확정된 현재 구간**에만 붙는다. 이 조건은 `ai/register.py`의 `changed_segment` 하나이고 제안 카드도 같은 함수를 쓴다. 한쪽만 고치면 두 화면이 같은 상대에 대해 다른 구간·다른 계기를 말하게 된다.
+- 그래프가 꺼져 있거나 상대 노드가 없어도 구간과 호칭은 온다(계기만 없다). 그래프가 켜져 있으면 화면용으로 이미 읽은 이웃을 `find_trigger(hood=…)`에 넘겨 같은 조회를 두 번 하지 않는다.
+- 응답에서 `register`가 빠지는 경우: 내 메시지가 없을 때, `REGISTER_SUGGESTIONS=false`일 때(메시지를 읽지도 않는다), 계산이 실패했을 때(나머지 응답은 그대로 나간다).
+- 이 값을 그리는 화면은 아직 없다. 웹 화면 코드는 `register`를 읽지 않는다.
+
 ## 6. 시간과 무효화
 
 - 사실 엣지는 `valid_at`(성립 시각)과 `invalid_at`(무효가 된 시각)을 가진다. 둘 다 모델이 정한 값이다. 에피소드의 `valid_at`은 메시지 발화 시각이라 믿을 수 있다.
@@ -134,8 +145,10 @@ PostgreSQL 쪽 상태:
 |---|---|---|
 | 질의 검색 | `GRAPH_INVALIDATION_MODE`: `trust`(기본, 버린다) / `artifacts`(부산물로 보이는 무효화만 무시) / `ignore` | 사실 `valid_at`, 없으면 출처 발화 시각 |
 | 관계 상태 슬롯 | 보지 않는다 | 최근 순 |
-| 설정 갱신 제안 | 보지 않는다 | 사실 `valid_at` 순서 |
+| 설정 갱신 제안 | 보지 않는다 | 근거 메시지 중 가장 이른 발화 시각(`observed_at`) 순서, 근거 에피소드가 없는 사실만 `valid_at` |
 | 계기·범위 단서 | 보지 않는다 | 출처 메시지 발화 시각만 |
+
+설정 갱신 제안의 시간 기준은 11/17에 바꿨다. 모델이 적은 `valid_at`이 9시간 밀린 사실이 있어서다(10절). `relationship_facts`가 사실마다 `observed_at`을 함께 돌려주고, 정렬·`as_of`·"MM/DD부터" 문구가 모두 그것을 쓴다. 이 Cypher는 `FakeGraphStore` 테스트와 cypher-shell(읽기 전용)로만 확인했고, 파이썬 드라이버로 실제 Neo4j에 돌려 보지는 않았다.
 
 `artifacts`가 부산물로 보는 경우: `invalid_at`이 `valid_at`에서 1시간 안이거나, 무효화한 메시지가 같은 대화·같은 날(KST)인 경우. 기본값을 바꿀지는 평가로 정하기로 하고 아직 정하지 않았다.
 
@@ -164,7 +177,8 @@ PostgreSQL 쪽 상태:
 | `backend/app/graph/ingest.py` | 수집, 상한, 보류, 이어받기 |
 | `backend/app/graph/retriever.py` | 사실 맥락 검색기 |
 | `backend/app/graph/persona_signals.py`, `trigger.py` | 설정 갱신 제안, 계기·범위 단서 |
-| `backend/app/ai/register*.py` | 말투 프로필 (규칙, 그래프 밖) |
+| `backend/app/ai/register*.py` | 말투 프로필 (규칙, 그래프 밖). `register.changed_segment`가 계기를 찾을 구간을 정한다 |
+| `backend/app/services/register_view.py` | 화면 응답의 말투 간선 (5절) |
 | `backend/tests/test_graph*.py` | `FakeGraphStore`로 Neo4j·LLM 없이 검사 |
 | `graph/` | 담당자 폴더: 스키마 문서, 질의·호칭 정답 CSV, 스파이크 보고. `graph/graphiti_p0/`는 동결된 스파이크 |
 | `scripts/graph_reset.py`, `import_synthetic.py --graph`, `prepare_demo.py --graph` | 다시 만들기·합성 적재 |
@@ -207,7 +221,7 @@ PostgreSQL 쪽 상태:
 - **"한 쌍에 유효한 Relationship은 하나" 미준수**: 방향 쌍 20개 중 11개에 무효화되지 않은 Relationship이 2~4건 있다. 사건 내용이 Relationship 사실로 들어간 경우가 많다("케이크를 사가기로 했다" 류).
 - **`relation_type` 흔들림**: 20쌍 중 10쌍에서 값이 둘 이상이다(예: 김준호→김민수가 family·colleague·acquaintance). 54건 중 acquaintance가 16건이다.
 - **`hierarchy` 방향 오류**: 박지현(팀장)→김민수가 equal·target_higher로 찍힌 사실이 있다(맞는 값은 target_lower).
-- **`valid_at` 시간대 혼재**: 105건 중 13건의 `valid_at`이 근거 메시지 시각보다 정확히 9시간 늦다. 한국 시간을 UTC로 적은 것이다. 지시문에 금지 규칙이 있는데도 남아 있다. `valid_at` 순서를 쓰는 설정 갱신 제안에서 같은 날 사실의 순서와 "언제부터" 날짜가 틀어질 수 있다. 계기 조회는 메시지 시각만 써서 영향이 없다.
+- **`valid_at` 시간대 혼재**: 105건 중 13건의 `valid_at`이 근거 메시지 시각보다 정확히 9시간 늦다. 한국 시간을 UTC로 적은 것이다. 지시문에 금지 규칙이 있는데도 남아 있다. 이 조사 때는 설정 갱신 제안이 `valid_at` 순서를 써서 같은 날 사실의 순서와 "언제부터" 날짜가 틀어질 수 있었다. 같은 날(11/17) 제안이 근거 메시지의 발화 시각을 쓰도록 고쳤다(6절). 그래프에 저장된 `valid_at` 값은 그대로 틀린 채 남아 있고, 질의 검색의 최근성 계산은 여전히 `valid_at`을 먼저 쓴다. 계기 조회는 메시지 시각만 써서 영향이 없다.
 - **속성 채움률**:
 
 | 대상 | 속성 | 채워진 수 |
@@ -235,4 +249,22 @@ PostgreSQL 쪽 상태:
 
 - **설정 갱신 제안**은 실제 데이터에서도 의도대로 읽힌다. demo의 김민수→이서연은 10/07 반말 → 10/17 존댓말 → 10/21 존댓말·'파트장님' 순이다. 다만 호칭은 쌍당 1~2건뿐이라 사실 1건에 기대는 제안이 된다.
 - **재정렬의 중요도 가중**은 Event의 절반 이상에서 기본값으로 돈다.
-- **UUID 사용자**는 36건 중 29건이 미수집으로 남아 있다(보류·실패 횟수 0). 수집이 중간에 멈춘 상태다.
+- **UUID 사용자**는 36건 중 29건이 미수집으로 남아 있다(보류·실패 횟수 0). 수집이 중간에 멈춘 상태다. → 11/19에 전체를 다시 수집했다(아래).
+
+### UUID 사용자 재수집 (2026-11-19)
+
+UUID 사용자는 로그인 계정 `demo`다(문자열 id `demo`·`eval` 그래프와는 다른 사용자이고, 그 둘은 건드리지 않았다). 재수집 직전에는 36건 중 20건이 수집돼 있었다. `scripts/graph_reset.py --user demo --yes`로 그래프(노드 33개)를 지우고 36건을 다시 넣었다. 343초(에피소드당 약 9.5초), 보류·실패 0건, 비용 어림 1.26달러(36 × `COST_GRAPH_PER_EPISODE`, 실제 청구액은 확인하지 않았다). 추출 코드와 모델은 11/17과 같다.
+
+| 에피소드 | Person | Event | Relationship | Involved | 이름이 `RELATES_TO`인 엣지 |
+|---|---|---|---|---|---|
+| 36 | 6 | 10 | 28 | 16 | 2 |
+
+- **맞는 것**: PostgreSQL의 수집 표시 36건 = 에피소드 36개. 사실 46건 모두 `valid_at`과 근거 에피소드가 있다. `Relationship`은 전부 Person→Person, `Involved`는 전부 Person→Event, 자기참조 엣지는 없다. `participant_role`은 16건 모두 채워졌다.
+- **같은 어긋남이 다시 나왔다**:
+  - 이름이 `RELATES_TO`인 엣지 2건(둘 다 Person→Person).
+  - 무효화되지 않은 Relationship이 있는 방향 쌍 9개 중 6개에 2건 이상, 3개에서 `relation_type`이 둘 이상.
+  - `valid_at`이 근거 메시지보다 정확히 9시간 늦은 사실 3건(46건 중).
+  - 무효화 16건 중 3건이 유효해진 지 1시간 안.
+- **속성 채움률**: Relationship 28건 중 `relation_type` 22, `hierarchy` 15, `speech_style` 15, `address_term` 7, `closeness` 4. Involved `feeling` 0. Event 10건 중 `event_type` 10, `status` 10, `importance` 2(나머지 8건은 재정렬에서 기본값). Person `role`은 6명 중 5명이고 그중 3건이 영어다("younger sibling", "part leader", "friend").
+- **수집 로그의 경고**: `Materialized 1 dangling edge endpoint node(s)` 2번, `LLM returned invalid duplicate_facts idx values` 1번. 수집은 멈추지 않았고, 이 경고가 결과에 준 영향은 따져 보지 않았다.
+- 엣지 방향·`hierarchy` 값이 내용상 맞는지, 인물 병합이 맞는지는 이번에 사람 눈으로 보지 않았다(제3자 "김민수의 엄마"가 Person으로 들어갔다).
