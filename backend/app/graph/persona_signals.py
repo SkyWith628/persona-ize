@@ -24,12 +24,18 @@
   docs/knowledge-graph.md 10절). 그대로 쓰면 같은 날 사실의 순서가 뒤집히거나 "MM/DD부터"가 하루 밀린다.
   근거 에피소드의 시각은 수집 코드가 넣은 값이라 믿을 수 있다 — `trigger.py`·`retriever.py`의 관계 상태
   슬롯과 같은 기준이다. 저장소가 observed_at을 주지 못한 사실(근거 에피소드 없음)만 valid_at으로 물러난다.
+- **호칭은 내 메시지와 대조한다 (2026-11-23).** 실제 내보내기 규모(551건)에서 추출기가 채운 호칭의 대부분이
+  부른 말이 아니었다: 말하는 사람 이름의 일부('김과장'의 '과장'), 이름 조각('님'), 대화 속 제3자('부장님'),
+  상대 노드 이름 그대로. 그래서 `me_names`의 일부인 값과, `own_texts`(이 상대에게 보낸 내 메시지)에서
+  부르는 자리에 한 번도 나오지 않은 값은 버린다. 두 인자를 주지 않으면 대조하지 않는다(예전 동작).
 - 속성은 모델이 추출한 값이라 틀릴 수 있고, 사실 한 건만으로도 제안한다(36건 규모에서는 호칭이 한 번만
   나온다). 그래서 **제안일 뿐**이다 — 저장하지 않으며, 근거에 날짜와 건수를 적어 사용자가 판단하게 한다.
 """
 
 from __future__ import annotations
 
+import re
+from collections.abc import Sequence
 from dataclasses import replace
 from datetime import datetime
 
@@ -45,6 +51,35 @@ FORMALITY_POLITE = 3  # '-요'체
 FORMALITY_POLITE_TO_SENIOR = 4  # 윗사람에게 쓰는 존댓말
 FORMALITY_CASUAL = 1
 MAX_ADDRESS_TERM = 30  # PersonaSettings.address_term 길이 상한
+MIN_ADDRESS_TERM = 2  # '님'·'씨' 같은 조각은 호칭이 아니다
+_AFTER_CALL = ",.!?~…"  # 부르는 말 바로 뒤에 오는 글자 ("상무님, …", "… 영수 씨.")
+
+
+def called_in(term: str, texts: Sequence[str]) -> bool:
+    """`term`이 내 메시지에서 부르는 자리에 나온 적이 있는가.
+
+    부르는 자리: 앞이 글머리나 공백이고(다른 낱말의 뒷부분이 아니다 — '이과장님' 속 '과장님'),
+    뒤가 쉼표·마침표 같은 문장부호나 글 끝이거나, 메시지 맨 앞에서 공백이 뒤따른다("서연아 오늘…").
+    "부장님과 얘기한 뒤", "… 기사님 연락처는"처럼 문장 안에서 가리키기만 한 말은 아니다.
+    """
+    pattern = re.compile(r"(?:^|(?<=\s))" + re.escape(term) + r"(?P<after>.?)", re.DOTALL)
+    for text in texts:
+        stripped = text.strip()
+        for m in pattern.finditer(stripped):
+            after = m.group("after")
+            if after == "" or after in _AFTER_CALL:
+                return True
+            if m.start() == 0 and after.isspace():
+                return True
+    return False
+
+
+def _plausible_address(term: str, me_names: Sequence[str], own_texts: Sequence[str] | None) -> bool:
+    if len(term) < MIN_ADDRESS_TERM:
+        return False
+    if any(term in name for name in me_names if name):  # 내 이름(의 일부)은 내가 상대를 부른 말이 아니다
+        return False
+    return own_texts is None or called_in(term, own_texts)
 
 
 def _day(moment: datetime) -> str:
@@ -77,9 +112,18 @@ def _current_run(
 
 
 def graph_persona_signals(
-    facts: list[RelationshipFact], base: PersonaSettings, as_of: datetime | None = None
+    facts: list[RelationshipFact],
+    base: PersonaSettings,
+    as_of: datetime | None = None,
+    *,
+    me_names: Sequence[str] = (),
+    own_texts: Sequence[str] | None = None,
 ) -> list[Signal]:
-    """나 → 상대 관계 사실에서 읽은 갱신 제안. `base`(지금 설정)와 같은 항목은 내지 않는다."""
+    """나 → 상대 관계 사실에서 읽은 갱신 제안. `base`(지금 설정)와 같은 항목은 내지 않는다.
+
+    `me_names`(내 표시 이름)와 `own_texts`(이 상대에게 보낸 내 메시지 본문)는 호칭을 거르는 데 쓴다
+    (모듈 설명). 주지 않으면 거르지 않는다.
+    """
     timed = [(when, f) for f in facts if (when := _when(f)) is not None and (as_of is None or when < as_of)]
     timed.sort(key=lambda pair: (pair[0], pair[1].uuid))
     timeline = [f for _, f in timed]
@@ -114,6 +158,8 @@ def graph_persona_signals(
         for f in timeline
         if f.address_term and 0 < len(f.address_term.strip()) <= MAX_ADDRESS_TERM
     ]
+    if me_names or own_texts is not None:
+        named = [f for f in named if _plausible_address(f.address_term or "", me_names, own_texts)]
     run = _current_run(named, "address_term")
     if run is not None:
         start, previous, count = run

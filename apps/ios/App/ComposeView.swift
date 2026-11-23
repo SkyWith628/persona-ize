@@ -19,6 +19,8 @@ struct ComposeView: View {
     @State private var answered = false
     @State private var rejecting = false
     @State private var reason = ""
+    /// 다듬기 요청을 보낸 시각. 값이 있는 동안 결과 자리에 기다리는 카드를 보인다.
+    @State private var waitingSince: Date?
     @FocusState private var editing: Bool
 
     private var alias: String { session.contacts.first { $0.id == contact }?.alias ?? "상대" }
@@ -56,7 +58,10 @@ struct ComposeView: View {
                 VStack(alignment: .leading, spacing: Theme.Space.xl) {
                     contactPicker
                     draftEditor
-                    if let result {
+                    if let waitingSince {
+                        // 다시 만드는 동안에는 앞선 결과 대신 기다리는 카드를 보인다.
+                        WaitingCard(alias: alias, since: waitingSince).id("waiting")
+                    } else if let result {
                         if result.result.status == .recommended { recommendation(result) } else { kept(result) }
                     }
                     if experiment { demoSettings }
@@ -68,6 +73,9 @@ struct ComposeView: View {
             .screenBackground()
             .onChange(of: result?.id) { id in
                 if id != nil { withAnimation { proxy.scrollTo("result", anchor: .top) } }
+            }
+            .onChange(of: waitingSince) { since in
+                if since != nil { withAnimation { proxy.scrollTo("waiting", anchor: .top) } }
             }
         }
         // 주 행동은 엄지가 닿는 아래에 고정한다. .status 띠는 이 바깥에 붙으므로 버튼 아래(화면 맨 아래)에 놓인다.
@@ -359,7 +367,11 @@ struct ComposeView: View {
         run {
             guard let api = session.api else { return }
             let current = key
-            defer { Task { await loadUsage() } }
+            waitingSince = Date()
+            defer {
+                waitingSince = nil
+                Task { await loadUsage() }
+            }
             let response = try await api.rewrite(contact: contact, draft: draft, situation: situation,
                                                  condition: condition, key: current)
             guard current == key else { return }
@@ -428,7 +440,7 @@ private enum Metric {
 }
 
 /// 카드 안의 조용한 보조 행동: 면 없이 강조색 글자와 기호만. 누를 수 있는 높이는 44pt를 지킨다.
-private struct QuietButtonStyle: ButtonStyle {
+struct QuietButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.subheadline.weight(.semibold))
@@ -440,7 +452,7 @@ private struct QuietButtonStyle: ButtonStyle {
 }
 
 /// 최근 상대 칩. 44pt 이상, 고른 칩은 강조색 면 + 체크 기호로 구분한다.
-private struct ChipStyle: ButtonStyle {
+struct ChipStyle: ButtonStyle {
     let selected: Bool
 
     func makeBody(configuration: Configuration) -> some View {
@@ -459,7 +471,7 @@ private struct ChipStyle: ButtonStyle {
 }
 
 /// 꼬리표를 왼쪽부터 채우고 넘치면 다음 줄로 내린다.
-private struct FlowLayout: Layout {
+struct FlowLayout: Layout {
     var spacing: CGFloat
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {

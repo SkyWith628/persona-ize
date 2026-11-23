@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 
 from app.core.config import Settings
 from app.domain.persona import PersonaSettings, default_persona
-from app.graph.persona_signals import graph_persona_signals
+from app.graph.persona_signals import called_in, graph_persona_signals
 from app.graph.store import RelationshipFact
 from app.main import create_app
 from tests.test_graph import FakeGraphStore
@@ -97,6 +97,48 @@ def test_address_term_follows_the_latest_one_and_names_the_previous() -> None:
         RelationshipFact("no-time", "시각 없음", None, "존댓말", "선배님", "target_higher"),
     ]
     assert graph_persona_signals(junk, PersonaSettings()) == []
+
+
+def test_address_term_must_be_something_i_actually_called_the_contact() -> None:
+    """2026-11-23 실제 내보내기: 추출기가 채운 호칭의 대부분이 부른 말이 아니었다."""
+    mine = [
+        "상무님, 지시하신 3분기 매출 점검 자료 정리 시작합니다.",
+        "부장님과 얘기한 뒤 오늘 안에 답드리겠습니다.",  # 제3자를 가리키기만 했다
+        "2동 하역장으로 배차 잡아 뒀습니다. 기사님 연락처는 출고 전날 드리겠습니다.",
+        "이과장님, 안녕하세요.",
+        "수고하셨어요 영수 씨. 내일 봬요.",
+    ]
+
+    def suggest(*terms: str, current: str | None = None) -> list[object]:
+        facts = [_fact(f"f{i}", 5 + i, term=term) for i, term in enumerate(terms)]
+        base = PersonaSettings(address_term=current)
+        return [s.value for s in graph_persona_signals(facts, base, me_names=["김과장"], own_texts=mine)]
+
+    # 말하는 사람 이름의 일부, 이름 조각, 제3자, 메시지에 없는 이름은 버린다
+    assert suggest("과장") == []
+    assert suggest("님") == []
+    assert suggest("상무님", "부장님") == ["상무님"]  # 더 최근인 '부장님'은 부른 말이 아니다
+    assert suggest("기사님") == []
+    assert suggest("박영수") == []
+    assert suggest("과장님") == []  # '이과장님' 속의 '과장님'은 다른 낱말의 뒷부분이다
+    # 부른 말은 그대로 제안한다: 쉼표 앞, 문장 끝
+    assert suggest("이과장님") == ["이과장님"]
+    assert suggest("영수 씨") == ["영수 씨"]
+    # 메시지를 주지 않으면 내 이름만 본다
+    facts = [_fact("a", 5, term="과장"), _fact("b", 6, term="부장님")]
+    assert [s.value for s in graph_persona_signals(facts[:1], PersonaSettings(), me_names=["김과장"])] == []
+    assert [s.value for s in graph_persona_signals(facts, PersonaSettings(), me_names=["김과장"])] == [
+        "부장님"
+    ]
+
+
+def test_called_in_reads_calls_not_mentions() -> None:
+    assert called_in("서연아", ["서연아 오늘 점심 같이 먹자"])  # 맨 앞, 쉼표 없이
+    assert called_in("파트장님", ["네 알겠습니다 파트장님"])  # 글 끝
+    assert called_in("Michael", ["Hi Michael, thanks for the update."])
+    assert not called_in("파트장님", ["파트장님이 오늘 회의하자고 하셨어"])
+    assert not called_in("팀장", ["생산팀장과 같이 갑니다."])
+    assert not called_in("a.b", ["aXb,"])  # 호칭 속 글자는 정규식으로 읽지 않는다
 
 
 def _seen(fact: RelationshipFact, day: int, hour: int) -> RelationshipFact:
@@ -186,7 +228,9 @@ def _import(client: TestClient, contact_id: str, texts: list[str], me_name: str 
 def test_suggestion_api_appends_graph_signals_and_they_win_in_settings(client: TestClient) -> None:
     contact = _contact(client)
     # 내 메시지: 앞은 반말, 뒤는 존댓말 — 겉모습만 보면 "섞여 있음"(격식 2)
-    _import(client, contact["id"], ["밥 먹었어", "그래 가자", "축하해", "네 알겠습니다", "공유드립니다"])
+    _import(
+        client, contact["id"], ["밥 먹었어", "그래 가자", "축하해", "네 알겠습니다", "파트장님, 공유드립니다"]
+    )
     store = FakeGraphStore(
         entities={"이서연": "n-peer", "김민수": "n-me"}, relationships={("n-me", "n-peer"): PROMOTED}
     )
@@ -234,10 +278,31 @@ def test_suggestion_api_without_graph_or_nodes_is_unchanged(client: TestClient) 
 
 def test_suggestion_api_gives_graph_signals_even_with_few_messages(client: TestClient) -> None:
     contact = _contact(client)
-    _import(client, contact["id"], ["네 알겠습니다"])  # 5건 미만 — 메시지로는 추정하지 않는다
+    _import(client, contact["id"], ["네 알겠습니다 파트장님"])  # 5건 미만 — 메시지로는 추정하지 않는다
     client.app.state.container.graph_store = FakeGraphStore(  # type: ignore[attr-defined]
         entities={"이서연": "n-peer", "김민수": "n-me"}, relationships={("n-me", "n-peer"): PROMOTED}
     )
     body = client.get(f"/v1/contacts/{contact['id']}/persona/suggestion", headers=HEADERS).json()
     assert [s["source"] for s in body["signals"]] == ["graph", "graph"]
     assert body["settings"]["formality"] == 4 and body["settings"]["address_term"] == "파트장님"
+
+
+def test_graph_address_does_not_override_the_one_counted_in_my_messages(client: TestClient) -> None:
+    """말투 프로필이 내 메시지에서 2회 이상 확인한 호칭이 있으면 추출된 호칭은 제안하지 않는다."""
+    contact = _contact(client, "김상무님")
+    # '영수 씨'는 내 메시지에 부른 말로 나오지만(대조 통과) 이 상대의 호칭으로 확인된 것은 '상무님'이다
+    texts = ["상무님, 보고드립니다.", "상무님, 확인했습니다.", "수고하셨어요 영수 씨.", "네 알겠습니다."]
+    _import(client, contact["id"], texts, me_name="김과장")
+    facts = [_fact("a", 8, term="상무님"), _fact("b", 9, term="영수 씨"), _fact("c", 10, term="과장")]
+    store = FakeGraphStore(
+        entities={"김상무님": "n-peer", "김과장": "n-me"}, relationships={("n-me", "n-peer"): facts}
+    )
+    client.app.state.container.graph_store = store  # type: ignore[attr-defined]
+
+    body = client.get(f"/v1/contacts/{contact['id']}/persona/suggestion", headers=HEADERS).json()
+
+    from_graph = [
+        s["value"] for s in body["signals"] if s["source"] == "graph" and s["field"] == "address_term"
+    ]
+    assert from_graph == []  # 더 최근인 '영수 씨'도, 내 이름의 일부인 '과장'도 내지 않는다
+    assert body["settings"]["address_term"] == "상무님"

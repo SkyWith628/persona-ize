@@ -108,6 +108,10 @@ extension View {
 enum Prefs {
     /// 실험 설정(조건·상황·토큰 수)을 화면에 보일지. 평가·시연 때만 켠다.
     static let experiment = "experiment"
+    /// 가입 전 예시 화면을 봤는지.
+    static let seenIntro = "seenIntro"
+    /// 로그인 뒤 준비 화면(첫 상대·키보드 안내)을 마쳤는지.
+    static let setupDone = "setupDone"
 }
 
 /// 결과를 손끝으로 알리는 짧은 진동.
@@ -157,11 +161,16 @@ enum Labels {
 
 private struct Root: View {
     @EnvironmentObject private var session: Session
+    @AppStorage(Prefs.seenIntro) private var seenIntro = false
+    @AppStorage(Prefs.setupDone) private var setupDone = false
 
     var body: some View {
         Group {
             if session.api == nil {
-                NavigationStack { LoginView() }
+                // 처음 한 번은 가입 전에 예시부터 보여 준다.
+                if seenIntro { NavigationStack { LoginView() } } else { IntroView { seenIntro = true } }
+            } else if !setupDone {
+                NavigationStack { SetupView(hasContacts: !session.contacts.isEmpty) { setupDone = true } }
             } else {
                 TabView {
                     NavigationStack { ComposeView() }.tabItem { Label("작성", systemImage: "square.and.pencil") }
