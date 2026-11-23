@@ -252,8 +252,11 @@ final class API {
 
     func contacts() async throws -> [Contact] { try decode(await send("GET", "v1/contacts")) }
 
-    func addContact(alias: String, relationship: String) async throws {
-        _ = try await send("POST", "v1/contacts", body: ["alias": alias, "relationship_type": relationship])
+    /// `defaultPersona`가 참이면 서버가 관계 유형의 기본 말투로 v1을 함께 만든다 → 바로 다듬을 수 있다 (웹과 같다).
+    func addContact(alias: String, relationship: String, defaultPersona: Bool = false) async throws {
+        struct Post: Encodable { let alias: String; let relationship_type: String; let use_default_persona: Bool }
+        _ = try await send("POST", "v1/contacts",
+                           body: Post(alias: alias, relationship_type: relationship, use_default_persona: defaultPersona))
     }
 
     func deleteContact(_ id: String) async throws { _ = try await send("DELETE", "v1/contacts/\(id)") }

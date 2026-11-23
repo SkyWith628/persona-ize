@@ -98,8 +98,12 @@ async def _graph_signals(
     me_names: list[str],
     base: PersonaSettings,
     as_of: datetime | None,
+    own_texts: list[str],
 ) -> list[Signal]:
-    """그래프의 나 → 상대 관계 사실에서 읽은 갱신 제안. 그래프가 없거나 노드를 못 찾으면 빈 목록."""
+    """그래프의 나 → 상대 관계 사실에서 읽은 갱신 제안. 그래프가 없거나 노드를 못 찾으면 빈 목록.
+
+    호칭은 내 표시 이름과 `own_texts`(이 상대에게 보낸 내 메시지)로 거른다 (`persona_signals` 설명).
+    """
     if state.graph_store is None or center is None:
         return []
     try:
@@ -114,7 +118,7 @@ async def _graph_signals(
     except Exception as exc:  # noqa: BLE001 - 제안은 부가 기능이다. 그래프 장애로 화면을 막지 않는다
         log.warning("graph persona signals failed, continuing without them: %s", exception_kind(exc))
         return []
-    return graph_persona_signals(facts, base, as_of)
+    return graph_persona_signals(facts, base, as_of, me_names=me_names, own_texts=own_texts)
 
 
 def _profile(
@@ -169,10 +173,14 @@ async def suggest_persona_for_contact(
     center = await _center_uuid(state, user_id, contact)
 
     card: SuggestionCard | None = None
+    confirmed_address: str | None = None  # 말투 프로필이 내 메시지에서 2회 이상 확인한 호칭
     from_register: list[Signal] = []
     if "register" in sources and len(recent) >= register_min_messages:
         profile = await asyncio.to_thread(_profile, recent, contact.alias, as_of, k)
         if profile is not None:
+            address = profile.current_address
+            if address is not None and address.status == "confirmed":
+                confirmed_address = str(address.value)
             from_register = register_signals(profile, working)
             card = build_card(profile, working, contact.alias)
             # 계기를 찾을 구간 — 그래프 화면의 말투 간선(`register_view`)과 같은 함수를 쓴다
@@ -198,7 +206,10 @@ async def suggest_persona_for_contact(
     from_graph: list[Signal] = []
     if "graph" in sources:
         me_names = [conv.me_name or DEFAULT_ME_NAME for conv in convs] or [DEFAULT_ME_NAME]
-        from_graph = await _graph_signals(state, user_id, center, me_names, working, as_of)
+        from_graph = await _graph_signals(state, user_id, center, me_names, working, as_of, texts)
+        if confirmed_address is not None:
+            # 내 메시지에서 직접 센 호칭이 있으면 모델이 추출한 호칭으로 덮어쓰지 않는다 (2026-11-23).
+            from_graph = [s for s in from_graph if s.field != "address_term" or s.value == confirmed_address]
 
     # 뒤에 온 근거가 이긴다. 카드가 물을 때는 말투 프로필의 값을 넣지 않는다 (근거 목록에는 남는다).
     # 그래프 근거(`persona_signals`)는 카드가 물어도 예전처럼 반영한다 — 그래프를 켠 사용자의 응답이

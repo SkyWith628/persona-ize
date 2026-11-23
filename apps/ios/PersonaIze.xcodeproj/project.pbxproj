@@ -9,11 +9,13 @@
 /* Begin PBXBuildFile section */
 		0478ABC65A20EFFF015255FE /* KeyboardMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = A477A2B5C3ACD02D7F028452 /* KeyboardMessage.swift */; };
 		0B803EB1CC1968465E83F220 /* ComposeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D676CC6B0F184F621B2D3B1 /* ComposeView.swift */; };
+		14506EB9A072C15BCD07A956 /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A7C4B7C22800A22C0DE2252 /* OnboardingView.swift */; };
 		1BEE14D0D75C8C11D4B4D676 /* PersonaKeyboard.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = AB1AE5CAF335B93CE53F90D7 /* PersonaKeyboard.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		232B6291DAF673487B62763A /* ContactsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAAA0B61FFEE36ED78B0848C /* ContactsView.swift */; };
 		238F21182C1219B6C2BC2155 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = EF7BB4E1880DB646D5D3BA09 /* Assets.xcassets */; };
 		2BAD3D929927ED401E21B5C9 /* ImportParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72CC54FD92EDDDBDA4BE8660 /* ImportParser.swift */; };
 		38BB4CBF2F67AE78112821CB /* HistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA71B1FF087D052BF97AF339 /* HistoryView.swift */; };
+		476CBADA9B21AA3C36EA48E5 /* OnboardingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 943EA55351A50CEA34418DD4 /* OnboardingTests.swift */; };
 		6252F81305D446861C2B6214 /* AccountView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D1E5E4FB150A18EF37F8615 /* AccountView.swift */; };
 		82B69B66A9BF6F9AFA9E2201 /* ImportParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D02744E7766F1F302B2886AD /* ImportParserTests.swift */; };
 		84EC4A1FCA087352CD0B8026 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A4171FFD049740E668E8666 /* Models.swift */; };
@@ -66,6 +68,7 @@
 		09688CC54F3A0C100BC6D1C5 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		12D5A4735F54EFA12C6A72CF /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		13FC5556657E000B7CA763ED /* KeyboardLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardLink.swift; sourceTree = "<group>"; };
+		1A7C4B7C22800A22C0DE2252 /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
 		1D1E5E4FB150A18EF37F8615 /* AccountView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountView.swift; sourceTree = "<group>"; };
 		21D15657CF1892500780613C /* PersonaIze.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = PersonaIze.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		2A4171FFD049740E668E8666 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
@@ -75,6 +78,7 @@
 		72CC54FD92EDDDBDA4BE8660 /* ImportParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImportParser.swift; sourceTree = "<group>"; };
 		773518E568FD0C17A2B259C6 /* API.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = API.swift; sourceTree = "<group>"; };
 		7D676CC6B0F184F621B2D3B1 /* ComposeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposeView.swift; sourceTree = "<group>"; };
+		943EA55351A50CEA34418DD4 /* OnboardingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingTests.swift; sourceTree = "<group>"; };
 		A477A2B5C3ACD02D7F028452 /* KeyboardMessage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardMessage.swift; sourceTree = "<group>"; };
 		AAAA0B61FFEE36ED78B0848C /* ContactsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactsView.swift; sourceTree = "<group>"; };
 		AB1AE5CAF335B93CE53F90D7 /* PersonaKeyboard.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = PersonaKeyboard.appex; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -93,6 +97,7 @@
 			children = (
 				D02744E7766F1F302B2886AD /* ImportParserTests.swift */,
 				41314A6AF4974D7E7BC8DC46 /* LoginLogicTests.swift */,
+				943EA55351A50CEA34418DD4 /* OnboardingTests.swift */,
 			);
 			path = Tests;
 			sourceTree = "<group>";
@@ -142,6 +147,7 @@
 				DA71B1FF087D052BF97AF339 /* HistoryView.swift */,
 				72CC54FD92EDDDBDA4BE8660 /* ImportParser.swift */,
 				12D5A4735F54EFA12C6A72CF /* Info.plist */,
+				1A7C4B7C22800A22C0DE2252 /* OnboardingView.swift */,
 				63C0760AE82A2E59E63C00B8 /* PersonaApp.swift */,
 			);
 			path = App;
@@ -274,6 +280,7 @@
 			files = (
 				82B69B66A9BF6F9AFA9E2201 /* ImportParserTests.swift in Sources */,
 				8EB51184D5D46946E5725482 /* LoginLogicTests.swift in Sources */,
+				476CBADA9B21AA3C36EA48E5 /* OnboardingTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -303,6 +310,7 @@
 				FEAD15EF0D375FAA2AB90FEC /* KeyboardLink.swift in Sources */,
 				8CF9B06274D9CF74F9B9342F /* KeyboardMessage.swift in Sources */,
 				FC1755DFC8B089D67EAF023C /* Models.swift in Sources */,
+				14506EB9A072C15BCD07A956 /* OnboardingView.swift in Sources */,
 				E3DF94799C566F25BE3F006B /* PersonaApp.swift in Sources */,
 				E168C5F8EA7873C05DDF60E5 /* Theme.swift in Sources */,
 			);
