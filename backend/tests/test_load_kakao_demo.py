@@ -254,3 +254,50 @@ async def test_config_and_user_errors_change_nothing(state, tmp_path, capsys) ->
     bad.write_text(json.dumps({"me": ME, "conversations": [entry]}, ensure_ascii=False), "utf-8")
     assert await mod.run(_args(bad), state) == 2
     assert "relationship_type" in capsys.readouterr().out
+
+
+async def test_without_yes_it_asks_once_and_only_y_proceeds(state, tmp_path, monkeypatch, capsys) -> None:  # noqa: ANN001
+    mod = _script()
+    user_id = await _demo_user(state)
+    old = await state.contacts.create(user_id, "예전 상대", "friend")
+    config = _config(tmp_path)
+    asked: list[str] = []
+
+    def answer_with(reply: str):  # noqa: ANN202
+        def fake_input(prompt: str = "") -> str:
+            asked.append(prompt)
+            return reply
+
+        return fake_input
+
+    # 엔터(빈 답)·n은 취소 — 아무것도 지우지 않는다
+    for reply in ("", "n"):
+        monkeypatch.setattr("builtins.input", answer_with(reply))
+        assert await mod.run(_args(config, yes=False), state) == 1
+        assert [c.id for c in await state.contacts.list(user_id)] == [old.id]
+    assert len(asked) == 2 and "되돌릴 수 없습니다" in asked[0]
+    printed = capsys.readouterr().out
+    assert "취소." in printed and "지울 대상" in printed and "상대 1명" in printed
+
+    # y(대문자·공백 포함)는 진행
+    monkeypatch.setattr("builtins.input", answer_with(" Y "))
+    assert await mod.run(_args(config, yes=False), state) == 0
+    assert set(await _snapshot(state, user_id)) == {"박지현", "김준호"}
+    assert len(asked) == 3  # 한 번만 묻는다
+
+    # --keep-existing은 지우지 않으므로 묻지 않는다
+    assert await mod.run(_args(config, yes=False, keep_existing=True), state) == 0
+    assert len(asked) == 3
+
+
+@pytest.mark.parametrize("encoding", ["cp949", "utf-16", "utf-8-sig"])
+async def test_reads_files_in_other_encodings(state, tmp_path, encoding) -> None:  # noqa: ANN001
+    mod = _script()
+    user_id = await _demo_user(state)
+    config = _config(tmp_path)
+    (tmp_path / "boss.txt").write_bytes(BOSS.encode(encoding))
+    assert mod.read_text(tmp_path / "boss.txt").lstrip("\ufeff") == BOSS
+
+    assert await mod.run(_args(config), state) == 0
+    snap = await _snapshot(state, user_id)
+    assert snap["박지현"][:7] == ("superior", "팀장님", 1, "k1", ME, 4, 2)
