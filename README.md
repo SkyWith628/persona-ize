@@ -87,11 +87,12 @@ curl -s -X POST localhost:8000/v1/rewrites -H "X-User-Id: me" -H "Idempotency-Ke
 
 Windows에 `make`가 없으면 Makefile의 명령을 그대로 실행한다.
 
-## 상태 (2026-11-11)
+## 상태 (2026-11-24)
 - 저장소: `github.com/SkyWith628/persona-ize` (비공개).
-- 백엔드: 상대·페르소나, 첨삭 워크플로(의도·보존 추출 → 검색 → 프롬프트 → 검증 → 재생성 1회 → 원문 유지), PostgreSQL(Alembic), C(pgvector 문체 kNN)·D(Graphiti 그래프 맥락) 검색, 삭제(대화방·상대·계정), 사용량 제어(사용자·전체), 세션 쿠키·Bearer 인증, 대화 가져오기(카카오톡·텔레그램·붙여넣기, 개인정보 패턴 가림, 그래프 수집 상한), 운영 대시보드 API.
-- 화면: PC 웹 앱(첫 화면·동의, 첨삭, 상대·페르소나, 대화 가져오기, 이력, 내 데이터, 설정), 운영 대시보드, 안내 문서 초안. 아이폰 앱·보조 키보드는 `apps/ios/`(시뮬레이터까지 확인, 실기기 미검증).
-- 배포: 운영 모드 검사·보안 헤더·요청 제한, 운영용 Docker 구성(Caddy HTTPS, 백업), 배포·복원 스크립트, 스모크 테스트. 로컬 리허설(가짜 모델)까지 확인 — 실제 서버·실제 모델 확인은 [docs/backlog.md](docs/backlog.md) A2·A3.
-- 실측: Opus 5.5로 5사례 × A/B/C/D ([2주차 메모](evals/results/2026-11-08-week2-abc-run.md), [3주차 메모](evals/results/2026-11-08-week3-abcd-run.md)). 1주차 그래프 스파이크: [graph/graph-spike-report.md](graph/graph-spike-report.md).
-- 시연: `make demo-prepare` 뒤 [docs/demo-script.md](docs/demo-script.md) (demo 계정, 3장면, 보험).
+- 백엔드: 상대·페르소나, 첨삭 워크플로(LangGraph: 의도·보존 추출 → 검색 → 프롬프트 → 검증 → 재생성 1회 → 원문 유지), PostgreSQL(Alembic), C(pgvector 문체 kNN)·D(Graphiti 그래프 맥락) 검색, 말투 프로필(문장 어미·호칭 구간, 모델 호출 없음)과 설정 제안, 삭제(대화방·상대·계정), 사용량 제어, 세션 쿠키·Bearer·소셜 로그인, 회원관리, 대화 가져오기(카카오톡·텔레그램·붙여넣기, 개인정보 패턴 가림, 그래프 수집 상한), 운영 대시보드.
+- 화면: PC 웹 앱(`/`), 모바일 웹(`/m`), 운영 대시보드(`/admin`), 안내 문서 초안. 아이폰 앱·보조 키보드는 `apps/ios/`(CI에서 빌드·시뮬레이터까지, 실기기 미검증).
+- 검증: 백엔드 테스트 1,539개 · 화면 단위 테스트 212개. 11/24에 PC 화면으로 가입 → 가져오기 → 제안 → 첨삭 → 이력 → 계정 삭제를 실제 모델로 끝까지 확인했고, 모바일 웹은 폰 크기에서 전 탭을 확인했다.
+- 실측: Opus 5.5로 5사례 × A/B/C/D × 3회 — 60회 전부 추천, 원문 유지·재생성 0건([11/24 메모](evals/results/2026-11-24-rules1124-repeat3.md)). 이전 측정은 `evals/results/`. 사례 20개·블라인드 평가는 진행 중.
+- 배포: 운영 모드 검사·보안 헤더·요청 제한, 운영용 Docker 구성(Caddy HTTPS, 백업), 배포·복원 스크립트, 스모크 테스트([docs/deploy.md](docs/deploy.md)).
+- 시연: [docs/demo-script.md](docs/demo-script.md) (demo 계정의 카카오톡 대화 551건, 4장면, 보험). 시연 데이터 적재는 `scripts/load_kakao_demo.py`.
 - 다음: [docs/backlog.md](docs/backlog.md) — 팀장 단독 항목(A), 팀원 산출물 대기(B), 보류(C).

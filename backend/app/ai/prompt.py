@@ -127,7 +127,12 @@ def _register_block(block: str | None) -> str:
 def _preserved_block(items: list[PreservedItem]) -> str:
     if not items:
         return "(추출된 항목 없음 — 그래도 원문의 모든 사실을 유지한다)"
-    return "\n".join(f"- {i.kind}: {i.text}" for i in items)
+    return "\n".join(f"- {i.kind}: {i.text}{_PRESERVED_NOTE.get(i.kind, '')}" for i in items)
+
+
+# 약속은 글자가 아니라 뜻을 지킨다. 설명이 없으면 모델이 '드릴게요'를 글자 그대로 남겨 격식 설정을 못 맞추고
+# "보존 항목이라 원문대로 두었습니다"라는 주의를 붙일 때가 있다 (2026-11-24 시연 장면 점검).
+_PRESERVED_NOTE = {"promise": " (약속한다는 뜻을 유지한다 — 어미와 격식은 설정에 맞게 바꾼다)"}
 
 
 def fit_examples(examples: list[RetrievedExample]) -> list[RetrievedExample]:
