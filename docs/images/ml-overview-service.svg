@@ -1,0 +1,126 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="660" viewBox="0 0 900 660" role="img" aria-label="대화를 가져오면 문체 묶음과 지식 그래프에 쌓이고, 첨삭을 요청하면 조건 고르기, 분석, 검색, 프롬프트 조립, 생성, 검증을 거쳐 추천되거나 원문이 유지된다. 새로 더하려는 모델은 수집 전 거르기, 문체 유사도 모델, 조건 선택기, 판정 모델 네 곳에 붙는다.">
+          <style>
+text{font-family:"Apple SD Gothic Neo","Malgun Gothic","Noto Sans KR","Noto Sans CJK KR",sans-serif}
+.pn{fill:#e9edf4}.bx{fill:#fff;stroke:#46536a;stroke-width:1.2}
+.bx-new{fill:#f0e9ff;stroke:#6638cf;stroke-width:1.6;stroke-dasharray:5 3}
+.t{fill:#172030;font-size:13px;font-weight:600}.s{fill:#566274;font-size:11px}
+.hd{fill:#566274;font-size:12.5px;font-weight:600}.lb{fill:#566274;font-size:11px}
+.lb-new{fill:#6638cf;font-size:11px;font-weight:500}
+.ar{stroke:#46536a;stroke-width:1.3;fill:none}.ar-new{stroke:#6638cf;stroke-width:1.5;fill:none;stroke-dasharray:5 3}
+.ah{fill:#46536a}.ah-new{fill:#6638cf}
+</style><rect width="900" height="660" fill="#ffffff"/><defs>
+            <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah" d="M0,0 L10,5 L0,10 z"/></marker>
+            <marker id="an" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah-new" d="M0,0 L10,5 L0,10 z"/></marker>
+          </defs>
+
+          <rect class="pn" x="4" y="10" width="242" height="640" rx="8"/>
+          <rect class="pn" x="276" y="10" width="208" height="640" rx="8"/>
+          <rect class="pn" x="546" y="10" width="350" height="640" rx="8"/>
+          <text class="hd" x="30" y="34">① 대화를 가져올 때</text>
+          <text class="hd" x="380" y="34" text-anchor="middle">쌓아 두는 곳</text>
+          <text class="hd" x="560" y="34">② 첨삭을 요청할 때</text>
+          <rect class="bx" x="30" y="50" width="200" height="46" rx="4"/>
+          <text class="t" x="42" y="69">대화 파일</text>
+          <text class="s" x="42" y="85">카카오톡 · 텔레그램 · 붙여넣기</text>
+          <path class="ar" d="M130,96 V122" marker-end="url(#a)"/>
+
+          <rect class="bx" x="30" y="122" width="200" height="46" rx="4"/>
+          <text class="t" x="42" y="141">형식 읽기 · 개인정보 가림</text>
+          <text class="s" x="42" y="157">전화번호·이메일 같은 패턴</text>
+          <path class="ar" d="M130,168 V194" marker-end="url(#a)"/>
+
+          <rect class="bx" x="30" y="194" width="200" height="46" rx="4"/>
+          <text class="t" x="42" y="213">메시지 저장</text>
+          <text class="s" x="42" y="229">누가 언제 한 말인지 함께</text>
+          <path class="ar" d="M130,240 V290" marker-end="url(#a)"/>
+
+          <rect class="bx" x="30" y="290" width="200" height="46" rx="4"/>
+          <text class="t" x="42" y="309">문체 묶음 만들기</text>
+          <text class="s" x="42" y="325">내 말을 묶어 숫자로 바꿈</text>
+          <path class="ar" d="M230,313 H290" marker-end="url(#a)"/>
+
+          <path class="ar-new" d="M30,217 H14 V433 H30" marker-end="url(#an)"/>
+          <rect class="bx-new" x="30" y="410" width="200" height="46" rx="4"/>
+          <text class="t" x="42" y="429">수집 전 거르기</text>
+          <text class="s" x="42" y="445">넣을 사실이 있는 메시지인가</text>
+          <path class="ar-new" d="M130,456 V482" marker-end="url(#an)"/>
+          <text class="lb-new" x="138" y="473">있을 때만</text>
+
+          <rect class="bx" x="30" y="482" width="200" height="46" rx="4"/>
+          <text class="t" x="42" y="501">그래프 수집</text>
+          <text class="s" x="42" y="517">작은 Claude가 사건·관계를 뽑음</text>
+          <path class="ar" d="M230,505 H290" marker-end="url(#a)"/>
+          <rect class="bx" x="290" y="290" width="180" height="46" rx="14"/>
+          <text class="t" x="304" y="309">문체 묶음</text>
+          <text class="s" x="304" y="325">조건 C·D가 읽음</text>
+
+          <path class="ar-new" d="M380,362 V336" marker-end="url(#an)"/>
+          <rect class="bx-new" x="290" y="362" width="180" height="46" rx="4"/>
+          <text class="t" x="304" y="381">문체 유사도 모델</text>
+          <text class="s" x="304" y="397">말투가 같은 예시를 고름</text>
+
+          <rect class="bx" x="290" y="482" width="180" height="46" rx="14"/>
+          <text class="t" x="304" y="501">지식 그래프</text>
+          <text class="s" x="304" y="517">조건 D만 읽음</text>
+
+          <rect class="bx" x="290" y="570" width="180" height="46" rx="14"/>
+          <text class="t" x="304" y="589">상대별 설정</text>
+          <text class="s" x="304" y="605">말투·호칭 · B·C·D가 읽음</text>
+          <path class="ar" d="M470,313 H515 V196 H560" marker-end="url(#a)"/>
+          <path class="ar" d="M470,505 H530 V212 H560" marker-end="url(#a)"/>
+          <path class="ar" d="M470,593 H545 V270 H560" marker-end="url(#a)"/>
+          <rect class="bx" x="560" y="50" width="200" height="46" rx="4"/>
+          <text class="t" x="572" y="69">조건 고르기 (A~D)</text>
+          <text class="s" x="572" y="85">지금은 가장 풍부한 것으로</text>
+          <path class="ar-new" d="M786,73 H760" marker-end="url(#an)"/>
+          <rect class="bx-new" x="786" y="52" width="104" height="42" rx="4"/>
+          <text class="t" x="796" y="70">조건 선택기</text>
+          <text class="s" x="796" y="85">맥락이 필요한가</text>
+          <path class="ar" d="M660,96 V116" marker-end="url(#a)"/>
+
+          <rect class="bx" x="560" y="116" width="200" height="46" rx="4"/>
+          <text class="t" x="572" y="135">분석</text>
+          <text class="s" x="572" y="151">의도 · 지켜야 할 항목 뽑기</text>
+          <path class="ar" d="M660,162 V182" marker-end="url(#a)"/>
+
+          <rect class="bx" x="560" y="182" width="200" height="46" rx="4"/>
+          <text class="t" x="572" y="201">검색</text>
+          <text class="s" x="572" y="217">과거 말투 예시 · 사실 맥락</text>
+          <path class="ar" d="M660,228 V248" marker-end="url(#a)"/>
+
+          <rect class="bx" x="560" y="248" width="200" height="46" rx="4"/>
+          <text class="t" x="572" y="267">프롬프트 조립</text>
+          <text class="s" x="572" y="283">설정 + 예시 + 초안</text>
+          <path class="ar" d="M660,294 V314" marker-end="url(#a)"/>
+
+          <rect class="bx" x="560" y="314" width="200" height="46" rx="4"/>
+          <text class="t" x="572" y="333">생성</text>
+          <text class="s" x="572" y="349">Claude가 고쳐 씀</text>
+          <path class="ar" d="M660,360 V380" marker-end="url(#a)"/>
+
+          <rect class="bx" x="560" y="380" width="200" height="46" rx="4"/>
+          <text class="t" x="572" y="399">검증</text>
+          <text class="s" x="572" y="415">규칙으로 날짜·수량·부정 대조</text>
+          <path class="ar" d="M760,392 H778 V336 H760" marker-end="url(#a)"/>
+          <text class="lb" x="786" y="360">실패하면</text>
+          <text class="lb" x="786" y="374">한 번 다시</text>
+          <path class="ar" d="M660,426 V446" marker-end="url(#a)"/>
+          <text class="lb" x="668" y="440">통과</text>
+
+          <rect class="bx-new" x="560" y="446" width="200" height="46" rx="4"/>
+          <text class="t" x="572" y="465">판정 모델</text>
+          <text class="s" x="572" y="481">뜻이 달라졌는지 한 번 더 봄</text>
+          <path class="ar-new" d="M660,492 V512" marker-end="url(#an)"/>
+          <text class="lb-new" x="668" y="506">경고만 붙임</text>
+
+          <rect class="bx" x="560" y="512" width="200" height="46" rx="4"/>
+          <text class="t" x="572" y="531">추천</text>
+          <text class="s" x="572" y="547">사용자가 보고 직접 보냄</text>
+
+          <path class="ar" d="M760,414 H778 V612 H760" marker-end="url(#a)"/>
+          <text class="lb" x="786" y="520">또 실패하면</text>
+          <text class="lb" x="786" y="534">원문 유지</text>
+          <rect class="bx" x="560" y="590" width="200" height="46" rx="4"/>
+          <text class="t" x="572" y="609">원문 유지</text>
+          <text class="s" x="572" y="625">고친 문장을 버리고 원문을 줌</text>
+        </svg>
