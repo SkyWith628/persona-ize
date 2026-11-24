@@ -180,6 +180,8 @@ export const Recents = {
 /** 상대를 가운데에 두고 직접 이어진 노드를 안쪽 원, 나머지를 바깥 원에 놓는다. 좌표는 0~1. */
 export const GraphLayout = {
   innerRadius: 0.21,
+  staggerRadius: 0.31,
+  crowdedFrom: 8,
   outerRadius: 0.39,
 
   /** @returns {Map<string, {x: number, y: number}>} */
@@ -205,7 +207,9 @@ export const GraphLayout = {
     inner.forEach((id, index) => {
       const angle = -Math.PI / 2 + (2 * Math.PI * index) / inner.length;
       angles.set(id, angle);
-      result.set(id, point(angle, GraphLayout.innerRadius));
+      // 안쪽 노드가 많으면 한 줄에 다 못 놓는다(이름표가 겹친다) — 하나 걸러 조금 바깥에 둔다.
+      const crowded = inner.length > GraphLayout.crowdedFrom && index % 2 === 1;
+      result.set(id, point(angle, crowded ? GraphLayout.staggerRadius : GraphLayout.innerRadius));
     });
     // 바깥 노드는 이어진 안쪽 노드 가까이 오도록 그 각도 순으로 늘어놓는다.
     const anchor = (id) => {
