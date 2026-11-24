@@ -283,7 +283,8 @@ def test_suggestion_api_gives_graph_signals_even_with_few_messages(client: TestC
         entities={"이서연": "n-peer", "김민수": "n-me"}, relationships={("n-me", "n-peer"): PROMOTED}
     )
     body = client.get(f"/v1/contacts/{contact['id']}/persona/suggestion", headers=HEADERS).json()
-    assert [s["source"] for s in body["signals"]] == ["graph", "graph"]
+    # 문장 끝의 '파트장님'은 말투 프로필도 읽는다(2026-11-24, 1회 관찰) — 그래프 근거 둘은 그대로 붙는다
+    assert [s["source"] for s in body["signals"]] == ["register", "graph", "graph"]
     assert body["settings"]["formality"] == 4 and body["settings"]["address_term"] == "파트장님"
 
 
@@ -305,4 +306,10 @@ def test_graph_address_does_not_override_the_one_counted_in_my_messages(client: 
         s["value"] for s in body["signals"] if s["source"] == "graph" and s["field"] == "address_term"
     ]
     assert from_graph == []  # 더 최근인 '영수 씨'도, 내 이름의 일부인 '과장'도 내지 않는다
-    assert body["settings"]["address_term"] == "상무님"
+    # 말투 프로필은 '영수 씨'를 한 번 나온 후보로 읽고(2026-11-24) 확정된 '상무님'은 그대로 둔다.
+    # 이 메시지가 해요체로 읽히면서 두 말투가 섞인 카드(묻는 카드)가 되어 설정 값은 정해 주지 않는다.
+    (from_register,) = [s for s in body["signals"] if s["field"] == "address_term"]
+    assert (from_register["source"], from_register["value"]) == ("register", "영수 씨")
+    assert "1회 관찰 (그 전에는 '상무님')" in from_register["reason"]
+    assert body["card"]["address"]["status"] == "candidate" and body["card"]["ask"] is True
+    assert body["settings"] is None
