@@ -52,6 +52,8 @@ struct ImportPayload: Encodable, Equatable {
 
 struct ImportJob: Decodable {
     let id: String
+    /// 말투 분석(묶음 생성) 상태: processing · completed · failed. 예전 서버 응답에는 없을 수 있다.
+    let status: String?
     let imported: Int
     let duplicates: Int
     let episodes: Int
@@ -60,6 +62,10 @@ struct ImportJob: Decodable {
     let graph_error: String?
 
     var graphActive: Bool { graph_status == "pending" || graph_status == "running" }
+    /// 말투 분석이 아직 도는 중인가. 큰 파일은 가져오기 응답이 먼저 오고 분석은 뒤에서 끝난다.
+    var styleActive: Bool { status == "processing" }
+    /// 서버에서 아직 진행 중인 일이 있어 다시 확인해야 하는가.
+    var active: Bool { styleActive || graphActive }
 }
 
 /// 원문 미리보기(`POST /v1/imports/parse`) 응답에서 앱이 쓰는 부분: 화자와 서버가 추천한 역할.
@@ -228,9 +234,19 @@ final class API {
 
     /// 가입(`register`) 또는 로그인. 세션이 열리면 CSRF 토큰을 기억한다.
     /// 승인제 서버의 가입(202)은 `.pendingApproval` — 세션이 없으니 다른 요청을 보내면 안 된다.
-    func signIn(name: String, password: String, register: Bool) async throws -> SignInOutcome {
-        let response = try await exchange("POST", register ? "v1/auth/register" : "v1/auth/login",
-                                          body: ["username": name, "password": password])
+    /// 가입할 때만 초대 코드와 동의를 함께 보낸다 — 초대제·동의 필수 서버는 없으면 가입을 거절한다.
+    func signIn(name: String, password: String, register: Bool,
+                inviteCode: String = "", consent: Bool = false) async throws -> SignInOutcome {
+        struct Body: Encodable {
+            let username: String
+            let password: String
+            let invite_code: String?
+            let consent: Bool?
+        }
+        let body = Body(username: name, password: password,
+                        invite_code: register && !inviteCode.isEmpty ? inviteCode : nil,
+                        consent: register ? consent : nil)
+        let response = try await exchange("POST", register ? "v1/auth/register" : "v1/auth/login", body: body)
         let outcome = try SignInOutcome.read(status: response.status, body: response.data)
         if case .session(let token) = outcome { csrf = token }
         return outcome

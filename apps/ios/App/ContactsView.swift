@@ -468,9 +468,19 @@ private struct ConversationView: View {
     @ViewBuilder
     private func analysis(_ job: ImportJob) -> some View {
         Section {
-            ImportStatusRow(systemImage: "checkmark.circle.fill", tint: Theme.ok,
-                            title: "말투 분석 완료 · 지금 바로 쓸 수 있어요",
-                            detail: "메시지 \(messages.count)개 중 내가 쓴 것 \(messages.filter { $0.speaker_role == "me" }.count)개 · 이번에 \(job.imported)건 추가, \(job.duplicates)건 중복")
+            let counts = "메시지 \(messages.count)개 중 내가 쓴 것 \(messages.filter { $0.speaker_role == "me" }.count)개 · 이번에 \(job.imported)건 추가, \(job.duplicates)건 중복"
+            // 큰 파일은 가져오기 응답이 먼저 오고 말투 분석은 서버에서 뒤이어 끝난다 — 끝나기 전에는 완료라고 하지 않는다.
+            switch job.status ?? "completed" {
+            case "processing":
+                ImportStatusRow(systemImage: "arrow.triangle.2.circlepath", tint: Theme.accent,
+                                title: "말투 분석 중 · 조금 뒤부터 쓸 수 있어요", detail: counts)
+            case "failed":
+                ImportStatusRow(systemImage: "exclamationmark.triangle.fill", tint: Theme.bad,
+                                title: "말투 분석 실패", detail: "대화는 저장됐어요. 잠시 뒤 다시 시도해 주세요.")
+            default:
+                ImportStatusRow(systemImage: "checkmark.circle.fill", tint: Theme.ok,
+                                title: "말투 분석 완료 · 지금 바로 쓸 수 있어요", detail: counts)
+            }
             switch job.graph_status {
             case "pending", "running":
                 VStack(alignment: .leading, spacing: Theme.Space.s) {
@@ -489,6 +499,11 @@ private struct ConversationView: View {
             case "failed":
                 ImportStatusRow(systemImage: "exclamationmark.triangle.fill", tint: Theme.bad,
                                 title: "지난 약속·사건 정리 실패", detail: job.graph_error ?? "사유 없음")
+            case "limited":
+                // 서버의 수집 한도에 닿았다. 말없이 줄을 지우지 않고 어디까지 했는지 알린다.
+                ImportStatusRow(systemImage: "exclamationmark.circle.fill", tint: Theme.warn,
+                                title: "지난 약속·사건 정리는 한도까지만 했어요 (\(job.graph_episodes)개)",
+                                detail: "최근 메시지부터 정리했어요. 말투 맞추기는 그대로 쓸 수 있어요.")
             default:
                 EmptyView()
             }
@@ -537,10 +552,10 @@ private struct ConversationView: View {
         }
     }
 
-    /// 그래프 수집 진행을 4초마다 확인한다. 화면을 떠나면 확인만 멈춘다(수집은 계속된다).
+    /// 말투 분석과 그래프 수집 진행을 4초마다 확인한다. 화면을 떠나면 확인만 멈춘다(서버 일은 계속된다).
     private func followGraph() async {
         guard let api = session.api else { return }
-        while let current = job, current.graphActive {
+        while let current = job, current.active {
             try? await Task.sleep(nanoseconds: 4_000_000_000)
             if Task.isCancelled { return }
             if let next = try? await api.importJob(current.id) { job = next }

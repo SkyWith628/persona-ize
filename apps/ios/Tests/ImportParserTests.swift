@@ -287,3 +287,31 @@ final class DraftReplacementTests: XCTestCase {
         XCTAssertNil(DraftReplacement.plan(requested: "", before: nil, after: nil))
     }
 }
+
+final class ImportJobTests: XCTestCase {
+    private func job(_ fields: String) throws -> ImportJob {
+        let json = #"{"id":"j1","imported":3,"duplicates":0,"episodes":2,"graph_episodes":0,"graph_error":null,"# + fields + "}"
+        return try JSONDecoder().decode(ImportJob.self, from: Data(json.utf8))
+    }
+
+    func testProcessingJobKeepsPollingEvenWhenGraphIsOff() throws {
+        let processing = try job(#""status":"processing","graph_status":"skipped""#)
+        XCTAssertTrue(processing.styleActive)
+        XCTAssertTrue(processing.active)
+    }
+
+    func testFinishedJobStopsPolling() throws {
+        for graph in ["completed", "failed", "limited", "skipped"] {
+            let done = try job(#""status":"completed","graph_status":""# + graph + #"""#)
+            XCTAssertFalse(done.active, graph)
+        }
+        XCTAssertTrue(try job(#""status":"completed","graph_status":"running""#).active)
+    }
+
+    func testStatusMayBeMissing() throws {
+        let old = try job(#""graph_status":"pending""#)
+        XCTAssertNil(old.status)
+        XCTAssertFalse(old.styleActive)
+        XCTAssertTrue(old.active)
+    }
+}

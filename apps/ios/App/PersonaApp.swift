@@ -194,6 +194,9 @@ private struct LoginView: View {
     @State private var showServer = !(UserDefaults.standard.string(forKey: "server") ?? "").isEmpty
     /// 가입은 됐지만 승인을 기다리는 아이디. 같은 아이디로 다시 가입하지 않게 가입 버튼을 감춘다.
     @State private var pendingName = ""
+    /// 새로 가입할 때만 쓰는 값. 기기에 저장하지 않는다.
+    @State private var inviteCode = ""
+    @State private var consent = false
 
     private let defaultServer = ServerChoice.bundled
 
@@ -208,6 +211,7 @@ private struct LoginView: View {
             VStack(alignment: .leading, spacing: Theme.Space.xl) {
                 intro
                 fields
+                if !awaitingApproval { signupFields }
                 if defaultServer != nil { serverSettings }
                 Text("서버 주소와 아이디만 기기에 기억해요. 비밀번호와 로그인 상태는 앱을 끄면 사라져요.")
                     .font(.footnote).foregroundStyle(Theme.muted)
@@ -282,6 +286,40 @@ private struct LoginView: View {
         }
     }
 
+    /// 가입할 때만 필요한 값: 초대 코드(초대제 서버)와 안내 동의(동의 필수 서버). 로그인에는 쓰지 않는다.
+    private var signupFields: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.s) {
+            Text("새로 가입할 때만")
+                .font(.footnote.weight(.semibold)).foregroundStyle(Theme.muted)
+                .padding(.horizontal, Theme.Space.xs)
+                .accessibilityAddTraits(.isHeader)
+            VStack(spacing: 0) {
+                row("ticket") {
+                    TextField("초대 코드 (받았다면)", text: $inviteCode)
+                        .textInputAutocapitalization(.never).autocorrectionDisabled()
+                }
+                separator
+                Toggle(isOn: $consent) {
+                    Text("개인정보 처리방침과 이용약관을 읽었고 동의해요")
+                        .font(.body).foregroundStyle(Theme.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .tint(Theme.accent)
+                .padding(.horizontal, Theme.Space.l).padding(.vertical, Theme.Space.s)
+                .frame(minHeight: Theme.controlHeight)
+            }
+            .card(padding: 0)
+            if let address, let base = URL(string: address) {
+                HStack(spacing: Theme.Space.l) {
+                    Link("개인정보 처리방침", destination: base.appendingPathComponent("privacy"))
+                    Link("이용약관", destination: base.appendingPathComponent("terms"))
+                }
+                .font(.footnote)
+                .padding(.horizontal, Theme.Space.xs)
+            }
+        }
+    }
+
     private var serverField: some View {
         row("link") {
             TextField("HTTPS 서버 주소", text: $server).keyboardType(.URL)
@@ -341,11 +379,13 @@ private struct LoginView: View {
 
     private func sign(register: Bool) {
         let name = name
+        let code = inviteCode.trimmingCharacters(in: .whitespaces)
         run {
             guard let address else { throw ServiceError(message: "HTTPS 서버 주소를 확인해 주세요.") }
             let client = try API(server: address)
             do {
-                switch try await client.signIn(name: name, password: password, register: register) {
+                switch try await client.signIn(name: name, password: password, register: register,
+                                                    inviteCode: code, consent: consent) {
                 case .session:
                     password = ""
                     try await session.start(client, username: name)
