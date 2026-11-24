@@ -214,6 +214,12 @@ class PostgresContactRepo:
                 row.graph_name = name
         return _contact(row)
 
+    async def set_graph_name(self, user_id: str, contact_id: UUID, name: str) -> Contact:
+        async with self._sessions.begin() as s:
+            row = await self._owned_contact(s, user_id, contact_id)
+            row.graph_name = name
+        return _contact(row)
+
     @staticmethod
     async def _owned_contact(s, user_id: str, contact_id: UUID) -> ContactRow:  # noqa: ANN001
         row = await s.scalar(

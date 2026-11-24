@@ -55,7 +55,7 @@ from uuid import UUID
 
 from app.core.errors import NotFoundError
 from app.domain.conversation import Conversation, GraphStatus, Message, exception_kind, graph_units
-from app.graph.episodes import build_graph_episodes
+from app.graph.episodes import DEFAULT_ME_NAME, build_graph_episodes
 from app.graph.store import GraphStore
 from app.repositories.base import ContactRepo, ConversationRepo
 from app.services.locks import KeyedLocks
@@ -70,6 +70,9 @@ GIVE_UP_STREAK = 2  # 연달아 이만큼 보류되면 메시지 탓이 아니�
 YIELD_WAIT_SECONDS = (
     45.0  # 화자 역할 고치기가 도는 수집이 비켜 주길 기다리는 시간 (에피소드 하나 + 재시도 여유)
 )
+
+HONORIFICS = ("님", "씨")  # 이름 대조에서 붙이거나 떼어 보는 경칭
+GRAPH_NAME_MAX = 50  # contacts.graph_name 열 길이
 
 Pending = tuple[Message, Conversation, str]  # (메시지, 대화방, 에피소드 본문)
 
@@ -103,6 +106,17 @@ def is_transient(exc: BaseException) -> bool:
         if status >= 500 or status in _TRANSIENT_STATUS:
             return True
     return any(cls.__name__ in _TRANSIENT_NAMES for cls in type(exc).__mro__)
+
+
+def same_person_name(a: str, b: str) -> bool:
+    """두 이름이 경칭('님'·'씨') 하나를 붙이거나 뗀 차이, 또는 공백 차이뿐인가.
+
+    일부러 좁다: 성만 같거나('김상무' / '김철수 상무') 직함이 다른 이름은 같다고 보지 않는다.
+    """
+    x, y = "".join(a.split()), "".join(b.split())
+    if not x or not y:
+        return False
+    return x == y or any(x + h == y or y + h == x for h in HONORIFICS)
 
 
 def pick_recent(pending: list[Pending], budget: int) -> list[Pending]:
@@ -245,6 +259,8 @@ class GraphIngestService:
         async with self._locks.hold(key):
             done, stopped = await self._run(user_id, None, job_id, metered=enforce_caps)
             if done:
+                await self._reconcile_quietly(user_id)
+            if done:
                 # 이번 실행이 다른 작업(예: 어제 상한에 걸린 작업)의 남은 메시지까지 넣었을 수 있다.
                 await self._conversations.close_stale_graph_jobs(user_id)
             if stopped is not None:
@@ -272,7 +288,64 @@ class GraphIngestService:
         기본(운영자 경로)은 상한도 카운터도 없다.
         """
         done, _ = await self._run(user_id, conversation_ids, job_id, metered=enforce_caps)
+        if done:
+            await self._reconcile_quietly(user_id)
         return done
+
+    async def _reconcile_quietly(self, user_id: str) -> None:
+        """수집 뒤 이름 대조. 실패해도 수집 결과는 그대로다 (다음 수집 뒤에 다시 한다)."""
+        try:
+            await self.reconcile_names(user_id)
+        except Exception as exc:  # noqa: BLE001 - 대조 실패가 끝난 수집을 실패로 만들지 않는다
+            log.warning("graph name check failed user=%s: %s", user_id, exception_kind(exc))
+
+    async def reconcile_names(self, user_id: str) -> dict[UUID, str]:
+        """상대마다 그래프 이름(`name_in_graph`)과 실제 노드 이름을 대조한다. {고친 상대 id: 새 이름}.
+
+        추출 모델이 에피소드 본문의 이름을 다르게 적을 때가 있다('김상무님' → 노드 '김상무', 2026-11-19).
+        그러면 이름이 정확히 같은 노드를 찾는 조회(`find_entity_uuid`)가 비어 화면과 사실 맥락이 빈다.
+        - 이름이 정확히 같은 노드가 있으면 그대로 둔다.
+        - 없으면 그 상대의 대화방 에피소드가 언급한 Person 노드 중 경칭·공백만 다른 이름
+          (`same_person_name`)을 찾아, **정확히 하나**일 때만 `contacts.graph_name`을 그 이름으로 맞춘다.
+          이후 에피소드 본문도 그 이름을 쓴다.
+        - 후보가 없거나 둘 이상이면 바꾸지 않고 경고만 남긴다. 모델을 부르지 않는다(읽기 조회뿐).
+        조회 쪽은 느슨하게 하지 않는다 — 다른 사람과 섞일 수 있어, 대조는 수집 뒤 여기서만 한다.
+        """
+        episodes: dict[UUID, list[str]] = {}  # 상대 id → 그래프에 들어간 에피소드 이름
+        me_names: dict[UUID, set[str]] = {}
+        for conv in await self._conversations.list(user_id):
+            messages = await self._conversations.list_messages(user_id, conv.id)
+            names = [f"{conv.source_key}:{m.source_key}" for m in messages if m.graph_ingested_at is not None]
+            if names:
+                episodes.setdefault(conv.contact_id, []).extend(names)
+                me_names.setdefault(conv.contact_id, set()).add((conv.me_name or DEFAULT_ME_NAME).strip())
+        fixed: dict[UUID, str] = {}
+        for contact_id, names in episodes.items():
+            contact = await self._contacts.get(user_id, contact_id)
+            target = contact.name_in_graph
+            if await self._store.find_entity_uuid(user_id, target) is not None:
+                continue
+            found = await self._store.person_names(user_id, names)
+            candidates = [
+                n
+                for n in found
+                if n not in me_names[contact_id] and len(n) <= GRAPH_NAME_MAX and same_person_name(n, target)
+            ]
+            if len(candidates) != 1:
+                log.warning(
+                    "graph name mismatch user=%s contact=%s name=%r candidates=%r (그대로 둔다)",
+                    user_id,
+                    contact_id,
+                    target,
+                    candidates,
+                )
+                continue
+            await self._contacts.set_graph_name(user_id, contact_id, candidates[0])
+            fixed[contact_id] = candidates[0]
+            log.info(
+                "graph name matched user=%s contact=%s %r -> %r", user_id, contact_id, target, candidates[0]
+            )
+        return fixed
 
     async def _run(
         self, user_id: str, conversation_ids: list[UUID] | None, job_id: UUID | None, *, metered: bool

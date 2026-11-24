@@ -76,6 +76,10 @@ class ContactRepo(Protocol):
         """그래프에 처음 넣을 때의 이름을 남긴다. 이미 있으면 바꾸지 않고 그대로 돌려준다."""
         ...
 
+    async def set_graph_name(self, user_id: str, contact_id: UUID, name: str) -> Contact:
+        """그래프 이름을 실제 노드 이름으로 고쳐 쓴다 (수집 뒤 이름 대조). 없으면 NotFoundError."""
+        ...
+
 
 class RewriteRepo(Protocol):
     async def find_by_idempotency(self, user_id: str, key: str) -> RewriteRecord | None: ...
