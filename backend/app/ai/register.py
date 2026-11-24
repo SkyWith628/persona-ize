@@ -301,6 +301,11 @@ def _is_hae(word: str, core: str, final: bool) -> bool:  # noqa: PLR0911, PLR091
     return not _jong(last) and _jung(last) == "ㅕ" and _cho(last) in _YEO_INITIALS
 
 
+def _plain_name(word: str) -> bool:
+    """별칭에 없어도 '씨' 앞에서 사람 이름으로 볼 만한 꼴: 한글 2~3글자 (이름 두 글자, 성+이름 세 글자)."""
+    return 2 <= len(word) <= 3 and all(_is_syllable(ch) for ch in word)
+
+
 def classify_sentence(text: str, *, final: bool = True) -> Level:
     """문장 하나의 종결 어미로 말투 단계를 읽는다. 서술어 어미가 없으면 `unknown`.
 
@@ -330,6 +335,13 @@ def classify_sentence(text: str, *, final: bool = True) -> Level:
             return "unknown"
         if word in _BARE_VERBS:
             return "hae"
+        if word == "씨":
+            # 띄어 쓴 '이름 씨'("확인했습니다 영수 씨"): 이름까지 두 낱말을 떼고 그 앞의 어미를 읽는다.
+            rest = words[0].rsplit(None, 1)
+            if len(rest) < 2 or not _plain_name(rest[1]):
+                return "unknown"
+            core = _core(rest[0])
+            continue
         if not (len(word) >= 2 and word.endswith(("님", "씨"))):
             return "unknown"
         core = _core(words[0])
@@ -485,10 +497,95 @@ def _bare_title(word: str) -> bool:
     return word not in _KINSHIP and strip_honorific(word) == word
 
 
+# '씨'로 끝나지만 사람을 부르는 말이 아닌 낱말 (끝이 같으면 거른다: '글솜씨', '손글씨').
+_SSI_NOUN_SUFFIXES: tuple[str, ...] = (
+    *("날씨", "솜씨", "글씨", "말씨", "맘씨", "마음씨", "불씨", "볍씨", "꽃씨", "풀씨", "홀씨"),
+    *("아저씨", "아가씨", "섭씨", "화씨", "종씨", "맵씨"),
+)
+_SENTENCE_FINAL_TRAIL = frozenset(_SENTENCE_END_CHARS + "~")
+_SSI_LOOKBACK = 6
+"""문장 끝의 '이름 씨' 앞에서 어미를 읽으려고 돌아보는 낱말 수."""
+_Token = tuple[int, str, str]  # (시작 위치, 낱말, 뒤따르는 문장부호)
+
+
+def _ssi_name(tokens: Sequence[_Token], i: int, names: frozenset[str]) -> tuple[int, str, bool] | None:
+    """i번째 낱말에서 끝나는 '이름 씨' / '이름씨' → (호칭이 시작하는 낱말 위치, 이름, 별칭의 이름인가).
+
+    이름은 상대 별칭에서 나온 것이거나 한글 2~3글자다. '날씨'·'솜씨'·'아저씨' 같은 보통 낱말, 직함·친족어에
+    붙은 '씨'는 여기서 다루지 않는다 (None).
+    """
+    word = tokens[i][1]
+    if word == "씨":
+        if i == 0 or tokens[i - 1][2]:  # 앞 낱말과 문장부호 없이 이어져야 한다
+            return None
+        head, name = i - 1, tokens[i - 1][1]
+    elif len(word) >= 2 and word.endswith("씨"):
+        head, name = i, word[:-1]
+    else:
+        return None
+    if (name + "씨").endswith(_SSI_NOUN_SUFFIXES) or _title_part(name, names):
+        return None
+    known = name in names
+    if not (known or _plain_name(name)):
+        return None
+    return head, name, known
+
+
+def _ssi_enumerated(tokens: Sequence[_Token], i: int, names: frozenset[str]) -> bool:
+    """i번째 낱말의 '이름 씨,' 뒤에 호칭 꼴이 또 이어지는 나열인가 ("영수 씨, 민수 씨 다 오셨어요")."""
+    for j in (i + 1, i + 2):
+        if j >= len(tokens):
+            break
+        nxt = _ssi_name(tokens, j, names)
+        if (nxt is not None and nxt[0] == i + 1) or (j == i + 1 and _address_like(tokens[j][1], names)):
+            if tokens[j][2].startswith((",", "，")):
+                return True
+            if j + 1 < len(tokens) and tokens[j + 1][1] in _ENUMERATION_WORDS:
+                return True
+    return False
+
+
+def _ssi_called(line: str, tokens: Sequence[_Token], i: int, first: int, names: frozenset[str]) -> str | None:
+    """i번째 낱말에서 끝나는 '이름 씨'가 부르는 자리에 있으면 띄어 쓴 꼴('영수 씨'), 아니면 None.
+
+    부르는 자리 (직함 호칭과 같은 기준에 문장 끝을 더했다)
+    - 문장 첫머리 + 바로 뒤 쉼표·느낌표·물결: "영수 씨, 확인했습니다".
+    - 줄의 처음, 문장부호 없이: 별칭의 이름일 때만 ("영수씨 내일 봬요"). 별칭에 없는 이름은 제3자 언급
+      ("민수 씨 내일 온대요")과 겉으로 구분할 수 없다.
+    - 문장 끝: 서술어 어미로 끝난 말 바로 뒤에 붙고, 거기서 문장(또는 줄)이 끝날 때
+      ("확인했습니다 영수 씨.", "수고하셨어요 영수 씨. 내일 봬요").
+    조사가 붙은 말('씨가', '씨한테')은 낱말이 '씨'로 끝나지 않으므로 애초에 여기 오지 않는다.
+    """
+    found = _ssi_name(tokens, i, names)
+    if found is None:
+        return None
+    head, name, known = found
+    trail = tokens[i][2]
+    term = f"{name} 씨"
+    at_start = head == first
+    after_sentence = head > first and tokens[head - 1][2].endswith(tuple(_SENTENCE_END_CHARS))
+    if at_start or after_sentence:
+        if trail.startswith(_SET_OFF):
+            return None if _ssi_enumerated(tokens, i, names) else term
+        return term if at_start and known else None
+    if head < first or trail.startswith((",", "，")):
+        return None
+    ends_sentence = i == len(tokens) - 1 or bool(_SENTENCE_FINAL_TRAIL.intersection(trail))
+    if not ends_sentence:
+        return None
+    # 앞말의 어미는 끝의 몇 낱말만 보면 읽힌다 — 줄 전체를 넘기면 호칭이 수천 번 나오는 줄에서
+    # 제곱 시간이 든다.
+    before = line[tokens[max(0, head - _SSI_LOOKBACK)][0] : tokens[head][0]]
+    return term if classify_sentence(before, final=False) != "unknown" else None
+
+
 def address_terms(text: str, contact_alias: str) -> list[str]:  # noqa: PLR0912 — 조건을 한곳에 나열한다
     """메시지에서 상대를 부른 말을 나온 문자열 그대로 돌려준다 (나온 순서, 메시지 안 중복 제거).
+    '이름 씨'만 띄어 쓴 꼴로 통일한다 ('영수씨' → '영수 씨').
 
     호격으로 쓰인 것만 센다.
+    - 이름 + 씨 ('영수 씨', '영수씨'): 문장 첫머리(아래와 같은 기준)와 문장 끝 (`_ssi_called`).
+      별칭에 없는 이름도 읽는다 (한글 2~3글자). '날씨'·'솜씨'·'아저씨'는 거른다.
     - 이름 + 아/야 ('서연아', '준호야'): 어디에 있든.
     - 직함·친족어·이름(+님/씨): **문장 첫머리**(줄의 처음, 대답·감탄사 뒤, 마침표·물음표·느낌표 뒤)에서만.
       바로 뒤에 쉼표·느낌표·물결이 있거나, 줄의 처음에 온 님·씨 붙은 말·친족어일 때.
@@ -498,14 +595,15 @@ def address_terms(text: str, contact_alias: str) -> list[str]:  # noqa: PLR0912 
     - 호칭 꼴이 연달아 나오는 나열("부장님, 차장님, 과장님 모두 참석하십니다")은 뺀다.
     - 조사가 붙은 말은 낱말 전체가 호칭 꼴과 같지 않으므로 빠진다 ('팀장님한테', '팀장님이랑', '서연이가').
     알려진 한계: 첫머리의 제3자 언급("팀장님 오늘 휴가래", "엄마 생신이 언제지")을 호칭으로 읽는다.
-    문장 끝이나 가운데의 호칭("알겠습니다 팀장님", "죄송합니다 팀장님, 내일 드릴게요")은 읽지 않는다.
+    직함·친족어는 문장 끝이나 가운데의 호칭("알겠습니다 팀장님", "죄송합니다 팀장님, 내일 드릴게요")을 읽지
+    않는다 (문장 끝은 '이름 씨'만 읽는다).
     """
     alias = contact_alias.strip()
     names = _name_forms(alias)
     alias_words = frozenset(alias.replace(",", " ").split())
     found: list[str] = []
     for line in text.splitlines():
-        tokens: list[tuple[int, str, str]] = []  # (시작 위치, 낱말, 뒤따르는 문장부호)
+        tokens: list[_Token] = []
         for m in _TOKEN.finditer(line):
             raw = m.group()
             lead = len(raw) - len(_LEADING.sub("", raw))
@@ -521,6 +619,13 @@ def address_terms(text: str, contact_alias: str) -> list[str]:  # noqa: PLR0912 
             if _is_name_vocative(word, names):
                 found.append(word)
                 continue
+            if word.endswith("씨"):
+                called = _ssi_called(line, tokens, i, first, names)
+                if called is not None:
+                    found.append(called)
+                    continue
+                if _ssi_name(tokens, i, names) is not None:
+                    continue  # '이름 씨' 꼴이지만 부르는 자리가 아니다
             titled = _title_part(word, names)
             named = word in names or strip_honorific(word) in names
             if not (titled or named):
