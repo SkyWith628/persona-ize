@@ -31,6 +31,8 @@ def test_design_doc_example() -> None:
         "저녁은 제가 살게",
         "자료 넣을게요.",
         "그건 제가 할께요",
+        "월요일에 바로 보낼게 😊",  # 뒤에 이모지·기호가 와도 문장 끝이다
+        "내일 줄게ㅎㅎ",
     ],
 )
 def test_promise_endings(text: str) -> None:
@@ -50,6 +52,23 @@ def test_promise_endings(text: str) -> None:
 )
 def test_not_promise(text: str) -> None:
     assert "promise" not in kinds(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "그날 이사 잘 하고 연락할게",
+        "이번 주 일요일 이사 도와줄 수 있어?",
+        "주말 이사 준비 중이에요",
+        "오늘 대리 불러서 갈게",
+    ],
+)
+def test_time_word_before_title_is_not_a_person(text: str) -> None:
+    assert "person" not in kinds(text)
+
+
+def test_named_director_is_still_a_person() -> None:
+    assert kinds("김영희 이사님께 보고드렸습니다")["person"] == {"김영희"}
 
 
 def test_dates_and_quantities() -> None:

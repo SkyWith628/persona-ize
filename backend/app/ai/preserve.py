@@ -141,11 +141,18 @@ _NOT_NAMES = frozenset(
 # '은/이/가/도'는 '지은', '정이' 같은 이름과 겹쳐서 네 글자일 때만 조사로 본다 ('회의록은').
 _PARTICLE_ENDS = ("는", "를", "에", "께", "에서", "에게", "한테", "부터", "까지", "으로", "이랑", "하고")
 _LONG_PARTICLE_ENDS = ("은", "이", "가", "을", "도", "의", "로", "와", "과", "만")
+_TIME_WORDS = frozenset(
+    ("그날", "이날", "당일", "주말", "평일", "오늘", "내일", "모레", "어제", "이번", "다음", "지난")
+    + ("오전", "오후", "아침", "저녁", "점심", "새벽", "연말", "연초", "월말", "월초")
+)
 
 
 def _plausible_name(word: str) -> bool:
     """띄어 쓴 직함 앞의 낱말이 사람 이름일 수 있는가 ('지현 팀장님'의 '지현'). 붙여 쓴 꼴에는 쓰지 않는다."""
     if word in _NOT_NAMES or word.endswith(_PARTICLE_ENDS):
+        return False
+    # 때를 가리키는 말 뒤의 '이사'는 직함이 아니라 이삿짐 이사다 ('그날 이사', '일요일 이사').
+    if word in _TIME_WORDS or word.endswith("요일"):
         return False
     return not (len(word) >= 4 and word.endswith(_LONG_PARTICLE_ENDS))
 
@@ -176,7 +183,7 @@ _PROMISE = re.compile(
 _RIEUL_FINAL = "".join(chr(0xAC00 + i * 28 + 8) for i in range(19 * 21))
 _PROMISE_ENDING = re.compile(
     r"(?<![가-힣])(?:드리겠습니다|드리겠어요|하겠습니다)"
-    rf"|(?<![가-힣])[가-힣]*[{_RIEUL_FINAL}][게께](?:요(?![가-힣])|(?=[ \t]*(?:[.!?~…,ㅋㅎㅠㅜ^\n]|\Z)))"
+    rf"|(?<![가-힣])[가-힣]*[{_RIEUL_FINAL}][게께](?:요(?![가-힣])|(?=[ \t]*(?:[^\s가-힣A-Za-z0-9]|\n|\Z)))"
 )
 
 # 조건 표현.
