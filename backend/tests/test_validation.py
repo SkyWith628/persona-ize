@@ -64,3 +64,45 @@ def test_unknown_evidence_rejected() -> None:
 def test_empty_output() -> None:
     r = run("   ")
     assert [v.check for v in r.violations] == ["empty"]
+
+
+def test_english_draft_keeps_dates_and_separated_numbers() -> None:
+    """영어 대화 (2026-11-23): 달·요일·자릿수 쉼표가 든 수가 바뀌면 실패하고, 표기만 바뀌면 통과한다."""
+    draft = "will send the signed agreement by Friday Oct 17. 2.8% from Nov 15 and 4,500 pcs per month"
+    items = extract_preserved_items(draft)
+
+    def check(text: str) -> set[str]:
+        report = validate_output(draft, ModelOutput(rewritten_text=text), items, None, [])
+        return {v.check for v in report.violations}
+
+    good = (
+        "I will send the signed agreement by Friday, October 17th. 2.8% from Nov 15 and 4,500 pcs per month."
+    )
+    assert check(good) == set()
+    assert "preserve_missing" in check(good.replace("4,500", "3,500"))
+    assert "preserve_missing" in check(good.replace("October 17th", "November 17th"))
+    assert "preserve_missing" in check(good.replace("Friday", "Thursday"))
+
+
+def _violations(draft: str, text: str) -> set[str]:
+    report = validate_output(
+        draft, ModelOutput(rewritten_text=text), extract_preserved_items(draft), None, []
+    )
+    return {v.check for v in report.violations}
+
+
+def test_review_2026_11_23_holes_are_closed() -> None:
+    """검증 단계 리뷰(2026-11-23)에서 재현한 것들."""
+    # 사실이 바뀌었는데 통과하던 것
+    assert "preserve_missing" in _violations("회의는 14:30에 시작합니다", "회의는 15:30에 시작합니다.")
+    assert "negation_changed" in _violations("금요일은 어렵습니다", "안녕하세요, 금요일 가능합니다.")
+    assert "negation_changed" in _violations(
+        "안녕하세요 금요일에 뵙겠습니다", "안녕하세요, 금요일은 어렵겠습니다."
+    )
+    # 사실을 지켰는데 실패하던 것
+    assert _violations("단가는 52000원입니다", "단가는 52,000원입니다.") == set()
+    assert _violations("이번 주 일정 공유드립니다", "이번 주의 일정을 공유드립니다.") == set()
+    # 고친 뒤에도 진짜 변경은 잡는다
+    assert "preserve_missing" in _violations("단가는 52000원입니다", "단가는 53,000원입니다.")
+    assert "preserve_missing" in _violations("이번 주 금까지 드릴게요", "이번 주 목까지 드릴게요.")
+    assert _violations("오늘 안에 보내드리겠습니다", "오늘 안에 보내 드리겠습니다.") == set()

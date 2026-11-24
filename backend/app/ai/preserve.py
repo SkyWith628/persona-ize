@@ -1,6 +1,7 @@
 """보존 항목 규칙 추출 (design.md §3-1).
 
 정규식으로 날짜·시각, 수량, 사람, 가능/불가, 약속, 조건, 부정을 뽑는다.
+영어는 날짜·요일·시각과 수만 읽는다 — 영어의 약속·가능/불가·부정은 아직 규칙이 없다.
 누락이 오탐보다 위험하므로 넓게 잡는다. 구조화 모델 추출(보조)은 3주차에 결합한다.
 같은 함수를 원문과 결과에 모두 적용해 집합으로 비교하는 것이 검증의 핵심이다 (validation.py).
 """
@@ -16,8 +17,13 @@ from app.domain.titles import ORG_TITLES
 _WEEKDAY = "월|화|수|목|금|토|일"
 _RELATIVE_DAY = "오늘|내일|모레|어제|그제|이번\\s*주|다음\\s*주|지난\\s*주|이번\\s*달|다음\\s*달|주말|연휴"
 
+# '이번 주 금'처럼 '요일' 없이 쓴 요일 한 글자는 낱말이 거기서 끝나거나 날짜 조사가 붙을 때만 읽는다.
+# 뒤에 다른 한글이 이어지면 다음 낱말의 첫 글자다 — '이번 주 일정'의 '일', '다음 주 수정'의 '수'
+# (2026-11-23 이전에는 '이번 주 일'이라는 날짜로 잡혀, '이번 주의 일정'으로 바꾼 결과가 실패했다).
+_WEEKDAY_END = "요일|(?=까지|부터|쯤|에는|에도|에(?![가-힣]))|(?![가-힣])"
+
 _DATETIME_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(rf"(?:{_RELATIVE_DAY})(?:\s*(?:{_WEEKDAY})(?:요일)?)?"),
+    re.compile(rf"(?:{_RELATIVE_DAY})(?:\s*(?:{_WEEKDAY})(?:{_WEEKDAY_END}))?"),
     re.compile(rf"(?<![가-힣])(?:{_WEEKDAY})요일"),
     re.compile(r"\d{1,2}\s*월\s*\d{1,2}\s*일"),
     re.compile(r"\d{1,2}\s*/\s*\d{1,2}(?!\d)"),
@@ -26,6 +32,10 @@ _DATETIME_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\d{1,2}\s*시간\s*(?:뒤|후|안|이내)"),
     re.compile(r"(?:이번|다음|지난)\s*(?:주|달|분기|학기)"),
 )
+# '14:30' 꼴의 시각 (2026-11-23). 수 규칙은 콜론 옆의 수를 빼는데 이 꼴을 읽는 날짜 규칙이 없어서,
+# '14:30'을 '15:30'으로 바꿔도 검증이 알지 못했다. 분은 00~59만 — '3:2' 같은 비율은 시각이 아니다.
+# am/pm이 붙은 것은 영어 시각 규칙이 읽는다 ('9:00 am'과 '9am'이 같은 값이 되도록 여기서는 뺀다).
+_CLOCK = re.compile(r"(?<![\d:])(?P<hour>\d{1,2}):(?P<minute>[0-5]\d)(?![\d:])(?!\s?[apAP]\.?[mM])")
 
 # 숫자 + 단위. '시/월/일'은 날짜 패턴에서 처리하므로 제외한다.
 # 뽑는 것은 `\d[\d,\.]*\s*(단위)`와 같다. 시간만 다르다: 숫자·쉼표·점이 이어진 덩어리의
@@ -36,7 +46,60 @@ _QUANTITY = re.compile(
     r"(?<![\d,\.])[,\.]*(\d[\d,\.]*+\s*"
     r"(?:개|명|분|원|만\s*원|억|건|번|회|장|페이지|쪽|부|%|퍼센트|km|m|kg|g|일간|주일|주간|시간|분량|배|차|권|대))"
 )
-_BARE_NUMBER = re.compile(r"(?<![\d/월일시분:])\d{2,}(?![\d/월일시분%:])")
+# 단위 없는 수. 자릿수 쉼표('4,500', '98,400,000')와 소수('15.27')는 한 덩어리로 읽는다 (2026-11-23).
+# 예전에는 두 자리 이상 숫자 덩어리만 봐서 '4,500 pcs'가 '500'이 됐다 — '4,500'을 '3,500'으로 바꿔도
+# 검증이 알지 못했다. 한 자리 정수('3')는 예전처럼 보지 않는다. 덩어리 안으로 되돌아가지 않는다(`++`).
+_BARE_NUMBER = re.compile(
+    r"(?<![\d/월일시분:])(?:\d{1,3}(?:,\d{3})++(?:\.\d++)?|\d++\.\d++|\d{2,}+)(?![\d/월일시분%:])"
+)
+
+# 영어 날짜·요일·시각 (2026-11-23). 영어로 주고받는 대화에서 'Oct 17'이 '17'로만 잡혀, 달이나 요일이
+# 바뀌어도 검증이 알지 못했다. 표기가 달라도 같은 값으로 견준다: 'Oct 17' = 'October 17th' = '17 Oct',
+# 'friday' = 'Fri', '8pm' = '8 PM'.
+_EN_MONTHS = {
+    **dict.fromkeys(("jan", "january"), "jan"),
+    **dict.fromkeys(("feb", "february"), "feb"),
+    **dict.fromkeys(("mar", "march"), "mar"),
+    **dict.fromkeys(("apr", "april"), "apr"),
+    "may": "may",
+    **dict.fromkeys(("jun", "june"), "jun"),
+    **dict.fromkeys(("jul", "july"), "jul"),
+    **dict.fromkeys(("aug", "august"), "aug"),
+    **dict.fromkeys(("sep", "sept", "september"), "sep"),
+    **dict.fromkeys(("oct", "october"), "oct"),
+    **dict.fromkeys(("nov", "november"), "nov"),
+    **dict.fromkeys(("dec", "december"), "dec"),
+}
+# 'may'는 조동사이기도 해서 대문자로 시작할 때만 달로 본다 ('I may 3 times'는 날짜가 아니다).
+_EN_MONTH = "(?i:" + "|".join(sorted((m for m in _EN_MONTHS if m != "may"), key=len, reverse=True)) + ")|May"
+_EN_MONTH_DAY = re.compile(
+    rf"(?<![A-Za-z])(?P<month>{_EN_MONTH})\.?\s+(?P<day>\d{{1,2}})(?:st|nd|rd|th)?(?![\dA-Za-z])",
+)
+_EN_DAY_MONTH = re.compile(
+    rf"(?<![\d,\.])(?P<day>\d{{1,2}})(?:st|nd|rd|th)?\s+(?P<month>{_EN_MONTH})(?![A-Za-z])"
+)
+_EN_WEEKDAYS = {
+    **dict.fromkeys(("mon", "monday"), "mon"),
+    **dict.fromkeys(("tue", "tues", "tuesday"), "tue"),
+    **dict.fromkeys(("wed", "wednesday"), "wed"),
+    **dict.fromkeys(("thu", "thur", "thurs", "thursday"), "thu"),
+    **dict.fromkeys(("fri", "friday"), "fri"),
+    **dict.fromkeys(("sat", "saturday"), "sat"),
+    **dict.fromkeys(("sun", "sunday"), "sun"),
+}
+# 'sat'·'sun'은 보통 낱말이기도 해서 줄임말은 대문자로 시작할 때만 요일로 본다 ('Sat', 'Sun').
+_EN_WEEKDAY = re.compile(
+    r"(?<![A-Za-z])(?:(?i:monday|tuesday|wednesday|thursday|friday|saturday|sunday"
+    r"|mon|tues|tue|wed|thurs|thur|thu|fri)|Sat|Sun)(?![A-Za-z])"
+)
+_EN_TIME = re.compile(
+    r"(?<![\d:])(?P<hour>\d{1,2})(?::(?P<minute>\d{2}))?\s?(?P<half>[ap])\.?m\.?(?![A-Za-z])", re.IGNORECASE
+)
+_EN_RELATIVE = re.compile(
+    r"(?<![A-Za-z])(?:today|tomorrow|yesterday|tonight|(?:this|next|last)\s+(?:week|month|quarter|year))"
+    r"(?![A-Za-z])",
+    re.IGNORECASE,
+)
 
 # 이름이 드러난 사람 (이름 2~4글자 + 호칭). 이름 없는 호칭('팀장님', '형')은 말투 요소라 보존 항목이 아니다.
 _TITLES = "님|씨|선배|팀장님?|부장님?|과장님?|대리님?|교수님?|선생님|대표님?|이사님?|사장님?|실장님?|주임님?"
@@ -87,7 +150,7 @@ def _plausible_name(word: str) -> bool:
 
 # 가능/불가. 결과에서 방향이 바뀌면 사실 변경이다.
 _IMPOSSIBLE = re.compile(
-    r"어렵(?:습니다|겁니다|고|네요|다|을|어|워)|힘들(?:겁니다|어|다|것|어요|겠)|못\s*[가-힣]+|불가(?:능)?|안\s*(?:될|돼|됩|됨|되)|할\s*수\s*없|불가능|어려울"
+    r"어렵(?:겠|습니다|겁니다|고|네요|다|을|어|워)|힘들(?:겁니다|어|다|것|어요|겠)|못\s*[가-힣]+|불가(?:능)?|안\s*(?:될|돼|됩|됨|되)|할\s*수\s*없|불가능|어려울"
 )
 _POSSIBLE = re.compile(
     r"가능(?:합니다|해요|해|함|할)|할\s*수\s*있|될\s*것\s*같|됩니다|괜찮(?:습니다|아요|아)"
@@ -105,11 +168,24 @@ _PROMISE = re.compile(
 _CONDITION = re.compile(r"[가-힣\s]{1,15}(?:하면|이면|라면|되면|경우|다면|시에는|때는)(?![가-힣])")
 
 # 부정 표현 (가능/불가와 겹치지 않는 일반 부정).
-_NEGATION = re.compile(r"(?<![가-힣])(?:안|못|않|없|아니)(?=[가-힣\s])")
+# '안'으로 시작하는 보통 낱말은 뺀다 — '안녕하세요', '안내', '안전', '오늘 안에', '안으로' (2026-11-23).
+# 예전에는 인사말 '안녕'이 부정으로 읽혀, 불가가 사라진 결과가 "부정이 남았다"로 통과했고,
+# 인사말로 시작한 초안은 "원문에 이미 부정이 있다"로 보아 새로 생긴 불가를 검사하지 않았다.
+_NEGATION = re.compile(
+    r"(?<![가-힣])(?:안(?!녕|내|전|부|건|심|정|쪽|팎|에|으로)|못|않|없|아니|아닙)(?=[가-힣\s])"
+)
 
 
 def _norm(text: str) -> str:
     return re.sub(r"\s+", "", text)
+
+
+_GROUP_COMMA = re.compile(r"(?<=\d),(?=\d{3}(?!\d))")
+
+
+def _norm_quantity(text: str) -> str:
+    """수량을 견줄 값. 자릿수 쉼표는 표기일 뿐이다 — '52000원'과 '52,000원'은 같은 값이다."""
+    return _GROUP_COMMA.sub("", _norm(text))
 
 
 def _find(pattern: re.Pattern[str], text: str) -> Iterable[str]:
@@ -150,10 +226,25 @@ def extract_preserved_items(text: str) -> list[PreservedItem]:
         for s in _find(pat, text):
             add("datetime", s)
 
+    for m in _EN_MONTH_DAY.finditer(text):
+        add("datetime", m.group(0).strip(), f"{_EN_MONTHS[m['month'].lower()]}{int(m['day'])}")
+    for m in _EN_DAY_MONTH.finditer(text):
+        add("datetime", m.group(0).strip(), f"{_EN_MONTHS[m['month'].lower()]}{int(m['day'])}")
+    for m in _EN_WEEKDAY.finditer(text):
+        add("datetime", m.group(0), _EN_WEEKDAYS[m.group(0).lower()])
+    for m in _EN_TIME.finditer(text):
+        minute = f":{m['minute']}" if m["minute"] and m["minute"] != "00" else ""
+        add("datetime", m.group(0).strip(), f"{int(m['hour'])}{minute}{m['half'].lower()}m")
+    for m in _EN_RELATIVE.finditer(text):
+        add("datetime", m.group(0), _norm(m.group(0)).lower())
+
+    for m in _CLOCK.finditer(text):
+        add("datetime", m.group(0), f"{int(m['hour'])}:{m['minute']}")
+
     for m in _QUANTITY.finditer(text):
-        add("quantity", m.group(1).strip())
+        add("quantity", m.group(1).strip(), _norm_quantity(m.group(1)))
     for s in _find(_BARE_NUMBER, text):
-        add("quantity", s)
+        add("quantity", s, _norm_quantity(s))
 
     for m in _PERSON.finditer(text):
         if m.group(2) and not _plausible_name(m.group(1)):
