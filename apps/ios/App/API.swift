@@ -52,6 +52,8 @@ struct ImportPayload: Encodable, Equatable {
 
 struct ImportJob: Decodable {
     let id: String
+    /// 말투 분석(묶음 생성) 상태: processing · completed · failed. 예전 서버 응답에는 없을 수 있다.
+    let status: String?
     let imported: Int
     let duplicates: Int
     let episodes: Int
@@ -60,6 +62,28 @@ struct ImportJob: Decodable {
     let graph_error: String?
 
     var graphActive: Bool { graph_status == "pending" || graph_status == "running" }
+    /// 말투 분석이 아직 도는 중인가. 큰 파일은 가져오기 응답이 먼저 오고 분석은 뒤에서 끝난다.
+    var styleActive: Bool { status == "processing" }
+    /// 서버에서 아직 진행 중인 일이 있어 다시 확인해야 하는가.
+    var active: Bool { styleActive || graphActive }
+}
+
+/// 원문 미리보기(`POST /v1/imports/parse`) 응답에서 앱이 쓰는 부분: 화자와 서버가 추천한 역할.
+struct ImportPreview: Decodable {
+    struct Speaker: Decodable, Equatable {
+        let name: String
+        let count: Int
+        let suggested_role: String?
+    }
+
+    let speakers: [Speaker]
+}
+
+/// 원문 가져오기(`POST /v1/conversations/{id}/imports/raw`): 서버가 원문을 읽는다 (카카오톡 내보내기).
+struct RawImportPayload: Encodable, Equatable {
+    let format: String
+    let text: String
+    let speaker_map: [String: String]
 }
 
 /// 로그인에 쓸 서버 주소를 정한다: 사용자가 적은 값이 먼저, 비어 있으면 빌드에 든 기본 주소.
@@ -210,9 +234,19 @@ final class API {
 
     /// 가입(`register`) 또는 로그인. 세션이 열리면 CSRF 토큰을 기억한다.
     /// 승인제 서버의 가입(202)은 `.pendingApproval` — 세션이 없으니 다른 요청을 보내면 안 된다.
-    func signIn(name: String, password: String, register: Bool) async throws -> SignInOutcome {
-        let response = try await exchange("POST", register ? "v1/auth/register" : "v1/auth/login",
-                                          body: ["username": name, "password": password])
+    /// 가입할 때만 초대 코드와 동의를 함께 보낸다 — 초대제·동의 필수 서버는 없으면 가입을 거절한다.
+    func signIn(name: String, password: String, register: Bool,
+                inviteCode: String = "", consent: Bool = false) async throws -> SignInOutcome {
+        struct Body: Encodable {
+            let username: String
+            let password: String
+            let invite_code: String?
+            let consent: Bool?
+        }
+        let body = Body(username: name, password: password,
+                        invite_code: register && !inviteCode.isEmpty ? inviteCode : nil,
+                        consent: register ? consent : nil)
+        let response = try await exchange("POST", register ? "v1/auth/register" : "v1/auth/login", body: body)
         let outcome = try SignInOutcome.read(status: response.status, body: response.data)
         if case .session(let token) = outcome { csrf = token }
         return outcome
@@ -280,6 +314,16 @@ final class API {
 
     func importMessages(conversation: String, payload: ImportPayload) async throws -> ImportJob {
         try decode(await send("POST", "v1/conversations/\(conversation)/imports", body: payload))
+    }
+
+    /// 서버 파서로 원문을 읽어 본다 (저장 없음). 읽지 못하면 서버 문구가 오류로 온다.
+    func previewImport(text: String, format: String) async throws -> ImportPreview {
+        let body = ["format": format, "text": text]
+        return try decode(await send("POST", "v1/imports/parse", body: body))
+    }
+
+    func importRaw(conversation: String, payload: RawImportPayload) async throws -> ImportJob {
+        try decode(await send("POST", "v1/conversations/\(conversation)/imports/raw", body: payload))
     }
 
     func importJob(_ id: String) async throws -> ImportJob { try decode(await send("GET", "v1/imports/\(id)")) }

@@ -358,6 +358,7 @@ private struct ConversationView: View {
     @State private var method = Method.paste
     @State private var text = ""
     @State private var meName = ""
+    @State private var contactName = ""
     @State private var job: ImportJob?
     @State private var picking = false
     @State private var confirming = false
@@ -375,8 +376,9 @@ private struct ConversationView: View {
                 .listRowSeparator(.hidden)
                 switch method {
                 case .kakao:
-                    guide("카카오톡 내보내기(.txt)는 기기와 버전에 따라 형식이 달라 아직 자동으로 읽지 못해요. 대화를 복사해 ‘붙여넣기’ 형식으로 넣어 주세요.",
-                          systemImage: "exclamationmark.circle")
+                    guide("채팅방 메뉴 → 대화 내용 내보내기로 만든 파일(.txt, PC는 .csv)을 첨부해 주세요. 1:1 대화는 내 이름을 비워 둬도 누가 나인지 알아서 정해요. 여러 명이 있는 대화는 이 상대와 내 말만 가져와요.",
+                          systemImage: "info.circle")
+                    inputs
                 case .telegram:
                     guide("PC용 텔레그램에서만 만들 수 있어요. 대화방 메뉴 → 채팅 기록 내보내기 → JSON으로 만든 result.json을 첨부해 주세요.",
                           systemImage: "info.circle")
@@ -419,7 +421,7 @@ private struct ConversationView: View {
             run { try await loadMessages() }
         }
         .task(id: job?.id) { await followGraph() }
-        .fileImporter(isPresented: $picking, allowedContentTypes: [.plainText, .json]) { picked in
+        .fileImporter(isPresented: $picking, allowedContentTypes: [.plainText, .commaSeparatedText, .json]) { picked in
             run { text = try Self.read(try picked.get()) }
         }
         .confirmationDialog("이 대화방의 대화와 말투 분석을 지워요. 되돌릴 수 없어요.",
@@ -448,11 +450,14 @@ private struct ConversationView: View {
             .background(Theme.surface2, in: RoundedRectangle(cornerRadius: Theme.Radius.m, style: .continuous))
             .listRowSeparator(.hidden)
         Button { editing = false; picking = true } label: {
-            Label("대화 파일 첨부하기 (.txt · .json)", systemImage: "paperclip")
+            Label("대화 파일 첨부하기 (.txt · .csv · .json)", systemImage: "paperclip")
         }
         .buttonStyle(.secondary)
         .listRowSeparator(.hidden)
         TextField("대화에 나오는 내 이름 (예: 김민수)", text: $meName)
+        if method == .kakao {
+            TextField("상대 이름 (여러 명이 있는 대화일 때)", text: $contactName)
+        }
         Button("가져오기") { importText() }
             .buttonStyle(.primary)
             .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -463,9 +468,19 @@ private struct ConversationView: View {
     @ViewBuilder
     private func analysis(_ job: ImportJob) -> some View {
         Section {
-            ImportStatusRow(systemImage: "checkmark.circle.fill", tint: Theme.ok,
-                            title: "말투 분석 완료 · 지금 바로 쓸 수 있어요",
-                            detail: "메시지 \(messages.count)개 중 내가 쓴 것 \(messages.filter { $0.speaker_role == "me" }.count)개 · 이번에 \(job.imported)건 추가, \(job.duplicates)건 중복")
+            let counts = "메시지 \(messages.count)개 중 내가 쓴 것 \(messages.filter { $0.speaker_role == "me" }.count)개 · 이번에 \(job.imported)건 추가, \(job.duplicates)건 중복"
+            // 큰 파일은 가져오기 응답이 먼저 오고 말투 분석은 서버에서 뒤이어 끝난다 — 끝나기 전에는 완료라고 하지 않는다.
+            switch job.status ?? "completed" {
+            case "processing":
+                ImportStatusRow(systemImage: "arrow.triangle.2.circlepath", tint: Theme.accent,
+                                title: "말투 분석 중 · 조금 뒤부터 쓸 수 있어요", detail: counts)
+            case "failed":
+                ImportStatusRow(systemImage: "exclamationmark.triangle.fill", tint: Theme.bad,
+                                title: "말투 분석 실패", detail: "대화는 저장됐어요. 잠시 뒤 다시 시도해 주세요.")
+            default:
+                ImportStatusRow(systemImage: "checkmark.circle.fill", tint: Theme.ok,
+                                title: "말투 분석 완료 · 지금 바로 쓸 수 있어요", detail: counts)
+            }
             switch job.graph_status {
             case "pending", "running":
                 VStack(alignment: .leading, spacing: Theme.Space.s) {
@@ -484,6 +499,11 @@ private struct ConversationView: View {
             case "failed":
                 ImportStatusRow(systemImage: "exclamationmark.triangle.fill", tint: Theme.bad,
                                 title: "지난 약속·사건 정리 실패", detail: job.graph_error ?? "사유 없음")
+            case "limited":
+                // 서버의 수집 한도에 닿았다. 말없이 줄을 지우지 않고 어디까지 했는지 알린다.
+                ImportStatusRow(systemImage: "exclamationmark.circle.fill", tint: Theme.warn,
+                                title: "지난 약속·사건 정리는 한도까지만 했어요 (\(job.graph_episodes)개)",
+                                detail: "최근 메시지부터 정리했어요. 말투 맞추기는 그대로 쓸 수 있어요.")
             default:
                 EmptyView()
             }
@@ -514,18 +534,28 @@ private struct ConversationView: View {
         editing = false
         run {
             guard let api = session.api else { return }
-            let payload = try ImportParser.parse(text, me: meName.trimmingCharacters(in: .whitespaces),
-                                                 contact: contact.alias)
-            job = try await api.importMessages(conversation: conversation.id, payload: payload)
+            let me = meName.trimmingCharacters(in: .whitespaces)
+            if method == .kakao {
+                // 카카오톡 내보내기는 서버가 읽는다 (웹과 같은 파서). 앱은 화자만 지정한다.
+                let preview = try await api.previewImport(text: text, format: "kakao")
+                // 단체방이면 이 상대 한 명만 남긴다: 적어 준 이름이 먼저, 없으면 상대 별칭.
+                let partner = [contactName.trimmingCharacters(in: .whitespaces), contact.alias].filter { !$0.isEmpty }
+                let roles = try ImportParser.roles(for: preview.speakers, me: me, contact: partner)
+                let payload = RawImportPayload(format: "kakao", text: text, speaker_map: roles)
+                job = try await api.importRaw(conversation: conversation.id, payload: payload)
+            } else {
+                let payload = try ImportParser.parse(text, me: me, contact: contact.alias)
+                job = try await api.importMessages(conversation: conversation.id, payload: payload)
+            }
             text = ""
             try await loadMessages()
         }
     }
 
-    /// 그래프 수집 진행을 4초마다 확인한다. 화면을 떠나면 확인만 멈춘다(수집은 계속된다).
+    /// 말투 분석과 그래프 수집 진행을 4초마다 확인한다. 화면을 떠나면 확인만 멈춘다(서버 일은 계속된다).
     private func followGraph() async {
         guard let api = session.api else { return }
-        while let current = job, current.graphActive {
+        while let current = job, current.active {
             try? await Task.sleep(nanoseconds: 4_000_000_000)
             if Task.isCancelled { return }
             if let next = try? await api.importJob(current.id) { job = next }

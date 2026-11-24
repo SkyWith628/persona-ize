@@ -35,6 +35,60 @@ final class ImportParserTests: XCTestCase {
         }
     }
 
+    func testRolesFollowServerSuggestionWhenMyNameIsBlank() throws {
+        let speakers = [ImportPreview.Speaker(name: "김민수", count: 6, suggested_role: "me"),
+                        ImportPreview.Speaker(name: "박지현", count: 5, suggested_role: "contact")]
+
+        XCTAssertEqual(try ImportParser.roles(for: speakers, me: ""), ["김민수": "me", "박지현": "contact"])
+    }
+
+    func testRolesUseMyNameOverServerSuggestion() throws {
+        let speakers = [ImportPreview.Speaker(name: "김민수", count: 6, suggested_role: nil),
+                        ImportPreview.Speaker(name: "박지현", count: 5, suggested_role: "me"),
+                        ImportPreview.Speaker(name: "최유진", count: 1, suggested_role: nil)]
+
+        XCTAssertEqual(try ImportParser.roles(for: speakers, me: "김민수", contact: ["박지현"]),
+                       ["김민수": "me", "박지현": "contact", "최유진": "skip"])
+    }
+
+    func testRolesNeedSomeoneToBeMe() {
+        let speakers = [ImportPreview.Speaker(name: "김민수", count: 6, suggested_role: nil),
+                        ImportPreview.Speaker(name: "박지현", count: 5, suggested_role: nil)]
+
+        XCTAssertThrowsError(try ImportParser.roles(for: speakers, me: "")) {
+            XCTAssertTrue($0.localizedDescription.contains("김민수, 박지현"))
+        }
+        XCTAssertThrowsError(try ImportParser.roles(for: speakers, me: "민수")) {
+            XCTAssertTrue($0.localizedDescription.hasPrefix("‘민수’"))
+        }
+        XCTAssertThrowsError(try ImportParser.roles(for: [], me: "김민수"))
+    }
+
+    func testGroupChatKeepsOnlyThisContactAndSkipsTheRest() throws {
+        let speakers = [ImportPreview.Speaker(name: "김민수", count: 6, suggested_role: nil),
+                        ImportPreview.Speaker(name: "박지현", count: 5, suggested_role: nil),
+                        ImportPreview.Speaker(name: "최유진", count: 1, suggested_role: nil)]
+
+        XCTAssertEqual(try ImportParser.roles(for: speakers, me: "김민수", contact: ["", "박지현"].filter { !$0.isEmpty }),
+                       ["김민수": "me", "박지현": "contact", "최유진": "skip"])
+        // 적어 준 이름이 별칭보다 먼저다.
+        XCTAssertEqual(try ImportParser.roles(for: speakers, me: "김민수", contact: ["최유진", "박지현"]),
+                       ["김민수": "me", "박지현": "skip", "최유진": "contact"])
+    }
+
+    func testGroupChatNeedsToKnowWhichSpeakerIsThisContact() {
+        let speakers = [ImportPreview.Speaker(name: "김민수", count: 6, suggested_role: "me"),
+                        ImportPreview.Speaker(name: "박지현", count: 5, suggested_role: nil),
+                        ImportPreview.Speaker(name: "최유진", count: 1, suggested_role: nil)]
+
+        XCTAssertThrowsError(try ImportParser.roles(for: speakers, me: "", contact: ["팀장님"])) {
+            XCTAssertTrue($0.localizedDescription.contains("상대 이름"))
+            XCTAssertTrue($0.localizedDescription.contains("김민수, 박지현, 최유진"))
+        }
+        // 내 이름은 상대가 될 수 없다.
+        XCTAssertThrowsError(try ImportParser.roles(for: speakers, me: "", contact: ["김민수"]))
+    }
+
     func testEmptyInputIsRejected() {
         XCTAssertThrowsError(try ImportParser.parse(" \n ", me: "", contact: "박지현"))
     }
@@ -231,5 +285,33 @@ final class DraftReplacementTests: XCTestCase {
     func testChangedOrEmptyInputHasNoPlan() {
         XCTAssertNil(DraftReplacement.plan(requested: "넹", before: "넹!", after: nil))
         XCTAssertNil(DraftReplacement.plan(requested: "", before: nil, after: nil))
+    }
+}
+
+final class ImportJobTests: XCTestCase {
+    private func job(_ fields: String) throws -> ImportJob {
+        let json = #"{"id":"j1","imported":3,"duplicates":0,"episodes":2,"graph_episodes":0,"graph_error":null,"# + fields + "}"
+        return try JSONDecoder().decode(ImportJob.self, from: Data(json.utf8))
+    }
+
+    func testProcessingJobKeepsPollingEvenWhenGraphIsOff() throws {
+        let processing = try job(#""status":"processing","graph_status":"skipped""#)
+        XCTAssertTrue(processing.styleActive)
+        XCTAssertTrue(processing.active)
+    }
+
+    func testFinishedJobStopsPolling() throws {
+        for graph in ["completed", "failed", "limited", "skipped"] {
+            let done = try job(#""status":"completed","graph_status":""# + graph + #"""#)
+            XCTAssertFalse(done.active, graph)
+        }
+        XCTAssertTrue(try job(#""status":"completed","graph_status":"running""#).active)
+    }
+
+    func testStatusMayBeMissing() throws {
+        let old = try job(#""graph_status":"pending""#)
+        XCTAssertNil(old.status)
+        XCTAssertFalse(old.styleActive)
+        XCTAssertTrue(old.active)
     }
 }
