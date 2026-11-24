@@ -147,3 +147,33 @@ def test_extraction_rules_name_the_address_term_mistakes() -> None:
     for text in (EXTRACTION_INSTRUCTIONS, description):
         for needle in ("source 자신의 이름·직함", "조각", "제3자", "그대로 옮긴", "영어 대화", "비운다"):
             assert needle in text
+
+
+async def test_script_fixes_an_already_ingested_graph(capsys: pytest.CaptureFixture[str]) -> None:
+    """`scripts/graph_names.py`: 수집이 이미 끝난 그래프도 맞춘다. --dry-run은 보기만 한다."""
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+    import graph_names
+
+    contacts, store, ingest, _, contact, _ = await _setup()
+    hidden, store.mentions = store.mentions, {}  # 수집 때는 후보를 못 봤다 (대조가 없던 때의 그래프)
+    assert await ingest.ingest_pending("u") == 1
+    assert (await contacts.get("u", contact.id)).graph_name == "김상무님"
+    store.mentions = hidden
+
+    assert await graph_names.reconcile(ingest, "u", apply=False) == 0
+    assert "'김상무님' 노드 없음 → '김상무'" in capsys.readouterr().out
+    assert (await contacts.get("u", contact.id)).graph_name == "김상무님"  # 보기만 했다
+
+    assert await graph_names.reconcile(ingest, "u", apply=True) == 0
+    assert (await contacts.get("u", contact.id)).graph_name == "김상무"
+    assert await graph_names.reconcile(ingest, "u", apply=True) == 0  # 다시 돌려도 그대로
+    assert "맞음 (노드 '김상무')" in capsys.readouterr().out
+
+    store.entities.pop("김상무")  # 후보가 없으면 남은 것으로 알린다
+    store.mentions = {}
+    assert await graph_names.reconcile(ingest, "u", apply=True) == 1
+    assert "그대로 둔다" in capsys.readouterr().out
+    assert len(store.added) == 1  # 수집(모델 호출)은 하지 않는다

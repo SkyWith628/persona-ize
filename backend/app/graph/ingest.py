@@ -50,6 +50,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Iterable
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta, timezone
 from uuid import UUID
 
@@ -106,6 +107,22 @@ def is_transient(exc: BaseException) -> bool:
         if status >= 500 or status in _TRANSIENT_STATUS:
             return True
     return any(cls.__name__ in _TRANSIENT_NAMES for cls in type(exc).__mro__)
+
+
+@dataclass(frozen=True)
+class NameCheck:
+    """상대 하나의 이름 대조 결과 (`GraphIngestService.check_names`)."""
+
+    contact_id: UUID
+    alias: str
+    name: str  # 지금 그래프에서 찾는 이름 (`Contact.name_in_graph`)
+    found: bool  # 이 이름과 정확히 같은 노드가 있다
+    candidates: tuple[str, ...] = ()  # 없을 때: 경칭·공백만 다른 Person 노드 이름
+
+    @property
+    def match(self) -> str | None:
+        """맞춰 쓸 노드 이름 — 같은 노드가 없고 후보가 정확히 하나일 때만."""
+        return self.candidates[0] if not self.found and len(self.candidates) == 1 else None
 
 
 def same_person_name(a: str, b: str) -> bool:
@@ -311,6 +328,32 @@ class GraphIngestService:
         - 후보가 없거나 둘 이상이면 바꾸지 않고 경고만 남긴다. 모델을 부르지 않는다(읽기 조회뿐).
         조회 쪽은 느슨하게 하지 않는다 — 다른 사람과 섞일 수 있어, 대조는 수집 뒤 여기서만 한다.
         """
+        fixed: dict[UUID, str] = {}
+        for check in await self.check_names(user_id):
+            if check.found:
+                continue
+            if check.match is None:
+                log.warning(
+                    "graph name mismatch user=%s contact=%s name=%r candidates=%r (그대로 둔다)",
+                    user_id,
+                    check.contact_id,
+                    check.name,
+                    list(check.candidates),
+                )
+                continue
+            await self._contacts.set_graph_name(user_id, check.contact_id, check.match)
+            fixed[check.contact_id] = check.match
+            log.info(
+                "graph name matched user=%s contact=%s %r -> %r",
+                user_id,
+                check.contact_id,
+                check.name,
+                check.match,
+            )
+        return fixed
+
+    async def check_names(self, user_id: str) -> list[NameCheck]:
+        """그래프에 메시지가 들어간 상대마다 이름 대조 결과를 돌려준다. 읽기만 한다 (아무것도 안 바꾼다)."""
         episodes: dict[UUID, list[str]] = {}  # 상대 id → 그래프에 들어간 에피소드 이름
         me_names: dict[UUID, set[str]] = {}
         for conv in await self._conversations.list(user_id):
@@ -319,33 +362,21 @@ class GraphIngestService:
             if names:
                 episodes.setdefault(conv.contact_id, []).extend(names)
                 me_names.setdefault(conv.contact_id, set()).add((conv.me_name or DEFAULT_ME_NAME).strip())
-        fixed: dict[UUID, str] = {}
+        out: list[NameCheck] = []
         for contact_id, names in episodes.items():
             contact = await self._contacts.get(user_id, contact_id)
             target = contact.name_in_graph
             if await self._store.find_entity_uuid(user_id, target) is not None:
+                out.append(NameCheck(contact_id, contact.alias, target, found=True))
                 continue
             found = await self._store.person_names(user_id, names)
-            candidates = [
+            candidates = tuple(
                 n
                 for n in found
                 if n not in me_names[contact_id] and len(n) <= GRAPH_NAME_MAX and same_person_name(n, target)
-            ]
-            if len(candidates) != 1:
-                log.warning(
-                    "graph name mismatch user=%s contact=%s name=%r candidates=%r (그대로 둔다)",
-                    user_id,
-                    contact_id,
-                    target,
-                    candidates,
-                )
-                continue
-            await self._contacts.set_graph_name(user_id, contact_id, candidates[0])
-            fixed[contact_id] = candidates[0]
-            log.info(
-                "graph name matched user=%s contact=%s %r -> %r", user_id, contact_id, target, candidates[0]
             )
-        return fixed
+            out.append(NameCheck(contact_id, contact.alias, target, found=False, candidates=candidates))
+        return out
 
     async def _run(
         self, user_id: str, conversation_ids: list[UUID] | None, job_id: UUID | None, *, metered: bool

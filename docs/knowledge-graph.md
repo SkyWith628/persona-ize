@@ -112,7 +112,7 @@ PostgreSQL 쪽 상태:
 4. 후보가 없거나 둘 이상이면 바꾸지 않고 경고 로그(`graph name mismatch`, 이름만 찍는다)를 남긴다. 이때는 `graph_name`을 손으로 고친다.
 
 - 모델을 부르지 않는다. 대조가 실패해도(Neo4j 장애 등) 수집 결과는 그대로이고 다음 수집 뒤에 다시 한다.
-- 수집이 도중에 실패하거나(예외) 넣은 것이 0건이면 대조하지 않는다. 이미 수집된 그래프의 이름만 맞추는 명령은 따로 없다 — 다음 수집이 한 건이라도 들어가야 돈다.
+- 수집이 도중에 실패하거나(예외) 넣은 것이 0건이면 대조하지 않는다. 이미 수집된 그래프는 `scripts/graph_names.py --user <username|id> [--dry-run]`으로 맞춘다(같은 규칙, 모델 호출 없음, Neo4j는 읽기만 하고 `contacts.graph_name`만 고친다. 어긋난 상대가 남으면 종료 코드 1).
 - 조회 쪽(`find_entity_uuid`)은 느슨하게 하지 않았다. 읽을 때마다 비슷한 이름을 받아 주면 다른 사람과 섞일 수 있다.
 - 성만 같거나 직함이 다른 이름('김상무' / '김철수 상무'), 대소문자만 다른 영어 이름은 후보로 보지 않는다.
 
@@ -198,6 +198,7 @@ PostgreSQL 쪽 상태:
 | `backend/tests/test_graph*.py` | `FakeGraphStore`로 Neo4j·LLM 없이 검사 |
 | `graph/` | 담당자 폴더: 스키마 문서, 질의·호칭 정답 CSV, 스파이크 보고. `graph/graphiti_p0/`는 동결된 스파이크 |
 | `scripts/graph_reset.py`, `import_synthetic.py --graph`, `prepare_demo.py --graph` | 다시 만들기·합성 적재 |
+| `scripts/graph_names.py` | 수집된 그래프의 상대 노드 이름 대조 (4절) |
 
 ## 9. 다른 문서와 어긋난 곳
 
