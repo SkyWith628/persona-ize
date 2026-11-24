@@ -135,4 +135,9 @@ def test_korean_double_negation_flips_direction() -> None:
     assert _violations("금요일은 어렵습니다", "금요일은 힘들 것 같습니다.") == set()
     assert _violations("금요일은 어렵습니다", "금요일은 어렵지 않을까 싶습니다.") == set()
     assert _violations("어렵지 않습니다", "어렵지 않아요") == set()
+    # '어렵지만'도 불가다
+    assert "negation_changed" in _violations(
+        "금요일은 어렵지만 수요일은 됩니다", "금요일과 수요일 모두 됩니다."
+    )
+    assert _violations("금요일은 어렵지만 수요일은 됩니다", "금요일은 어렵고 수요일은 됩니다.") == set()
     assert _violations("금요일까지 가능합니다", "금요일까지 가능하지 않을까요?") == set()
