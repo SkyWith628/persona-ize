@@ -21,6 +21,37 @@ def test_design_doc_example() -> None:
     assert "약속" in k["promise"]
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "보고서 금요일까지 드릴게요",  # 띄어 쓴 서술어
+        "제가 할게요",
+        "회의는 15:30에 갈게요",  # 'ㄹ게요'로 끝나는 말
+        "내일 다시 볼게",
+        "저녁은 제가 살게",
+        "자료 넣을게요.",
+        "그건 제가 할께요",
+    ],
+)
+def test_promise_endings(text: str) -> None:
+    assert "약속" in kinds(text).get("promise", set())
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "날개가 예쁘네요",
+        "그렇게 말게 되면",
+        "얼게 두지 마세요",
+        "게 요리 먹으러 가요",
+        "힘들게 해서 미안해요",  # 'ㄹ게' 부사형은 문장 끝이 아니면 약속이 아니다
+        "길게 말씀드리면",
+    ],
+)
+def test_not_promise(text: str) -> None:
+    assert "promise" not in kinds(text)
+
+
 def test_dates_and_quantities() -> None:
     k = kinds("11월 5일까지 자료 3부 드리겠습니다. 다음 주 수요일 오후 3시 회의요.")
     assert {"11월5일", "다음주수요일", "오후3시"} <= k["datetime"]

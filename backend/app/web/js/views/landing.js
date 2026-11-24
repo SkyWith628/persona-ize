@@ -136,7 +136,7 @@ export function authErrorMessage(err, mode) {
 function docsLinks(tail) {
   return [
     h("a", { href: "/privacy", target: "_blank", rel: "noopener" }, "개인정보 처리방침"),
-    "와 ",
+    "과 ",
     h("a", { href: "/terms", target: "_blank", rel: "noopener" }, "이용약관"),
     tail,
   ];
@@ -444,14 +444,14 @@ function authCard() {
               h("p", { class: "hint" }, "지금은 초대받은 분만 가입할 수 있어요."),
             )
           : null,
-        consentEl ? h("div", { class: "check-row" }, consentEl, h("label", { for: consentId }, docsLinks("를 읽었고 동의해요."))) : null,
+        consentEl ? h("div", { class: "check-row" }, consentEl, h("label", { for: consentId }, docsLinks("을 읽었고 동의해요."))) : null,
         errorEl,
         submit,
       ),
       switchJoin,
       social,
       !options.signupOpen ? h("p", { class: "hint" }, "지금은 새로 가입할 수 없어요. 이미 계정이 있으면 로그인해 주세요.") : null,
-      isJoin && !options.requireConsent ? h("p", { class: "hint" }, "가입 전에 ", docsLinks("를 읽어 보세요.")) : null,
+      isJoin && !options.requireConsent ? h("p", { class: "hint" }, "가입 전에 ", docsLinks("을 읽어 보세요.")) : null,
       store.config.error ? h("p", { class: "hint" }, "서버 설정을 읽지 못했어요. 가입이 안 되면 잠시 뒤 다시 시도해 주세요.") : null,
     );
     store.notice = null; // 한 번만 보여 준다

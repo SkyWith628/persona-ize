@@ -56,6 +56,7 @@ from uuid import UUID
 
 from app.core.errors import NotFoundError
 from app.domain.conversation import Conversation, GraphStatus, Message, exception_kind, graph_units
+from app.domain.titles import ORG_TITLES, strip_honorific
 from app.graph.episodes import DEFAULT_ME_NAME, build_graph_episodes
 from app.graph.store import GraphStore
 from app.repositories.base import ContactRepo, ConversationRepo
@@ -128,12 +129,20 @@ class NameCheck:
 def same_person_name(a: str, b: str) -> bool:
     """두 이름이 경칭('님'·'씨') 하나를 붙이거나 뗀 차이, 또는 공백 차이뿐인가.
 
-    일부러 좁다: 성만 같거나('김상무' / '김철수 상무') 직함이 다른 이름은 같다고 보지 않는다.
+    이름 뒤에 직함만 더 붙은 것도 같다고 본다('최서연 팀장님' / '최서연') — 상대 이름은 직함까지 적고
+    대화의 화자 이름은 이름뿐인 경우가 흔해, 추출 모델이 노드를 이름만으로 만든다(2026-11-24).
+    일부러 좁다: 성만 같거나('김상무' / '김철수 상무') 직함이 다른 이름('최서연 팀장' / '최서연 부장'),
+    한 글자짜리 이름('김' / '김상무')은 같다고 보지 않는다.
     """
     x, y = "".join(a.split()), "".join(b.split())
     if not x or not y:
         return False
-    return x == y or any(x + h == y or y + h == x for h in HONORIFICS)
+    if x == y or any(x + h == y or y + h == x for h in HONORIFICS):
+        return True
+    short, long = sorted((x, y), key=len)
+    if len(short) < 2 or not long.startswith(short):
+        return False
+    return strip_honorific(long[len(short) :]) in ORG_TITLES
 
 
 def pick_recent(pending: list[Pending], budget: int) -> list[Pending]:

@@ -9,7 +9,7 @@
 
 from __future__ import annotations
 
-VALIDATOR_VERSION = "rules-2026-11-24"
+VALIDATOR_VERSION = "rules-2026-11-24.2"
 """보존 항목 추출·검증 규칙의 버전. 평가 결과에 남겨, 규칙이 바뀐 앞뒤의 수치를 섞어 비교하지 않게 한다."""
 
 # 조직의 직책. '님'이 붙든 안 붙든 같은 직함이다.

@@ -169,6 +169,16 @@ _PROMISE = re.compile(
     r"(?<![가-힣])[가-힣]+(?:드리겠습니다|드릴게요|드릴께요|드리겠어요|겠습니다|할게요|할께요|하겠습니다|할게|할께|보낼게|보내드릴|보내겠|맡겠|처리하겠|확인하겠|전달하겠|공유하겠|진행하겠)"
 )
 
+# 위 패턴이 놓치는 약속 (2026-11-24). ① 앞말과 띄어 쓴 서술어: '금요일까지 드리겠습니다', '제가 하겠습니다'.
+# ② 'ㄹ게(요)'·'ㄹ께(요)'로 끝나는 말: '갈게요', '볼게', '드릴게요', '먹을게요'.
+# 받침이 ㄹ인 글자를 모아 둔다.
+# '요'가 붙지 않은 꼴은 문장이 거기서 끝날 때만 읽는다('힘들게 했다', '길게 말하면'은 부사형이다).
+_RIEUL_FINAL = "".join(chr(0xAC00 + i * 28 + 8) for i in range(19 * 21))
+_PROMISE_ENDING = re.compile(
+    r"(?<![가-힣])(?:드리겠습니다|드리겠어요|하겠습니다)"
+    rf"|(?<![가-힣])[가-힣]*[{_RIEUL_FINAL}][게께](?:요(?![가-힣])|(?=[ \t]*(?:[.!?~…,ㅋㅎㅠㅜ^\n]|\Z)))"
+)
+
 # 조건 표현.
 _CONDITION = re.compile(r"[가-힣\s]{1,15}(?:하면|이면|라면|되면|경우|다면|시에는|때는)(?![가-힣])")
 
@@ -345,6 +355,8 @@ def extract_preserved_items(text: str) -> list[PreservedItem]:
         add("possibility", s, "가능")
 
     for s in _find(_PROMISE, text):
+        add("promise", s, "약속")
+    for s in _find(_PROMISE_ENDING, text):
         add("promise", s, "약속")
     for s in _find(_EN_PROMISE, rest):  # 가린 글에서: "I will not send"는 약속이 아니다
         add("promise", s, "약속")
