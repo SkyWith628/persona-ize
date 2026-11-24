@@ -283,7 +283,8 @@ def test_suggestion_api_gives_graph_signals_even_with_few_messages(client: TestC
         entities={"이서연": "n-peer", "김민수": "n-me"}, relationships={("n-me", "n-peer"): PROMOTED}
     )
     body = client.get(f"/v1/contacts/{contact['id']}/persona/suggestion", headers=HEADERS).json()
-    assert [s["source"] for s in body["signals"]] == ["graph", "graph"]
+    # 문장 끝의 '파트장님'은 말투 프로필도 읽는다(2026-11-24, 1회 관찰) — 그래프 근거 둘은 그대로 붙는다
+    assert [s["source"] for s in body["signals"]] == ["register", "graph", "graph"]
     assert body["settings"]["formality"] == 4 and body["settings"]["address_term"] == "파트장님"
 
 

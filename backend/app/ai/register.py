@@ -545,6 +545,25 @@ def _ssi_enumerated(tokens: Sequence[_Token], i: int, names: frozenset[str]) -> 
     return False
 
 
+def _closes_sentence(line: str, tokens: Sequence[_Token], head: int, i: int, first: int) -> bool:
+    """head~i번째 낱말(호칭 꼴)이 문장 끝의 부르는 자리에 있는가.
+
+    서술어 어미로 끝난 말 바로 뒤에 붙고("확인했습니다 영수 씨.", "알겠습니다 팀장님"), 거기서 문장이나
+    줄이 끝난다. 뒤에 쉼표가 오면 문장 가운데다 ("죄송합니다 팀장님, 내일 드리겠습니다").
+    """
+    trail = tokens[i][2]
+    if head <= first or trail.startswith((",", "，")):
+        return False
+    # 뒤에 ㅎㅎ·ㅠㅠ·이모지만 따로 온 것("잘 먹었습니다 선배님 ㅎㅎ")도 문장 끝이다 (낱말이 빈 조각).
+    last = i == len(tokens) - 1 or not tokens[i + 1][1]
+    if not last and not _SENTENCE_FINAL_TRAIL.intersection(trail):
+        return False
+    # 앞말의 어미는 끝의 몇 낱말만 보면 읽힌다 — 줄 전체를 넘기면 호칭이 수천 번 나오는 줄에서
+    # 제곱 시간이 든다.
+    before = line[tokens[max(0, head - _SSI_LOOKBACK)][0] : tokens[head][0]]
+    return classify_sentence(before, final=False) != "unknown"
+
+
 def _ssi_called(line: str, tokens: Sequence[_Token], i: int, first: int, names: frozenset[str]) -> str | None:
     """i번째 낱말에서 끝나는 '이름 씨'가 부르는 자리에 있으면 띄어 쓴 꼴('영수 씨'), 아니면 None.
 
@@ -568,15 +587,7 @@ def _ssi_called(line: str, tokens: Sequence[_Token], i: int, first: int, names: 
         if trail.startswith(_SET_OFF):
             return None if _ssi_enumerated(tokens, i, names) else term
         return term if at_start and known else None
-    if head < first or trail.startswith((",", "，")):
-        return None
-    ends_sentence = i == len(tokens) - 1 or bool(_SENTENCE_FINAL_TRAIL.intersection(trail))
-    if not ends_sentence:
-        return None
-    # 앞말의 어미는 끝의 몇 낱말만 보면 읽힌다 — 줄 전체를 넘기면 호칭이 수천 번 나오는 줄에서
-    # 제곱 시간이 든다.
-    before = line[tokens[max(0, head - _SSI_LOOKBACK)][0] : tokens[head][0]]
-    return term if classify_sentence(before, final=False) != "unknown" else None
+    return term if _closes_sentence(line, tokens, head, i, first) else None
 
 
 def address_terms(text: str, contact_alias: str) -> list[str]:  # noqa: PLR0912 — 조건을 한곳에 나열한다
@@ -590,13 +601,15 @@ def address_terms(text: str, contact_alias: str) -> list[str]:  # noqa: PLR0912 
     - 직함·친족어·이름(+님/씨): **문장 첫머리**(줄의 처음, 대답·감탄사 뒤, 마침표·물음표·느낌표 뒤)에서만.
       바로 뒤에 쉼표·느낌표·물결이 있거나, 줄의 처음에 온 님·씨 붙은 말·친족어일 때.
       문장 가운데의 쉼표는 나열이나 이어 쓰기일 뿐이다 ("다음 주 이사, 잘 마무리할게").
+    - 직함·친족어·님 붙은 이름은 **문장 끝**에서도 읽는다: 서술어 어미로 끝난 말 바로 뒤에 붙고 거기서
+      문장이나 줄이 끝날 때 ("알겠습니다 팀장님", "감사합니다 지현 팀장님.", "고마워 형").
+      맨 이름은 읽지 않는다.
     - 님 없는 직함('이사', '책임', '의사')은 보통 명사로도 쓰이므로 상대 별칭에 들어 있거나 별칭의 이름이
       앞에 붙었을 때만 호칭이다 ("의사, 간호사 모두 친절했습니다"는 호칭이 아니다).
     - 호칭 꼴이 연달아 나오는 나열("부장님, 차장님, 과장님 모두 참석하십니다")은 뺀다.
     - 조사가 붙은 말은 낱말 전체가 호칭 꼴과 같지 않으므로 빠진다 ('팀장님한테', '팀장님이랑', '서연이가').
     알려진 한계: 첫머리의 제3자 언급("팀장님 오늘 휴가래", "엄마 생신이 언제지")을 호칭으로 읽는다.
-    직함·친족어는 문장 끝이나 가운데의 호칭("알겠습니다 팀장님", "죄송합니다 팀장님, 내일 드릴게요")을 읽지
-    않는다 (문장 끝은 '이름 씨'만 읽는다).
+    문장 가운데의 호칭("죄송합니다 팀장님, 내일 드릴게요")은 읽지 않는다.
     """
     alias = contact_alias.strip()
     names = _name_forms(alias)
@@ -640,19 +653,30 @@ def address_terms(text: str, contact_alias: str) -> list[str]:  # noqa: PLR0912 
                     head = i - 1
             at_start = head == first
             after_sentence = head > first and tokens[head - 1][2].endswith(tuple(_SENTENCE_END_CHARS))
-            if not (at_start or after_sentence):
-                continue
             term = line[tokens[head][0] : start + len(word)]
+            # 님 없는 직함: 이 상대의 것이라는 표시(별칭·이름)가 있어야 한다
+            unmarked = (
+                titled
+                and not named
+                and _bare_title(word)
+                and word not in alias_words
+                and not any(len(name) >= 2 and name in term for name in names)
+            )
+            if not (at_start or after_sentence):
+                # 문장 끝: 직함·친족어, 님·씨 붙은 이름 ("알겠습니다 팀장님", "고마워 형").
+                # 맨 이름은 읽지 않는다.
+                called = (titled or word not in names) and not unmarked
+                if called and _closes_sentence(line, tokens, head, i, first):
+                    found.append(term)
+                continue
             if trail.startswith(_SET_OFF):
                 if (i + 1 < len(tokens) and _address_like(tokens[i + 1][1], names)) and (
                     tokens[i + 1][2].startswith((",", "，"))
                     or (i + 2 < len(tokens) and tokens[i + 2][1] in _ENUMERATION_WORDS)
                 ):
                     continue  # 나열
-                if titled and not named and _bare_title(word):
-                    with_name = any(len(name) >= 2 and name in term for name in names)
-                    if word not in alias_words and not with_name:
-                        continue  # 님 없는 직함: 이 상대의 것이라는 표시가 없다
+                if unmarked:
+                    continue
                 found.append(term)
             elif at_start and _free_standing(word):
                 found.append(term)
