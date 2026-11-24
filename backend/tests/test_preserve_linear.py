@@ -75,7 +75,15 @@ def test_linear_patterns_extract_exactly_what_the_old_ones_did() -> None:
     assert hits > 1000  # 비교가 빈 결과끼리만 이뤄진 것이 아니다
 
 
-@pytest.mark.parametrize("seed", ["1", "1,", "1.", "가", "겠", "12 ", "1 1 ", "가 ", "1만 ", "3분"])
+SEEDS = [
+    *("1", "1,", "1.", "가", "겠", "12 ", "1 1 ", "가 ", "1만 ", "3분"),
+    # 2026-11-24: 영어 부정·약속과 이중 부정 규칙
+    *("can't ", "I will ", "not ", "어렵지 않 ", "can ", "will ", "not only ", "n't able ", "a", "I'll "),
+    *("못 가는 것은 ", "못", "안 되지 ", "가능하지 않", " ", "can \t", "I will\n"),
+]
+
+
+@pytest.mark.parametrize("seed", SEEDS)
 def test_preserve_and_validation_stay_fast_on_long_runs(seed: str) -> None:
     """초안 상한(2,000자)의 4배, 모델 출력 길이(8,000자)에서도 수십 ms 안에 끝난다.
 

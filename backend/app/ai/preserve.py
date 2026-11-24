@@ -1,7 +1,7 @@
 """보존 항목 규칙 추출 (design.md §3-1).
 
 정규식으로 날짜·시각, 수량, 사람, 가능/불가, 약속, 조건, 부정을 뽑는다.
-영어는 날짜·요일·시각과 수만 읽는다 — 영어의 약속·가능/불가·부정은 아직 규칙이 없다.
+영어는 날짜·요일·시각과 수, 그리고 부정·가능/불가·약속을 읽는다 (조건과 사람 이름은 아직 없다).
 누락이 오탐보다 위험하므로 넓게 잡는다. 구조화 모델 추출(보조)은 3주차에 결합한다.
 같은 함수를 원문과 결과에 모두 적용해 집합으로 비교하는 것이 검증의 핵심이다 (validation.py).
 """
@@ -149,8 +149,10 @@ def _plausible_name(word: str) -> bool:
 
 
 # 가능/불가. 결과에서 방향이 바뀌면 사실 변경이다.
+# '힘들 것 같습니다'는 띄어 쓴 꼴도 읽는다 (2026-11-24) — 예전에는 '힘들것'만 읽어, '어렵습니다'를
+# '힘들 것 같습니다'로 바꾼 결과가 "불가가 사라졌다"로 실패했다.
 _IMPOSSIBLE = re.compile(
-    r"어렵(?:겠|습니다|겁니다|고|네요|다|을|어|워)|힘들(?:겁니다|어|다|것|어요|겠)|못\s*[가-힣]+|불가(?:능)?|안\s*(?:될|돼|됩|됨|되)|할\s*수\s*없|불가능|어려울"
+    r"어렵(?:겠|습니다|겁니다|고|네요|다|을|어|워)|힘들(?:겁니다|어|다|\s?것|어요|겠)|못\s*[가-힣]+|불가(?:능)?|안\s*(?:될|돼|됩|됨|되)|할\s*수\s*없|불가능|어려울"
 )
 _POSSIBLE = re.compile(
     r"가능(?:합니다|해요|해|함|할)|할\s*수\s*있|될\s*것\s*같|됩니다|괜찮(?:습니다|아요|아)"
@@ -174,6 +176,64 @@ _CONDITION = re.compile(r"[가-힣\s]{1,15}(?:하면|이면|라면|되면|경우
 _NEGATION = re.compile(
     r"(?<![가-힣])(?:안(?!녕|내|전|부|건|심|정|쪽|팎|에|으로)|못|않|없|아니|아닙)(?=[가-힣\s])"
 )
+
+# ── 이중 부정과 물음꼴 (2026-11-24) ─────────────────────────────────────────
+# 불가 표현에 부정이 붙으면 가능이고('어렵지 않습니다'), 가능 표현에 부정이 붙으면 불가다('가능하지
+# 않습니다'). 예전에는 '어렵지 않습니다'가 일반 부정으로만 읽혀 '어렵습니다'를 이렇게 뒤집은 결과가
+# "부정이 남았다"로 통과했고, '가능합니다' → '가능하지 않습니다'도 불가로 읽히지 않아 통과했다.
+# 부정 뒤가 물음꼴이면 뜻이 한 번 더 뒤집힌다: '어렵지 않을까 싶습니다'는 불가, '가능하지 않을까요'는 가능.
+# 여기서 읽은 자리는 가린 뒤에 아래 규칙(_IMPOSSIBLE·_POSSIBLE·_NEGATION)을 돌린다 — 같은 자리의
+# '않'·'안 되'가 다시 부정·불가로 읽히지 않게. 반복은 모두 한 글자·상한 있는 것뿐이다(중첩 없음).
+_IMPOSSIBLE_STEMS = r"어렵|힘들|불가능하|불가하|안\s?되"
+_NEGATED_STEM = re.compile(
+    rf"(?:(?P<imp>{_IMPOSSIBLE_STEMS})|가능하|괜찮|될\s?것\s?같)(?:지(?:는|도)?|진)\s?않"
+    r"(?P<ask>을까|을지|겠습니까|나요|나(?![가-힣]))?"
+)
+# '-ㄴ 것은 아니다' 꼴: '어려운 건 아닙니다', '못 가는 것은 아니에요', '할 수 없는 건 아니지만'.
+_NOT_THAT = re.compile(
+    r"(?:(?P<imp>어려운|힘든|불가능한|불가한|안\s?되는|수\s?없는|못\s?[가-힣]{1,6})|가능한)"
+    r"\s?(?:것은|것이|것도|건|게)\s?아(?:니|닙)"
+)
+
+# ── 영어의 부정·가능/불가·약속 (2026-11-24) ─────────────────────────────────
+# 한국어와 같은 kind·값으로 넣어 validation.py의 방향 검사와 약속 검사가 그대로 걸리게 한다.
+# 아포스트로피는 곧은 것·굽은 것을 다 읽고, 빠뜨린 것('cant', 'dont')도 읽는다.
+_AP = "['’‘`ʼ]"
+# 'not only … but also'는 부정이 아니다. 먼저 가려 'can not only'가 불가로 읽히지 않게 한다.
+_EN_NOT_ONLY = re.compile(r"(?<![A-Za-z])not\s+only(?![A-Za-z])", re.IGNORECASE)
+_EN_NOT_IMPOSSIBLE = re.compile(r"(?<![A-Za-z])not\s+impossible(?![A-Za-z])", re.IGNORECASE)
+_EN_IMPOSSIBLE = re.compile(
+    rf"(?<![A-Za-z])(?:can{_AP}?t|cannot|can\s+not|couldn{_AP}?t|could\s+not"
+    rf"|(?:won{_AP}?t|will\s+not)(?:\s+be\s+able\s+to)?"
+    r"|unable\s+to|not\s+able\s+to|not\s+possible|impossible)(?![A-Za-z])"
+    rf"|n{_AP}t\s+able\s+to(?![A-Za-z])",  # "wasn't able to"
+    re.IGNORECASE,
+)
+# 'can'은 명사('a can of')보다 조동사가 압도적이라 낱말 경계만 지킨다. 넓히지 않는다.
+_EN_POSSIBLE = re.compile(
+    r"(?<![A-Za-z])(?:can|able\s+to|possible|works\s+for\s+(?:me|us)|that\s+works)(?![A-Za-z])",
+    re.IGNORECASE,
+)
+# 'no' 한 낱말은 부정으로 읽지 않는다 ('No worries', 'PO no. 4500').
+_EN_NEGATION = re.compile(
+    rf"(?<![A-Za-z])(?:(?:don|doesn|didn|isn|aren|wasn|weren|haven|hasn|hadn|wouldn|shouldn|mustn|ain){_AP}?t"
+    r"|not|never|no\s+longer)(?![A-Za-z])",
+    re.IGNORECASE,
+)
+_EN_PROMISE_VERBS = (
+    r"send|confirm|share|check|update|get\s+back|follow\s+up|let\s+you\s+know|reply|call|deliver"
+    r"|forward|provide|review|finish|prepare|handle|arrange|schedule|ship|pay|fix|look\s+into|make\s+sure"
+    r"|take\s+care|do"
+)
+# "I'll"·"we'll"은 아포스트로피가 있어야 한다('Ill', 'well'은 다른 낱말). 뒤가 not·never면 약속이 아니다.
+_EN_PROMISE = re.compile(
+    rf"(?<![A-Za-z])(?:(?:I|we)(?:{_AP}ll|\s+will)|(?:I{_AP}?m|I\s+am|we{_AP}re|we\s+are)\s+going\s+to|gonna)"
+    r"\s+(?!not(?![A-Za-z])|never(?![A-Za-z]))[A-Za-z]+"
+    rf"|(?<![A-Za-z])will\s+(?:{_EN_PROMISE_VERBS})(?![A-Za-z])",
+    re.IGNORECASE,
+)
+
+_MASK = "·"  # 한글도 로마자도 공백도 아닌 글자 — 가린 자리가 앞뒤 낱말과 이어져 새로 맞는 일이 없다
 
 
 def _norm(text: str) -> str:
@@ -253,19 +313,45 @@ def extract_preserved_items(text: str) -> list[PreservedItem]:
         if name is not None:
             add("person", m.group(0).strip(), name)
 
-    for s in _find(_IMPOSSIBLE, text):
+    # 방향이 뒤집히는 꼴(이중 부정, 영어의 'can't')을 먼저 읽고 그 자리를 가린다. `rest`는 가린 글이다.
+    def take(pattern: re.Pattern[str], source: str, value: str | None, flipped: str | None = None) -> str:
+        """맞은 자리를 possibility로 담고 가린 글을 돌려준다. `imp` 묶음이 맞으면 `flipped` 값을 쓴다."""
+
+        def on_match(m: re.Match[str]) -> str:
+            groups = m.groupdict()
+            result = flipped if flipped is not None and groups.get("imp") else value
+            if result is not None and groups.get("ask"):
+                result = "가능" if result == "불가" else "불가"  # 물음꼴은 한 번 더 뒤집는다
+            if result is not None:
+                add("possibility", m.group(0).strip(), result)
+            return _MASK * len(m.group(0))
+
+        return pattern.sub(on_match, source)
+
+    rest = take(_NEGATED_STEM, text, "불가", flipped="가능")
+    rest = take(_NOT_THAT, rest, "불가", flipped="가능")
+    rest = take(_EN_NOT_ONLY, rest, None)
+    rest = take(_EN_NOT_IMPOSSIBLE, rest, "가능")
+    rest = take(_EN_IMPOSSIBLE, rest, "불가")
+
+    for s in _find(_IMPOSSIBLE, rest):
         add("possibility", s, "불가")
-    for s in _find(_POSSIBLE, text):
+    for s in _find(_POSSIBLE, rest):
+        add("possibility", s, "가능")
+    for s in _find(_EN_POSSIBLE, rest):
         add("possibility", s, "가능")
 
     for s in _find(_PROMISE, text):
+        add("promise", s, "약속")
+    for s in _find(_EN_PROMISE, rest):  # 가린 글에서: "I will not send"는 약속이 아니다
         add("promise", s, "약속")
 
     for s in _find(_CONDITION, text):
         add("condition", s)
 
-    if _NEGATION.search(text):
-        add("negation", _NEGATION.search(text).group(0), "부정")  # type: ignore[union-attr]
+    negation = _NEGATION.search(rest) or _EN_NEGATION.search(rest)
+    if negation:
+        add("negation", negation.group(0), "부정")
 
     return list(items.values())
 

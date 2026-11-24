@@ -106,3 +106,33 @@ def test_review_2026_11_23_holes_are_closed() -> None:
     assert "preserve_missing" in _violations("단가는 52000원입니다", "단가는 53,000원입니다.")
     assert "preserve_missing" in _violations("이번 주 금까지 드릴게요", "이번 주 목까지 드릴게요.")
     assert _violations("오늘 안에 보내드리겠습니다", "오늘 안에 보내 드리겠습니다.") == set()
+
+
+def test_english_negation_and_promise() -> None:
+    """2026-11-24: 영어의 부정·약속 규칙이 없어 can't → can, 약속 누락이 통과했다."""
+    assert "negation_changed" in _violations("I can't send it by Friday", "I can send it by Friday.")
+    assert "negation_changed" in _violations("I won't be there on Friday", "I will be there on Friday.")
+    assert "negation_changed" in _violations("I can send it by Friday", "I can't send it by Friday.")
+    assert "negation_changed" in _violations("See you on Friday", "I can’t see you on Friday.")
+    missing = _violations("I'll send the draft tomorrow", "The draft is ready tomorrow.")
+    assert missing == {"preserve_missing"}
+    # 표기만 바뀐 것은 통과한다
+    assert _violations("I can't send it by Friday", "I cannot send it by Friday.") == set()
+    assert _violations("I can't send it by Friday", "I’m unable to send it by Friday.") == set()
+    assert _violations("I can't make Friday", "Friday doesn't work for me.") == set()  # 불가 → 부정
+    assert _violations("I'll send the draft tomorrow", "I will send the draft tomorrow.") == set()
+    assert _violations("we'll confirm by Friday", "We will confirm by Friday.") == set()
+    assert _violations("Not only Friday but also Monday is fine", "Friday and Monday are fine.") == set()
+
+
+def test_korean_double_negation_flips_direction() -> None:
+    """2026-11-24: '어렵지 않습니다'가 일반 부정으로만 읽혀 뒤집힌 결과가 통과했다."""
+    assert "negation_changed" in _violations("금요일은 어렵습니다", "금요일은 어렵지 않습니다.")
+    assert "negation_changed" in _violations("금요일까지 가능합니다", "금요일까지는 가능하지 않습니다.")
+    assert "negation_changed" in _violations("금요일은 어렵지 않습니다", "금요일은 어렵습니다.")
+    assert "negation_changed" in _violations("금요일은 어렵습니다", "금요일도 못 가는 건 아닙니다.")
+    # 뜻을 지킨 것은 통과한다
+    assert _violations("금요일은 어렵습니다", "금요일은 힘들 것 같습니다.") == set()
+    assert _violations("금요일은 어렵습니다", "금요일은 어렵지 않을까 싶습니다.") == set()
+    assert _violations("어렵지 않습니다", "어렵지 않아요") == set()
+    assert _violations("금요일까지 가능합니다", "금요일까지 가능하지 않을까요?") == set()

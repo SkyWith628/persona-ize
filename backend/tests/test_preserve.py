@@ -98,6 +98,86 @@ def test_words_starting_with_an_are_not_negation() -> None:
     assert "불가" in polarity(extract_preserved_items("금요일은 어렵겠습니다"))
 
 
+def _signals(text: str) -> set[str]:
+    """가능/불가/부정 방향 + 약속 유무."""
+    items = extract_preserved_items(text)
+    return polarity(items) | {i.normalized for i in items if i.kind == "promise"}
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("I can't send it by Friday", {"불가"}),
+        ("I can’t make it", {"불가"}),  # 굽은 아포스트로피
+        ("I cant make it", {"불가"}),  # 아포스트로피를 빠뜨린 꼴
+        ("I cannot send it", {"불가"}),
+        ("We can not ship this week", {"불가"}),
+        ("I won't be able to join", {"불가"}),
+        ("We will not ship it", {"불가"}),
+        ("I'm unable to attend", {"불가"}),
+        ("I wasn't able to finish", {"불가"}),
+        ("That is not possible", {"불가"}),
+        ("It's impossible this week", {"불가"}),
+        ("It's not impossible", {"가능"}),
+        ("I can send it by Friday", {"가능"}),
+        ("Friday works for me", {"가능"}),
+        ("Is it possible to move it?", {"가능"}),
+        ("I don't have the file", {"부정"}),
+        ("It doesn’t matter", {"부정"}),
+        ("It isn't ready", {"부정"}),
+        ("That is no longer needed", {"부정"}),
+        ("I never got it", {"부정"}),
+        ("It is not ready", {"부정"}),
+        ("I'll send the draft tomorrow", {"약속"}),
+        ("I will send the draft", {"약속"}),
+        ("we’ll confirm the date", {"약속"}),
+        ("We will confirm", {"약속"}),
+        ("will send the signed agreement", {"약속"}),
+        ("I'm going to check it", {"약속"}),
+        # 약속이 아닌 것, 부정이 아닌 것
+        ("I will not send it", {"불가"}),
+        ("He is ill and well rested", set()),
+        ("Not only the price but also the date changed", set()),
+        ("We can not only ship but also install", {"가능"}),
+        ("No worries", set()),
+        ("PO no. 4500", set()),
+        ("Please note the scan and the cancellation", set()),
+    ],
+)
+def test_english_polarity_and_promise(text: str, expected: set[str]) -> None:
+    assert _signals(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # 불가 + 부정 = 가능
+        ("금요일은 어렵지 않습니다", {"가능"}),
+        ("어렵지는 않아요", {"가능"}),
+        ("힘들지 않습니다", {"가능"}),
+        ("불가능하지 않습니다", {"가능"}),
+        ("안 되지 않습니다", {"가능"}),
+        ("못 가는 것은 아닙니다", {"가능"}),
+        ("어려운 건 아니에요", {"가능"}),
+        # 가능 + 부정 = 불가
+        ("금요일까지는 가능하지 않습니다", {"불가"}),
+        ("될 것 같지 않습니다", {"불가"}),
+        ("괜찮지 않습니다", {"불가"}),
+        ("할 수 없습니다", {"불가", "부정"}),  # 예전 그대로
+        # 물음꼴은 한 번 더 뒤집힌다
+        ("금요일은 어렵지 않을까 싶습니다", {"불가"}),
+        ("가능하지 않을까요?", {"가능"}),
+        # 예전 그대로인 것
+        ("금요일은 어렵습니다", {"불가"}),
+        ("금요일은 힘들 것 같습니다", {"불가"}),
+        ("금요일까지 가능합니다", {"가능"}),
+        ("하지 않았습니다", {"부정"}),
+    ],
+)
+def test_korean_double_negation(text: str, expected: set[str]) -> None:
+    assert _signals(text) == expected
+
+
 def test_empty_text() -> None:
     assert extract_preserved_items("") == []
     assert extract_preserved_items("   ") == []
