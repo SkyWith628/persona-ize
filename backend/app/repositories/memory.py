@@ -137,6 +137,11 @@ class InMemoryContactRepo:
             self._contacts[contact_id] = c
         return c
 
+    async def set_graph_name(self, user_id: str, contact_id: UUID, name: str) -> Contact:
+        c = (await self.get(user_id, contact_id)).model_copy(update={"graph_name": name})
+        self._contacts[contact_id] = c
+        return c
+
 
 class InMemoryRewriteRepo:
     def __init__(self) -> None:

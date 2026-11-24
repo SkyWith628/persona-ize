@@ -40,7 +40,7 @@ flowchart LR
 
 | 타입 | 방향 | 속성 |
 |---|---|---|
-| `Relationship` | Person → Person (source가 target을 어떻게 대하나) | `relation_type` family / friend / colleague / partner / acquaintance · `hierarchy` target_higher / target_lower / equal · `speech_style` 반말 / 존댓말 / 혼용 · `address_term` source가 target을 직접 부른 말 · `closeness` 1~5 |
+| `Relationship` | Person → Person (source가 target을 어떻게 대하나) | `relation_type` family / friend / colleague / partner / acquaintance · `hierarchy` target_higher / target_lower / equal · `speech_style` 반말 / 존댓말 / 혼용 · `address_term` source가 target을 직접 부른 말(메시지 내용에 그대로 있는 말만) · `closeness` 1~5 |
 | `Involved` | Person → Event | `participant_role` 당사자 / 상대 / 요청자 / 수행자 / 목격자 / 관련자 · `feeling` |
 
 - 허용 조합은 `EDGE_TYPE_MAP`의 둘뿐이다: (Person, Person) → Relationship, (Person, Event) → Involved.
@@ -51,6 +51,8 @@ flowchart LR
 ### 추출 지시문 (`EXTRACTION_INSTRUCTIONS`)
 
 메시지 형식 읽는 법, 호칭 병합(가장 완전한 실명을 엔티티 이름으로), 엣지 이름 제한, 말투는 발화자의 어미로만 판단, `(=YYYY-MM-DD)` 날짜를 그대로 옮겨 적기, 민감한 특성 추정 금지를 담는다.
+
+호칭(`address_term`) 규칙은 2026-11-24에 보강했다. 실제 규모 수집(11/19, 551건)에서 값이 대부분 틀렸기 때문이다. 지시문과 필드 설명이 함께 금지하는 것: source 자신의 이름·직함(발화자 '김과장'의 '과장'), 이름·조사 조각('님'), 대화에 등장한 제3자의 호칭('부장님', '기사님'), target의 이름을 그대로 옮긴 것(메시지 내용에서 그 말로 부른 경우만 적는다), 영어 대화에 한국어 호칭 지어내기. 부른 말이 메시지 내용에 없으면 비운다. **지시문만 고쳤고 재수집은 하지 않았다** — 효과는 재수집해야 알 수 있다. 그때까지 읽는 쪽의 거름(`persona_signals.py`의 `called_in`·`_plausible_address`)이 계속 필요하다.
 
 ## 3. Neo4j에 실제로 들어가는 모양
 
@@ -81,7 +83,7 @@ flowchart LR
 - 날짜·요일·시각은 한국 시간이다. 수신자를 적어 짧은 답에서 자기참조 엣지가 생기는 것을 막는다.
 - 상대 날짜는 코드가 먼저 계산해 `(=…)`로 붙이고 모델은 옮겨 적기만 한다. 담화 문맥(앞 메시지가 특정한 요일)은 대화방 안에서만 이어지므로 **대화방 메시지 전체**를 넘겨야 한다.
 - 에피소드 이름은 `{대화방 source_key}:{메시지 source_key}`. `reference_time`은 UTC로 바꿔 넣는다(Graphiti 프롬프트가 UTC를 전제).
-- 상대 노드 이름은 `Contact.name_in_graph`(처음 수집할 때의 이름). 별칭을 바꿔도 노드 이름은 그대로다.
+- 상대 노드 이름은 `Contact.name_in_graph`(처음 수집할 때의 이름). 별칭을 바꿔도 노드 이름은 그대로다. 다만 추출 모델이 본문의 이름을 다르게 적을 수 있어('김상무님' → 노드 '김상무') 수집 뒤에 대조한다(아래 "수집 뒤 이름 대조").
 
 ### 수집 (`ingest.py`)
 
@@ -100,6 +102,20 @@ PostgreSQL 쪽 상태:
 - 상한(`GRAPH_INGEST_USER_MESSAGE_CAP`, `GRAPH_INGEST_DAILY_GLOBAL_CAP`)은 API 경로에만 건다. 메시지 1건이 1, 본문 1,000자마다 1을 더 센다. 예산이 모자라면 가장 최근 메시지부터 넣는다. 운영자 스크립트 경로는 상한을 타지 않는다.
 - 서버가 죽으면 미수집분은 다음 시작 때 `resume_all`이 잇는다(`GRAPH_RESUME_ON_START`).
 
+### 수집 뒤 이름 대조 (`ingest.py` `reconcile_names`, 11/24 추가)
+
+앱은 상대 노드를 이름이 **정확히 같은** 엔티티로 찾는다(`find_entity_uuid(user_id, name_in_graph)`). 11/19 수집에서 별칭 '김상무님'의 노드가 '김상무'로 만들어져 화면과 사실 맥락이 비었다. 그래서 `ingest_user`·`ingest_pending`이 에피소드를 하나 이상 넣고 끝나면 그 사용자의 상대마다(그래프에 들어간 메시지가 있는 상대만) 이름을 대조한다.
+
+1. `name_in_graph`와 이름이 정확히 같은 노드가 있으면 그대로 둔다.
+2. 없으면 그 상대의 대화방 에피소드가 언급한(`MENTIONS`) Person 노드의 이름을 읽는다(`GraphStore.person_names`, 읽기 전용 Cypher). 그중 후보는 경칭 '님'·'씨' 하나를 붙이거나 뗐을 때 같아지는 이름, 또는 공백만 다른 이름이다(`same_person_name`). 내 이름(`me_name`)과 50자를 넘는 이름은 뺀다.
+3. 후보가 **정확히 하나**면 `contacts.graph_name`을 그 노드 이름으로 고쳐 쓴다(`ContactRepo.set_graph_name`). 이후 조회가 그 노드를 찾고, 다음 수집의 에피소드 본문도 그 이름을 쓴다.
+4. 후보가 없거나 둘 이상이면 바꾸지 않고 경고 로그(`graph name mismatch`, 이름만 찍는다)를 남긴다. 이때는 `graph_name`을 손으로 고친다.
+
+- 모델을 부르지 않는다. 대조가 실패해도(Neo4j 장애 등) 수집 결과는 그대로이고 다음 수집 뒤에 다시 한다.
+- 수집이 도중에 실패하거나(예외) 넣은 것이 0건이면 대조하지 않는다. 이미 수집된 그래프는 `scripts/graph_names.py --user <username|id> [--dry-run]`으로 맞춘다(같은 규칙, 모델 호출 없음, Neo4j는 읽기만 하고 `contacts.graph_name`만 고친다. 어긋난 상대가 남으면 종료 코드 1).
+- 조회 쪽(`find_entity_uuid`)은 느슨하게 하지 않았다. 읽을 때마다 비슷한 이름을 받아 주면 다른 사람과 섞일 수 있다.
+- 성만 같거나 직함이 다른 이름('김상무' / '김철수 상무'), 대소문자만 다른 영어 이름은 후보로 보지 않는다.
+
 ### 삭제 (`store.py`)
 
 - 대화·메시지 삭제: `remove_episodes`가 에피소드를 이름으로 찾아 Cypher로 직접 지운다. 그 에피소드만 근거인 사실·개체는 함께 지우고, 다른 근거가 남은 사실은 `episodes` 목록에서만 뺀다. 남는 개체의 요약은 비운다.
@@ -115,7 +131,7 @@ PostgreSQL 쪽 상태:
 | 계기·범위 단서 | `trigger.py` | 변화 시점 ±7일의 `Event`와 Relationship 사실 문장 | 말투 프로필 제안 카드의 근거, 화면 응답의 말투 간선 |
 | 화면 | `GET /v1/contacts/{id}/graph` | 상대 주변 노드·엣지, 말투 간선(`register`) | 맥락 그래프 화면 |
 
-**"상대 주변"의 범위**는 검색·계기 조회·화면이 같다(`GraphStore.neighborhood`, 질의 검색은 같은 기준의 필터). 설정 갱신 제안만 나 → 상대 방향의 Relationship 사실을 직접 읽는다(`relationship_facts`). 범위의 기준: 양 끝 중 하나가 상대 노드이거나, 상대와 이어진 `Event` 노드인 엣지. Person 이웃은 기준으로 삼지 않는다 — 사용자 노드는 모든 방에 걸쳐 있어 걸러지는 것이 없다. 상대 노드를 이름으로 못 찾으면 사실 맥락을 비운다.
+**"상대 주변"의 범위**는 검색·계기 조회·화면이 같다(`GraphStore.neighborhood`, 질의 검색은 같은 기준의 필터). 설정 갱신 제안만 나 → 상대 방향의 Relationship 사실을 직접 읽는다(`relationship_facts`). 범위의 기준: 양 끝 중 하나가 상대 노드이거나, 상대와 이어진 `Event` 노드인 엣지. Person 이웃은 기준으로 삼지 않는다 — 사용자 노드는 모든 방에 걸쳐 있어 걸러지는 것이 없다. 상대 노드를 이름으로 못 찾으면 사실 맥락을 비운다(이름이 어긋난 경우는 수집 뒤 이름 대조가 맞춘다, 4절).
 
 ### 사실 맥락 검색의 순서
 
@@ -174,7 +190,7 @@ PostgreSQL 쪽 상태:
 | `backend/app/graph/dates.py`, `episodes.py` | 상대 날짜 계산, 에피소드 본문 |
 | `backend/app/graph/client.py` | Settings → Graphiti (LLM·임베더·리랭커 연결) |
 | `backend/app/graph/store.py` | `GraphStore` Protocol과 `GraphitiStore`. 수집·검색 코드는 Graphiti를 직접 만지지 않는다 |
-| `backend/app/graph/ingest.py` | 수집, 상한, 보류, 이어받기 |
+| `backend/app/graph/ingest.py` | 수집, 상한, 보류, 이어받기, 수집 뒤 이름 대조 |
 | `backend/app/graph/retriever.py` | 사실 맥락 검색기 |
 | `backend/app/graph/persona_signals.py`, `trigger.py` | 설정 갱신 제안, 계기·범위 단서 |
 | `backend/app/ai/register*.py` | 말투 프로필 (규칙, 그래프 밖). `register.changed_segment`가 계기를 찾을 구간을 정한다 |
@@ -182,6 +198,7 @@ PostgreSQL 쪽 상태:
 | `backend/tests/test_graph*.py` | `FakeGraphStore`로 Neo4j·LLM 없이 검사 |
 | `graph/` | 담당자 폴더: 스키마 문서, 질의·호칭 정답 CSV, 스파이크 보고. `graph/graphiti_p0/`는 동결된 스파이크 |
 | `scripts/graph_reset.py`, `import_synthetic.py --graph`, `prepare_demo.py --graph` | 다시 만들기·합성 적재 |
+| `scripts/graph_names.py` | 수집된 그래프의 상대 노드 이름 대조 (4절) |
 
 ## 9. 다른 문서와 어긋난 곳
 
