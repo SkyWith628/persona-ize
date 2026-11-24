@@ -47,6 +47,8 @@ class FakeGraphStore:
     # 실제 저장소가 Cypher로 채우는 값이라, 여기서는 테스트가 사실에 직접 넣는다 (없으면 None)
     relationships: dict[tuple[str, str], list[RelationshipFact]] = field(default_factory=dict)
     fail_on: str | None = None  # 이 이름의 에피소드에서 예외
+    mentions: dict[str, list[str]] = field(default_factory=dict)  # 에피소드 이름 → 언급한 Person 이름
+    person_name_calls: int = 0
 
     async def prepare(self) -> None:
         self.prepared += 1
@@ -64,6 +66,10 @@ class FakeGraphStore:
 
     async def find_entity_uuid(self, group_id, name) -> str | None:  # noqa: ANN001
         return self.entities.get(name)
+
+    async def person_names(self, group_id, episode_names) -> list[str]:  # noqa: ANN001
+        self.person_name_calls += 1
+        return sorted({n for e in episode_names for n in self.mentions.get(e, [])})
 
     async def event_neighbors(self, group_id, node_uuid) -> set[str]:  # noqa: ANN001
         return set(self.events.get(node_uuid, set()))

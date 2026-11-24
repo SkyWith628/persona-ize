@@ -215,7 +215,7 @@ def test_polite_and_formality_mapping() -> None:
         ("김팀장님, 보고드립니다.", "김영수", ["김팀장님"]),
         ("선배님 혹시 시간 되세요?", "정하늘", ["선배님"]),
         ("근데 서연, 그거 봤어?", "이서연", ["서연"]),
-        ("지현씨 안녕하세요", "박지현", ["지현씨"]),
+        ("지현씨 안녕하세요", "박지현", ["지현 씨"]),  # 띄어 쓴 꼴로 통일
         # 지칭 (제3자 언급, 조사가 붙은 말) — 호칭이 아니다
         ("팀장님이랑 일정 때문에 좀 부딪혔어. 별일 아님", "김준호", []),
         ("근데 너 팀장님한테 혼났다며", "김민수", []),
@@ -535,14 +535,14 @@ def test_address_becomes_confirmed_after_two_uses_and_changes_with_two_new_uses(
     )
     p = build_profile(rows, "박지현")
     assert [(s.value, s.count, s.status) for s in p.address] == [
-        ("지현씨", 2, "previous"),
+        ("지현 씨", 2, "previous"),
         ("팀장님", 2, "confirmed"),
     ]
     assert p.previous_address is not None
     assert p.previous_address.end == rows[2][1]
     assert p.senior_hint is True
     before = build_profile(rows, "박지현", as_of=rows[2][1])
-    assert [(s.value, s.count, s.status) for s in before.address] == [("지현씨", 2, "confirmed")]
+    assert [(s.value, s.count, s.status) for s in before.address] == [("지현 씨", 2, "confirmed")]
     assert before.senior_hint is False
 
 
@@ -618,7 +618,7 @@ def test_a_segment_absent_from_the_recent_messages_is_not_confirmed() -> None:
         # 문장 가운데의 쉼표는 호칭 표시가 아니다
         ("다음 주 이사, 잘 마무리할게", "이서연", []),
         ("오늘 팀장님, 과장님 다 휴가래요", "김지현", []),
-        ("죄송합니다 팀장님, 내일 드리겠습니다", "김지현", []),
+        ("죄송합니다 팀장님, 내일 드리겠습니다", "김지현", []),  # 문장 끝이 아니다 (쉼표 뒤로 이어진다)
         # 님 없는 직함은 이 상대의 것이라는 표시(별칭·이름)가 있어야 한다
         ("의사, 간호사 모두 친절했습니다", "김지현 팀장님", []),
         ("책임, 의무 다 중요합니다", "김지현", []),
@@ -705,3 +705,136 @@ def test_trailing_call_is_stripped_at_most_three_times() -> None:
     assert classify_sentence("감사합니다 팀장님") == "hapsyo"
     assert classify_sentence("감사합니다 " + "팀장님 " * 3) == "hapsyo"
     assert classify_sentence("감사합니다 " + "팀장님 " * 4) == "unknown"
+
+
+# ── '이름 씨' 호칭 (2026-11-24) ─────────────────────────────────────────────────────────────────
+@pytest.mark.parametrize(
+    ("text", "alias", "expected"),
+    [
+        # 부르는 자리: 첫머리 + 쉼표, 문장 끝, 줄의 처음(별칭의 이름). 값은 띄어 쓴 꼴로 통일한다
+        ("영수 씨, 확인했습니다", "김영수", ["영수 씨"]),
+        ("확인했습니다 영수 씨.", "김영수", ["영수 씨"]),
+        ("수고하셨어요 영수 씨. 내일 봬요", "김영수", ["영수 씨"]),
+        ("영수씨 내일 봬요", "김영수", ["영수 씨"]),
+        ("영수 씨 내일 봬요", "김영수", ["영수 씨"]),
+        ("영수씨, 자료 봤어요?", "김영수", ["영수 씨"]),
+        ("고마워요 영수씨!", "김영수", ["영수 씨"]),
+        ("네 영수 씨, 알겠습니다.", "김영수", ["영수 씨"]),
+        ("안녕하세요. 영수 씨, 보고드립니다", "김영수", ["영수 씨"]),
+        ("영수 씨, 확인했습니다. 수고하셨어요 영수씨.", "김영수", ["영수 씨"]),  # 메시지 안 중복 제거
+        ("김영수 씨, 확인 부탁드립니다", "김영수", ["김영수 씨"]),
+        # 별칭에 이름이 없어도(직함으로 저장한 상대) 쉼표가 있는 첫머리와 문장 끝은 읽는다
+        ("영수 씨, 확인했습니다", "이과장", ["영수 씨"]),
+        ("확인했습니다 영수 씨.", "이과장", ["영수 씨"]),
+        ("수고하셨어요 영수 씨", "", ["영수 씨"]),
+        # 보통 낱말
+        ("오늘 날씨, 좋네요", "김영수", []),
+        ("날씨, 좋네요", "김영수", []),
+        ("좋네요 날씨.", "김영수", []),
+        ("대단해요 솜씨.", "김영수", []),
+        ("아저씨, 여기요", "김영수", []),
+        ("감사합니다 아저씨.", "김영수", []),
+        ("글씨, 예쁘네요", "김영수", []),
+        ("예쁘네요 손글씨!", "김영수", []),
+        ("고와요 말씨.", "김영수", []),
+        ("착해요 마음씨.", "김영수", []),
+        ("살렸어요 불씨.", "김영수", []),
+        ("맵시, 좋네요", "김영수", []),
+        # 제3자를 가리키기만 한 말 (조사가 붙었거나, 부르는 자리가 아니다)
+        ("민수 씨가 내일 온대요", "김영수", []),
+        ("영수 씨한테 전달했어요", "김영수", []),
+        ("영수씨가 그러던데요", "김영수", []),
+        ("민수 씨 내일 온대요", "김영수", []),  # 별칭에 없는 이름은 쉼표 없이 첫머리에 와도 읽지 않는다
+        ("어제 영수 씨 만났어요", "김영수", []),
+        ("담당자는 민수 씨.", "김영수", []),  # 앞말이 서술어로 끝나지 않았다
+        ("누가 했어요? 민수 씨?", "김영수", []),
+        ("죄송합니다 영수 씨, 내일 드리겠습니다", "김영수", []),  # 문장 가운데 (직함과 같은 기준)
+        ("영수 씨, 민수 씨 다 오셨어요", "김영수", []),  # 나열
+        ("영수 씨, 민수 씨, 확인 부탁드려요", "김영수", []),
+        ("김 씨, 이리 와 봐요", "김영수", []),  # 성 한 글자 + 씨는 읽지 않는다
+    ],
+)
+def test_name_ssi_address(text: str, alias: str, expected: list[str]) -> None:
+    assert address_terms(text, alias) == expected
+
+
+def test_name_ssi_becomes_the_address_and_gives_no_senior_hint() -> None:
+    rows = _series("확인했습니다 영수 씨.", "수고하셨어요 영수 씨. 내일 봬요.", "영수씨 내일 봬요")
+    p = build_profile(rows, "김영수")
+    assert [(s.value, s.count, s.status) for s in p.address] == [("영수 씨", 3, "confirmed")]
+    assert p.current_address is not None and p.current_address.value == "영수 씨"
+    assert p.senior_hint is False  # '씨'는 또래·아랫사람에게도 쓴다
+    # 문장 끝의 '이름 씨'를 떼고 그 앞의 어미를 읽는다 (띄어 썼다고 알 수 없음이 되지 않는다)
+    assert p.unknown == 0
+
+
+def test_ssi_after_a_confirmed_title_stays_a_candidate() -> None:
+    rows = _series("상무님, 보고드립니다.", "상무님, 확인했습니다.", "수고하셨어요 영수 씨.")
+    p = build_profile(rows, "이상무")
+    assert p.current_address is not None and p.current_address.value == "상무님"
+    assert p.candidate_address is not None and p.candidate_address.value == "영수 씨"
+    assert p.senior_hint is True  # 확정된 호칭의 힌트는 한 번의 '씨'로 뒤집히지 않는다
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("확인했습니다 영수 씨.", "hapsyo"),
+        ("수고하셨어요 영수 씨", "haeyo"),
+        ("고마워 영수 씨", "hae"),
+        ("오늘은 영수 씨", "unknown"),
+        ("씨", "unknown"),
+        ("수박 씨", "unknown"),
+    ],
+)
+def test_classify_sentence_strips_a_spaced_name_ssi(text: str, expected: str) -> None:
+    assert classify_sentence(text) == expected
+
+
+def test_many_ssi_calls_stay_linear() -> None:
+    text = "확인했어요 영수씨~ " * 3000
+    started = time.perf_counter()
+    assert address_terms(text, "김영수") == ["영수 씨"]
+    assert time.perf_counter() - started < 1.0
+
+
+# ── 문장 끝의 직함 호칭 (2026-11-24) ────────────────────────────────────────────────────────────
+@pytest.mark.parametrize(
+    ("text", "alias", "expected"),
+    [
+        ("알겠습니다 팀장님", "박지현", ["팀장님"]),
+        ("네 알겠습니다 팀장님.", "박지현", ["팀장님"]),
+        ("감사합니다 팀장님! 내일 뵙겠습니다", "박지현", ["팀장님"]),
+        ("확인했습니다 지현 팀장님.", "박지현", ["지현 팀장님"]),
+        ("보고드리겠습니다 김팀장님", "김영수", ["김팀장님"]),
+        ("감사해요 지현님~", "박지현", ["지현님"]),
+        ("고마워 형", "김민수", ["형"]),
+        ("잘 먹었습니다 선배님 ㅎㅎ", "정하늘", ["선배님"]),
+        ("팀장님, 확인했습니다. 감사합니다 팀장님.", "박지현", ["팀장님"]),  # 메시지 안 중복 제거
+        ("이거 봐 지현 대리", "김지현", ["지현 대리"]),  # 님 없는 직함은 이름이 붙었을 때만
+        ("이거 봐 대리", "지현 대리", ["대리"]),  # 또는 별칭에 들어 있을 때
+        # 문장 가운데 (뒤에 쉼표가 오거나 문장이 이어진다)
+        ("죄송합니다 팀장님, 내일 드리겠습니다", "박지현", []),
+        ("감사합니다 팀장님 내일 뵙겠습니다", "박지현", []),
+        # 앞말이 서술어로 끝나지 않았다 — 가리킨 말이다
+        ("어제 팀장님 만났어", "김준호", []),
+        ("담당은 팀장님.", "박지현", []),
+        ("오늘 발표는 서연 파트장님", "이서연", []),
+        ("그건 우리 형", "김민수", []),
+        # 조사가 붙은 말, 님 없는 직함(표시 없음), 맨 이름
+        ("전달했습니다 팀장님께", "박지현", []),
+        ("다음 주에 해요 이사", "김지현", []),
+        ("불렀어 대리", "김준호", []),
+        ("고마워 서연", "이서연", []),
+        ("오셨어요 손님.", "박지현", []),  # 직함이 아닌 '님'
+    ],
+)
+def test_title_address_at_the_end_of_a_sentence(text: str, alias: str, expected: list[str]) -> None:
+    assert address_terms(text, alias) == expected
+
+
+def test_sentence_final_titles_confirm_the_address_and_the_senior_hint() -> None:
+    rows = _series("알겠습니다 팀장님", "확인했습니다 팀장님.", "네")
+    p = build_profile(rows, "박지현")
+    assert [(s.value, s.count, s.status) for s in p.address] == [("팀장님", 2, "confirmed")]
+    assert p.senior_hint is True

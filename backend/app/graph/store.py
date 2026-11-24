@@ -101,6 +101,13 @@ class GraphStore(Protocol):
         """이름이 정확히 같은 엔티티 노드 하나 (상대 노드를 검색 중심으로 쓰기 위해)."""
         ...
 
+    async def person_names(self, group_id: str, episode_names: list[str]) -> list[str]:
+        """이 에피소드들(이름 `c1:m03`)이 언급한 Person 노드의 이름 (중복 없이).
+
+        수집 뒤 이름 대조(`GraphIngestService`)가 상대 노드의 실제 이름을 찾는 데 쓴다. 읽기 전용.
+        """
+        ...
+
     async def event_neighbors(self, group_id: str, node_uuid: str) -> set[str]:
         """이 노드와 엣지로 이어진 Event 노드들의 uuid (상대가 관여한 사건)."""
         ...
@@ -198,6 +205,18 @@ class GraphitiStore:
         )
         records = result[0] if isinstance(result, tuple) else result.records
         return records[0]["uuid"] if records else None
+
+    async def person_names(self, group_id: str, episode_names: list[str]) -> list[str]:
+        if not episode_names:
+            return []
+        result = await self._g.driver.execute_query(
+            "MATCH (e:Episodic {group_id: $group_id})-[:MENTIONS]->(n:Person {group_id: $group_id}) "
+            "WHERE e.name IN $names RETURN DISTINCT n.name AS name",
+            group_id=group_id,
+            names=episode_names,
+        )
+        records = result[0] if isinstance(result, tuple) else result.records
+        return sorted({r["name"] for r in records if isinstance(r["name"], str) and r["name"]})
 
     async def event_neighbors(self, group_id: str, node_uuid: str) -> set[str]:
         result = await self._g.driver.execute_query(

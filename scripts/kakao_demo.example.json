@@ -1,0 +1,30 @@
+{
+  "me": "김민수",
+  "conversations": [
+    {
+      "file": "C:/path/to/KakaoTalk_박지현.txt",
+      "contact": "박지현",
+      "relationship_type": "superior",
+      "address_term": "팀장님",
+      "title": "박지현 팀장",
+      "source_key": "k1"
+    },
+    {
+      "file": "C:/path/to/KakaoTalk_김준호.txt",
+      "contact": "김준호",
+      "relationship_type": "family",
+      "address_term": "준호야",
+      "title": "동생 준호",
+      "source_key": "k2"
+    },
+    {
+      "file": "C:/path/to/KakaoTalk_동기방.txt",
+      "contact": "이서연",
+      "relationship_type": "colleague",
+      "address_term": "",
+      "title": "동기 서연 (단체방에서 서연만)",
+      "source_key": "k3",
+      "skip": ["최동훈", "한유진"]
+    }
+  ]
+}
