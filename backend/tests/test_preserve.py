@@ -21,6 +21,37 @@ def test_design_doc_example() -> None:
     assert "약속" in k["promise"]
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "보고서 금요일까지 드릴게요",  # 띄어 쓴 서술어
+        "제가 할게요",
+        "회의는 15:30에 갈게요",  # 'ㄹ게요'로 끝나는 말
+        "내일 다시 볼게",
+        "저녁은 제가 살게",
+        "자료 넣을게요.",
+        "그건 제가 할께요",
+    ],
+)
+def test_promise_endings(text: str) -> None:
+    assert "약속" in kinds(text).get("promise", set())
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "날개가 예쁘네요",
+        "그렇게 말게 되면",
+        "얼게 두지 마세요",
+        "게 요리 먹으러 가요",
+        "힘들게 해서 미안해요",  # 'ㄹ게' 부사형은 문장 끝이 아니면 약속이 아니다
+        "길게 말씀드리면",
+    ],
+)
+def test_not_promise(text: str) -> None:
+    assert "promise" not in kinds(text)
+
+
 def test_dates_and_quantities() -> None:
     k = kinds("11월 5일까지 자료 3부 드리겠습니다. 다음 주 수요일 오후 3시 회의요.")
     assert {"11월5일", "다음주수요일", "오후3시"} <= k["datetime"]
@@ -67,6 +98,14 @@ def test_numbers_with_separators_are_one_item() -> None:
 def test_english_dates_weekdays_and_times() -> None:
     k = kinds("will send by Friday Oct 17. 2.8% from Nov 15, call at 8pm Eastern tomorrow")
     assert {"oct17", "nov15", "fri", "8pm", "tomorrow"} == k["datetime"]
+    # 문장 끝 마침표는 시각에 붙이지 않는다. 'p.m.'의 점은 시각의 일부다
+    by_text = {
+        i.text: i.normalized
+        for i in extract_preserved_items("by Friday 3pm. Or 9:30 a.m. works")
+        if i.kind == "datetime"
+    }
+    assert by_text["3pm"] == "3pm"
+    assert by_text["9:30 a.m."] == "9:30am"
     # 표기가 달라도 같은 값이다
     same = kinds("I will send it by friday, October 17th. From 15 Nov, call at 8 PM, Tomorrow.")
     assert same["datetime"] == k["datetime"]

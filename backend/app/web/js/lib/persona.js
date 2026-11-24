@@ -221,9 +221,16 @@ function cleanIds(value) {
   return (Array.isArray(value) ? value : []).map((v) => String(v ?? "").trim()).filter(Boolean);
 }
 
-/** 근거 메시지 id를 한 줄로. 많으면 앞의 몇 개만 적고 나머지는 건수로 줄인다. */
+/** 사람이 읽을 만한 메시지 id의 길이 상한. 합성 대화의 "c3:m08"은 읽히지만 가져온 대화의 id는 해시가 붙어 길다. */
+const READABLE_ID = 12;
+
+/**
+ * 근거 메시지 id를 한 줄로. 많으면 앞의 몇 개만 적고 나머지는 건수로 줄인다.
+ * 읽을 수 없는 긴 id가 섞여 있으면 아무것도 적지 않는다 — 건수는 부르는 쪽이 따로 적는다.
+ */
 export function evidenceText(ids, max = 4) {
   const list = cleanIds(ids);
+  if (list.some((id) => id.length > READABLE_ID)) return "";
   if (list.length <= max) return list.join(", ");
   return `${list.slice(0, max).join(", ")} 외 ${list.length - max}건`;
 }
