@@ -93,7 +93,9 @@ _EN_WEEKDAY = re.compile(
     r"|mon|tues|tue|wed|thurs|thur|thu|fri)|Sat|Sun)(?![A-Za-z])"
 )
 _EN_TIME = re.compile(
-    r"(?<![\d:])(?P<hour>\d{1,2})(?::(?P<minute>\d{2}))?\s?(?P<half>[ap])\.?m\.?(?![A-Za-z])", re.IGNORECASE
+    # 'pm.'의 마침표는 문장 끝이다 — 점은 'p.m.' 꼴일 때만 시각의 일부로 읽는다
+    r"(?<![\d:])(?P<hour>\d{1,2})(?::(?P<minute>\d{2}))?\s?(?P<half>[ap])(?:m|\.m\.?)(?![A-Za-z])",
+    re.IGNORECASE,
 )
 _EN_RELATIVE = re.compile(
     r"(?<![A-Za-z])(?:today|tomorrow|yesterday|tonight|(?:this|next|last)\s+(?:week|month|quarter|year))"

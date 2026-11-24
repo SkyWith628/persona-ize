@@ -67,6 +67,14 @@ def test_numbers_with_separators_are_one_item() -> None:
 def test_english_dates_weekdays_and_times() -> None:
     k = kinds("will send by Friday Oct 17. 2.8% from Nov 15, call at 8pm Eastern tomorrow")
     assert {"oct17", "nov15", "fri", "8pm", "tomorrow"} == k["datetime"]
+    # 문장 끝 마침표는 시각에 붙이지 않는다. 'p.m.'의 점은 시각의 일부다
+    by_text = {
+        i.text: i.normalized
+        for i in extract_preserved_items("by Friday 3pm. Or 9:30 a.m. works")
+        if i.kind == "datetime"
+    }
+    assert by_text["3pm"] == "3pm"
+    assert by_text["9:30 a.m."] == "9:30am"
     # 표기가 달라도 같은 값이다
     same = kinds("I will send it by friday, October 17th. From 15 Nov, call at 8 PM, Tomorrow.")
     assert same["datetime"] == k["datetime"]

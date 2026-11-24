@@ -244,6 +244,18 @@ test("제안 카드: 빠진 조각·두 가지 말투·확정된 호칭", () => 
   // 근거 id가 많으면 앞의 몇 개만
   assert.equal(evidenceText(["a", "b", "c", "d", "e", "f"]), "a, b, c, d 외 2건");
   assert.equal(evidenceText(null), "");
+  // 가져온 대화의 긴 id는 화면에 적지 않는다 — 건수와 날짜만 남는다
+  const long = ["k3:2510172237-4fa2c0c633566a45", "k3:2510180013-4d2bdbc3a7f93cb6"];
+  assert.equal(evidenceText(long), "");
+  assert.equal(evidenceText(["c3:m08", long[0]]), "");
+  const imported = cardView({
+    speech_current: { level: "hapsyo", count: 2, message_ids: long, since: "2025-10-18" },
+    trigger: { event: "장비 공동구매", at: "2025-10-18", message_ids: long },
+    scope_hints: [{ text: "우비 사이즈 L 요청", message_ids: [long[0]] }],
+  });
+  assert.ok(imported.rows.every((r) => !r.text.includes("k3:")));
+  assert.match(imported.rows[0].text, /2건/);
+  assert.equal(imported.rows.at(-1).text, '"우비 사이즈 L 요청"');
 });
 
 test("제안 카드 적용은 격식과 호칭만 채운다", () => {
