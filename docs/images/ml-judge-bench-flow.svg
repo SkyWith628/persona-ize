@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 330" width="960" height="330" font-family="'Malgun Gothic','Apple SD Gothic Neo','Noto Sans KR',system-ui,sans-serif">
+<rect width="960" height="330" fill="#fcfcfb"/>
+<text x="32.0" y="38.0" font-size="17" fill="#0b0b0b" text-anchor="start" font-weight="700">측정은 네 단계로 했다</text>
+<text x="32.0" y="60.0" font-size="12.5" fill="#52514e" text-anchor="start" font-weight="400">학습 데이터 없이, 임의의 토큰을 넣어 비용만 잰다. 정확도는 재지 않는다.</text>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#898781"/></marker></defs>
+<rect x="41" y="92" width="200" height="176" rx="10" fill="#ffffff" stroke="#e1e0d9" stroke-width="1.5"/>
+<circle cx="65" cy="118" r="12" fill="#2a78d6"/>
+<text x="65.0" y="122.5" font-size="12.5" fill="#ffffff" text-anchor="middle" font-weight="700">1</text>
+<text x="85.0" y="123.0" font-size="14.5" fill="#0b0b0b" text-anchor="start" font-weight="700">모델 내려받기</text>
+<rect x="57" y="140" width="109" height="22" rx="11" fill="none" stroke="#c3c2b7" stroke-width="1.2"/>
+<text x="111.3" y="155.5" font-size="11.5" fill="#52514e" text-anchor="middle" font-weight="400">인터넷 → 디스크</text>
+<text x="57.0" y="188.0" font-size="12.5" fill="#52514e" text-anchor="start" font-weight="400">모델 세 개를 받아</text>
+<text x="57.0" y="207.0" font-size="12.5" fill="#52514e" text-anchor="start" font-weight="400">크기와 구성을 본다</text>
+<line x1="57" y1="226" x2="225" y2="226" stroke="#e1e0d9"/>
+<text x="57.0" y="249.0" font-size="12.5" fill="#0b0b0b" text-anchor="start" font-weight="700">0.4~1.3GB (메모리 기준)</text>
+<line x1="245" y1="180.0" x2="263" y2="180.0" stroke="#898781" stroke-width="1.5" marker-end="url(#ah)"/>
+<rect x="267" y="92" width="200" height="176" rx="10" fill="#ffffff" stroke="#e1e0d9" stroke-width="1.5"/>
+<circle cx="291" cy="118" r="12" fill="#2a78d6"/>
+<text x="291.0" y="122.5" font-size="12.5" fill="#ffffff" text-anchor="middle" font-weight="700">2</text>
+<text x="311.0" y="123.0" font-size="14.5" fill="#0b0b0b" text-anchor="start" font-weight="700">문장 쌍 통과</text>
+<rect x="283" y="140" width="52" height="22" rx="11" fill="none" stroke="#c3c2b7" stroke-width="1.2"/>
+<text x="309.1" y="155.5" font-size="11.5" fill="#52514e" text-anchor="middle" font-weight="400">GPU</text>
+<text x="283.0" y="188.0" font-size="12.5" fill="#52514e" text-anchor="start" font-weight="400">문장 쌍을 토큰으로 바꿔</text>
+<text x="283.0" y="207.0" font-size="12.5" fill="#52514e" text-anchor="start" font-weight="400">모델에 한 번 넣는다</text>
+<line x1="283" y1="226" x2="451" y2="226" stroke="#e1e0d9"/>
+<text x="283.0" y="249.0" font-size="12.5" fill="#0b0b0b" text-anchor="start" font-weight="700">KLUE는 “넵”을 모름</text>
+<line x1="471" y1="180.0" x2="489" y2="180.0" stroke="#898781" stroke-width="1.5" marker-end="url(#ah)"/>
+<rect x="493" y="92" width="200" height="176" rx="10" fill="#ffffff" stroke="#e1e0d9" stroke-width="1.5"/>
+<circle cx="517" cy="118" r="12" fill="#2a78d6"/>
+<text x="517.0" y="122.5" font-size="12.5" fill="#ffffff" text-anchor="middle" font-weight="700">3</text>
+<text x="537.0" y="123.0" font-size="14.5" fill="#0b0b0b" text-anchor="start" font-weight="700">학습 스텝 측정</text>
+<rect x="509" y="140" width="52" height="22" rx="11" fill="none" stroke="#c3c2b7" stroke-width="1.2"/>
+<text x="535.1" y="155.5" font-size="11.5" fill="#52514e" text-anchor="middle" font-weight="400">GPU</text>
+<text x="509.0" y="188.0" font-size="12.5" fill="#52514e" text-anchor="start" font-weight="400">학습 한 스텝을 30번</text>
+<text x="509.0" y="207.0" font-size="12.5" fill="#52514e" text-anchor="start" font-weight="400">돌려 메모리·속도를 잰다</text>
+<line x1="509" y1="226" x2="677" y2="226" stroke="#e1e0d9"/>
+<text x="509.0" y="249.0" font-size="12.5" fill="#0b0b0b" text-anchor="start" font-weight="700">base 2.7~5.2GB</text>
+<line x1="697" y1="180.0" x2="715" y2="180.0" stroke="#898781" stroke-width="1.5" marker-end="url(#ah)"/>
+<rect x="719" y="92" width="200" height="176" rx="10" fill="#ffffff" stroke="#e1e0d9" stroke-width="1.5"/>
+<circle cx="743" cy="118" r="12" fill="#2a78d6"/>
+<text x="743.0" y="122.5" font-size="12.5" fill="#ffffff" text-anchor="middle" font-weight="700">4</text>
+<text x="763.0" y="123.0" font-size="14.5" fill="#0b0b0b" text-anchor="start" font-weight="700">판정 시간 측정</text>
+<rect x="735" y="140" width="52" height="22" rx="11" fill="none" stroke="#c3c2b7" stroke-width="1.2"/>
+<text x="761.1" y="155.5" font-size="11.5" fill="#52514e" text-anchor="middle" font-weight="400">CPU</text>
+<text x="735.0" y="188.0" font-size="12.5" fill="#52514e" text-anchor="start" font-weight="400">문장 쌍 하나를 30번</text>
+<text x="735.0" y="207.0" font-size="12.5" fill="#52514e" text-anchor="start" font-weight="400">판정해 시간을 잰다</text>
+<line x1="735" y1="226" x2="903" y2="226" stroke="#e1e0d9"/>
+<text x="735.0" y="249.0" font-size="12.5" fill="#0b0b0b" text-anchor="start" font-weight="700">base 0.06~0.14초</text>
+<text x="41.0" y="300.0" font-size="12" fill="#898781" text-anchor="start" font-weight="400">각 상자의 아랫줄은 그 단계에서 얻은 대표 결과다. 3단계는 모델 3 × 길이 2 × 배치 3 × 정밀도 2 = 36칸을 쟀다.</text>
+</svg>
