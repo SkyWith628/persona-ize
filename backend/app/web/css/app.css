@@ -707,6 +707,11 @@ select.input {
   margin: var(--space-3) 0;
 }
 
+/* 안내 문장 속 짧은 링크("상대 화면")는 줄 끝에서 둘로 나뉘지 않게 한다 */
+.note a {
+  white-space: nowrap;
+}
+
 .note-warn {
   padding: var(--space-3) var(--space-4);
   border-left: 3px solid var(--warn);
@@ -1134,6 +1139,7 @@ select.input {
   justify-content: center;
   width: 40px;
   height: 40px;
+  flex-shrink: 0; /* 긴 표현 옆에서도 누르는 크기를 지킨다 */
   border: 0;
   border-radius: 50%;
   background: transparent;

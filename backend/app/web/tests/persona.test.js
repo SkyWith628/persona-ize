@@ -15,6 +15,7 @@ import {
   importProposal,
   isFewMessages,
   normalizeSettings,
+  personaSaveError,
   settingsEqual,
   signalMatches,
   signalView,
@@ -138,22 +139,55 @@ test("이미 같은 값이면 적용할 필요가 없다", () => {
 });
 
 test("표현 칩 입력: 쉼표로 여러 개, 중복·한도·길이 검사", () => {
-  assert.deepEqual(addPhrases(["ㅋㅋ"], "ㅠ, ㅋㅋ ,  넵", 50), { list: ["ㅋㅋ", "ㅠ", "넵"], error: null });
+  assert.deepEqual(addPhrases(["ㅋㅋ"], "ㅠ, ㅋㅋ ,  넵", 50), { list: ["ㅋㅋ", "ㅠ", "넵"], error: null, rejected: [] });
   const full = addPhrases(["a", "b"], "c", 2);
   assert.deepEqual(full.list, ["a", "b"]);
   assert.match(full.error, /2개까지/);
   const long = addPhrases([], "가".repeat(41), 20);
   assert.deepEqual(long.list, []);
   assert.match(long.error, /40자까지/);
-  assert.deepEqual(addPhrases([], "  ", 20), { list: [], error: null });
+  assert.deepEqual(addPhrases([], "  ", 20), { list: [], error: null, rejected: [] });
   // 서버 상한(MAX_PHRASE_CHARS)과 같은 경계: 딱 40자는 받고, 공백은 뺀 뒤에 센다
   assert.equal(LIMITS.phrase, 40);
-  assert.deepEqual(addPhrases([], ` ${"가".repeat(40)} `, 20), { list: ["가".repeat(40)], error: null });
+  assert.deepEqual(addPhrases([], ` ${"가".repeat(40)} `, 20), { list: ["가".repeat(40)], error: null, rejected: [] });
   // 이모지는 한 글자로 센다(서버와 같다)
-  assert.deepEqual(addPhrases([], "😆".repeat(40), 20), { list: ["😆".repeat(40)], error: null });
+  assert.deepEqual(addPhrases([], "😆".repeat(40), 20), { list: ["😆".repeat(40)], error: null, rejected: [] });
   assert.match(addPhrases([], "😆".repeat(41), 20).error, /40자까지/);
   // 긴 것 하나가 섞여도 나머지는 들어간다
   assert.deepEqual(addPhrases([], `넵, ${"가".repeat(41)}, ㅠ`, 20).list, ["넵", "ㅠ"]);
+});
+
+test("표현 칩 입력: 넣지 못한 표현은 rejected로 돌려준다(입력 칸에 남겨 고쳐 쓰게)", () => {
+  const long = "가".repeat(41);
+  assert.deepEqual(addPhrases([], `넵, ${long}, ㅠ`, 20).rejected, [long]);
+  assert.deepEqual(addPhrases([], long, 20).rejected, [long]);
+  // 개수 한도에 걸리면 그 뒤의 것이 모두 남는다. 중복은 남기지 않는다
+  assert.deepEqual(addPhrases(["a"], "a, b, c, d", 2), { list: ["a", "b"], error: "2개까지 넣을 수 있어요.", rejected: ["c", "d"] });
+});
+
+test("저장 422: 서버의 항목 경로를 화면의 항목 이름으로 바꿔 알린다", () => {
+  // 실제 서버 응답을 normalizeError로 읽은 모양 (PUT /v1/contacts/{id}/persona, 41자 표현)
+  const err = {
+    status: 422,
+    message: "settings.forbidden_phrases: 표현 하나는 40자까지 넣을 수 있습니다.",
+    details: [{ loc: "body.settings.forbidden_phrases", msg: "표현 하나는 40자까지 넣을 수 있습니다" }],
+  };
+  assert.deepEqual(personaSaveError(err), {
+    field: "forbidden_phrases",
+    label: "쓰지 않을 표현",
+    detail: "표현 하나는 40자까지 넣을 수 있습니다. 고친 뒤 다시 저장해 주세요.",
+    message: "쓰지 않을 표현: 표현 하나는 40자까지 넣을 수 있습니다. 고친 뒤 다시 저장해 주세요.",
+  });
+  const pref = personaSaveError({ status: 422, details: [{ loc: "body.settings.preferred_phrases.3", msg: "너무 깁니다." }] });
+  assert.equal(pref.message, "즐겨 쓰는 표현: 너무 깁니다. 고친 뒤 다시 저장해 주세요.");
+  assert.equal(personaSaveError({ status: 422, details: [{ loc: "body.settings.notes", msg: "" }] }).message, "메모: 입력한 내용을 확인한 뒤 다시 저장해 주세요.");
+  assert.doesNotMatch(personaSaveError(err).message, /settings|forbidden_phrases/);
+  // 항목을 알 수 없거나 422가 아니면 null — 부르는 쪽이 describeError를 쓴다
+  assert.equal(personaSaveError({ status: 422, details: [{ loc: "body.expected_version", msg: "x" }] }), null);
+  assert.equal(personaSaveError({ status: 422, details: [{ loc: "body.settings.__proto__", msg: "x" }] }), null);
+  assert.equal(personaSaveError({ status: 422, details: [] }), null);
+  assert.equal(personaSaveError({ status: 409, details: err.details }), null);
+  assert.equal(personaSaveError(null), null);
 });
 
 test("제안: 표본이 적으면 보여 주지 않는다", () => {

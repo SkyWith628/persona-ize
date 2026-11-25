@@ -6,6 +6,7 @@ import {
   existingSpeakerNotes,
   ignoredRolesLine,
   importResultView,
+  resultNoteText,
   knownRoles,
   MAX_IMPORT_CHARS,
   chatTypeLabel,
@@ -650,4 +651,13 @@ test("가져오기 결과: 새 메시지가 있고 따르지 않은 지정이 �
   for (const job of [{ imported: 3 }, { imported: 3, ignored_speaker_roles: [] }]) {
     assert.deepEqual(importResultView(job), { nothingNew: false, title: "가져왔어요", note: null });
   }
+});
+
+test("가져오기 결과: 화면 낭독기에 알릴 글은 안내를 링크 없이 이은 글이다", () => {
+  const view = importResultView({ imported: 5, ignored_speaker_roles: IGNORED });
+  assert.equal(resultNoteText(view), ignoredRolesLine({ ignored_speaker_roles: IGNORED }));
+  assert.match(resultNoteText(importResultView({ imported: 0 })), /건너뛰었어요.*상대 화면에서 그 대화방을 지운 뒤/);
+  // 안내가 없으면 빈 글자(상태만 읽는다)
+  assert.equal(resultNoteText(importResultView({ imported: 3 })), "");
+  assert.equal(resultNoteText(null), "");
 });
