@@ -149,6 +149,7 @@ export const ACTION_LABEL = {
   jobs: "가져오기 작업",
   feedback: "거절 피드백",
   access_log: "접근 기록",
+  graph_held: "보류 목록",
   graph_retry_held: "보류 다시 시도",
   graph_retry_held_done: "보류 다시 시도 결과",
   // 회원 관리 (member_admin_service.py가 남기는 이름)
@@ -189,10 +190,38 @@ export function heldView(graph) {
   return { count, canRetry: true, tag: { kind: "warn", text: "다시 시도할 수 있음" } };
 }
 
-/** 누르기 전에 받는 확인. 메시지 1건 = 모델 호출 1건(에피소드)이라 건수만큼 비용이 든다. */
-export function retryConfirmText(count) {
+/**
+ * 누르기 전에 받는 확인. 메시지 1건 = 모델 호출 1건(에피소드)이라 건수만큼 비용이 든다.
+ * `group`(보류 목록의 한 줄)을 주면 그 대화방만 푼다고 말한다.
+ */
+export function retryConfirmText(count, group = null) {
   const n = num(count);
-  return `보류 ${n}건을 다시 시도합니다. 모델 호출 비용이 ${n}건만큼 듭니다.\n계속할까요?`;
+  const what = group ? `대화방 ${shortConversationId(group.conversation_id)}의 보류 ${n}건` : `보류 ${n}건`;
+  return `${what}을 다시 시도합니다. 모델 호출 비용이 ${n}건만큼 듭니다.\n계속할까요?`;
+}
+
+/** 대화방 id(UUID)의 앞 8자. 표에서 줄을 구분하는 데만 쓴다(전체 값은 다시 시도 요청에만 싣는다). */
+export function shortConversationId(id) {
+  const raw = String(id ?? "");
+  return raw.length > 8 ? `${raw.slice(0, 8)}…` : raw || "–";
+}
+
+/** 다시 시도 요청의 본문. 줄을 주면 그 대화방만, 없으면 본문 없이(전체) 보낸다. */
+export function retryBody(group = null) {
+  return group ? { conversation_id: group.conversation_id } : undefined;
+}
+
+/** 보류 목록 한 줄의 표시값. 건수가 이상하면 0으로 본다(버튼도 내지 않는다). */
+export function heldGroupView(group, canRetry = true) {
+  const raw = Number(group?.messages ?? 0);
+  const count = Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 0;
+  const tries = Number(group?.attempts ?? 0);
+  return {
+    count,
+    conversation: shortConversationId(group?.conversation_id),
+    attempts: Number.isFinite(tries) && tries > 0 ? `${num(Math.floor(tries))}번` : "–",
+    canRetry: Boolean(canRetry) && count > 0 && Boolean(group?.conversation_id),
+  };
 }
 
 /** 서버 응답({released, users, started}) → 결과 안내. */

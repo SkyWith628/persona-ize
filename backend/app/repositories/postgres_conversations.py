@@ -31,6 +31,7 @@ from app.domain.conversation import (
     EpisodeDraft,
     EpisodeHit,
     GraphStatus,
+    HeldGraphGroup,
     ImportJob,
     Message,
     NewMessage,
@@ -67,6 +68,8 @@ def _conversation(row: ConversationRow) -> Conversation:
 
 # 그래프 수집을 기다리는 메시지: 아직 안 들어갔고, 거듭 실패해 보류되지도 않았다.
 _GRAPH_PENDING = (MessageRow.graph_ingested_at.is_(None), MessageRow.graph_held_at.is_(None))
+# 보류: 거듭 실패해 더 시도하지 않는 메시지 (그래프에는 없다)
+_GRAPH_HELD = (MessageRow.graph_ingested_at.is_(None), MessageRow.graph_held_at.is_not(None))
 
 
 def _message(row: MessageRow) -> Message:
@@ -533,20 +536,55 @@ class PostgresConversationRepo:
                 .values(**values)
             )
 
-    async def release_held_graph(self, user_id: str | None = None) -> dict[str, int]:
+    async def release_held_graph(
+        self, user_id: str | None = None, conversation_id: UUID | None = None
+    ) -> dict[str, int]:
         stmt = (
             update(MessageRow)
-            .where(MessageRow.graph_ingested_at.is_(None), MessageRow.graph_held_at.is_not(None))
+            .where(*_GRAPH_HELD)
             .values(graph_attempts=0, graph_held_at=None)
             .returning(MessageRow.user_id)
         )
         if user_id is not None:
             stmt = stmt.where(MessageRow.user_id == user_id)
+        if conversation_id is not None:
+            stmt = stmt.where(MessageRow.conversation_id == conversation_id)
         released: dict[str, int] = {}
         async with self._sessions.begin() as s:
             for owner in (await s.scalars(stmt)).all():
                 released[owner] = released.get(owner, 0) + 1
         return released
+
+    async def held_graph_groups(self, limit: int) -> list[HeldGraphGroup]:
+        # 본문·화자 이름은 SELECT 목록에 없다 — 건수·횟수·시각만 DB에서 묶어 온다
+        latest = func.max(MessageRow.graph_held_at)
+        stmt = (
+            select(
+                MessageRow.user_id,
+                MessageRow.conversation_id,
+                func.count().label("messages"),
+                func.max(MessageRow.graph_attempts).label("attempts"),
+                func.min(MessageRow.graph_held_at).label("oldest"),
+                latest.label("latest"),
+            )
+            .where(*_GRAPH_HELD)
+            .group_by(MessageRow.user_id, MessageRow.conversation_id)
+            .order_by(latest.desc(), MessageRow.conversation_id)
+            .limit(limit)
+        )
+        async with self._sessions() as s:
+            rows = (await s.execute(stmt)).all()
+        return [
+            HeldGraphGroup(
+                user_id=r.user_id,
+                conversation_id=r.conversation_id,
+                messages=int(r.messages),
+                attempts=int(r.attempts or 0),
+                oldest_held_at=r.oldest,
+                latest_held_at=r.latest,
+            )
+            for r in rows
+        ]
 
     async def close_stale_graph_jobs(self, user_id: str) -> int:
         pending_convs = (

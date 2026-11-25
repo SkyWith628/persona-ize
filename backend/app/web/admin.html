@@ -97,6 +97,14 @@
         <div id="t-jobs"></div>
       </section>
 
+      <!-- 사건 정리(그래프)에서 거듭 실패해 보류된 메시지. 대화방별 건수만 — 내용·이름은 나오지 않는다. -->
+      <section class="panel" aria-labelledby="h-held">
+        <h2 id="h-held" tabindex="-1">보류된 메시지 (대화방별)</h2>
+        <!-- 줄의 '다시 시도' 결과와 오류 안내. 화면 낭독기가 읽는다. -->
+        <p id="held-note" class="status" role="status" aria-live="polite"></p>
+        <div id="t-held"></div>
+      </section>
+
       <!-- 회원 관리: 가입 승인·정지·권한·세션 끊기·삭제. 기간(오늘·7일·30일)과 상관없이 지금 상태다. -->
       <section id="members" class="panel" aria-labelledby="h-members">
         <h2 id="h-members" tabindex="-1">회원 관리</h2>

@@ -44,6 +44,7 @@ PATHS = (
     "/v1/admin/jobs",
     "/v1/admin/feedback",
     "/v1/admin/access-log",
+    "/v1/admin/graph/held",
 )
 PASSWORD = "long-enough-pw"
 
@@ -54,6 +55,7 @@ JOB_FIELDS = (
 ).split()
 FEEDBACK_FIELDS = "user_id relationship_type channel condition reason_code created_at".split()
 ACCESS_FIELDS = "admin_username action detail created_at".split()
+HELD_FIELDS = "user_id conversation_id messages attempts oldest_held_at latest_held_at".split()
 
 # 관리자 응답 어디에도 나오면 안 되는 표식. 원문·상황·결과 문장·시도 기록·위반 상세·자유 서술 사유·편집본·
 # 대화 내용·상대 이름·대화방 이름·오류 본문에 하나씩 심는다.
@@ -252,6 +254,7 @@ def test_nothing_is_read_when_the_access_record_cannot_be_written() -> None:
         service.jobs(admin, 50),
         service.rejected_feedback(admin, 50),
         service.access_log(admin, 50),
+        service.held(admin, 50),
     )
     for call in calls:
         with pytest.raises(RuntimeError, match="log down"):
@@ -1344,8 +1347,9 @@ class _CountingIngest:
     def __init__(self) -> None:
         self.calls: list[str] = []
 
-    async def release_held(self) -> dict[str, int]:
-        self.calls.append("release")
+    async def release_held(self, user_id: str | None = None, conversation_id: UUID | None = None):  # noqa: ANN201
+        scope = [str(v) for v in (user_id, conversation_id) if v is not None]
+        self.calls.append(":".join(["release", *scope]))
         return {"u1": 2, "u2": 1}
 
     def start_resume(self, user_ids) -> bool:  # noqa: ANN001
@@ -1378,11 +1382,253 @@ def test_retry_held_service_logs_first_and_reports_counts() -> None:
     assert ingest.calls == ["release", "start:u1,u2"]
     assert repo.rows == [("graph_retry_held", None), ("graph_retry_held_done", "released=3 users=2")]
 
+    # 범위를 주면 그대로 넘기고, 접근 기록에는 사용자 id를 줄여 적는다
+    conv, full = uuid4(), str(uuid4())
+    asyncio.run(service.retry_held(admin, user_id=full, conversation_id=conv))
+    assert ingest.calls[-2:] == [f"release:{full}:{conv}", "start:u1,u2"]
+    assert repo.rows[-2] == ("graph_retry_held", f"user={short_user_id(full)} conversation={conv}")
+    assert full not in json.dumps(repo.rows)
+
     # 그래프가 꺼진 서버: 기록은 남고, 분명한 오류로 끝난다
     off_repo = _LogRepo()
     with pytest.raises(GraphDisabledError):
         asyncio.run(AdminService(_settings(), off_repo).retry_held(admin))  # type: ignore[arg-type]
     assert off_repo.rows == [("graph_retry_held", None)]
+
+
+# ---------- 보류 목록과 범위를 고른 다시 시도 (인메모리 저장소로 API까지) ----------
+
+HELD_PATH = "/v1/admin/graph/held"
+
+
+class _NoEngine:
+    """접근 검사의 저장소 확인(503)만 넘기는 자리 표시. 집계 SQL은 돌지 않는다."""
+
+    async def dispose(self) -> None:
+        return None
+
+
+@dataclass
+class HeldEnv:
+    """인메모리 앱 + 가짜 그래프 저장소. 관리자 집계 저장소는 접근 기록만 받는 `_LogRepo`로 바꿔 둔다."""
+
+    client: TestClient
+    boss: dict[str, str]
+    log: _LogRepo
+    ingest: Any
+    store: Any
+    conversations: dict[str, UUID]  # "ua/c1" → 대화방 id
+
+    @property
+    def container(self) -> Any:
+        return self.client.app.state.container
+
+    def as_boss(self, csrf: bool = True) -> dict[str, str]:
+        self.client.cookies.clear()
+        self.client.cookies.set("pi_session", self.boss["token"])
+        return {"X-CSRF-Token": self.boss["csrf"]} if csrf else {}
+
+    def held(self) -> list[dict[str, Any]]:
+        self.as_boss()
+        r = self.client.get(HELD_PATH)
+        assert r.status_code == 200, r.text
+        return r.json()
+
+    def retry(self, body: dict[str, Any] | None = None):  # noqa: ANN201
+        headers = self.as_boss()
+        if body is None:
+            return self.client.post(RETRY_PATH, headers=headers)
+        return self.client.post(RETRY_PATH, headers=headers, json=body)
+
+    def held_counts(self) -> dict[str, int]:
+        """대화방 별명 → 지금 보류된 메시지 수 (저장소에서 직접 센다)."""
+
+        async def _count() -> dict[str, int]:
+            out = {}
+            for key, conv_id in self.conversations.items():
+                stats = await self.container.conversations.conversation_stats(key.split("/")[0], conv_id)
+                out[key] = stats.graph_held
+            return out
+
+        return self.client.portal.call(_count)
+
+
+HELD_AT = datetime(2026, 11, 20, 3, 0, tzinfo=UTC)
+
+
+@pytest.fixture
+def held_env():  # noqa: ANN201
+    """사용자 ua(방 c1 2건·c2 1건)와 ub(방 c1 2건)의 메시지가 전부 보류된 상태."""
+    from app.graph.ingest import GraphIngestService
+    from app.services.import_service import ImportMessage, ImportPayload
+    from tests.test_graph import FakeGraphStore
+
+    app = create_app(_settings())
+    with TestClient(app) as client:
+        r = client.post("/v1/auth/register", json={"username": "boss", "password": PASSWORD})
+        assert r.status_code == 201, r.text
+        boss = {
+            "token": r.cookies.get("pi_session"),
+            "csrf": r.json()["csrf_token"],
+            "user_id": r.json()["user_id"],
+        }
+        container = app.state.container
+        log_repo = _LogRepo()
+        container.engine = _NoEngine()
+        app.state.admin_repo = (container.engine, log_repo)
+        store = FakeGraphStore()
+        ingest = GraphIngestService(store, container.conversations, container.contacts, max_attempts=3)
+        container.graph_store, container.graph_ingest = store, ingest
+
+        async def _seed() -> dict[str, UUID]:
+            made: dict[str, UUID] = {}
+            minute = 0
+            for user, key, count in (("ua", "c1", 2), ("ua", "c2", 1), ("ub", "c1", 2)):
+                contact = await container.contacts.create(user, f"{SECRETS['alias']} {key}", "superior")
+                conv = await container.import_service.create_conversation(
+                    user, contact.id, f"{SECRETS['title']} 방", "json", key, me_name="김민수"
+                )
+                messages = [
+                    ImportMessage(
+                        id=f"m{i:02d}",
+                        speaker="me",
+                        sent_at=f"2026-10-05T09:{minute + i:02d}:00+09:00",
+                        text=f"{SECRETS['message']} 수요일까지 가능합니다 {i}.",
+                    )
+                    for i in range(count)
+                ]
+                minute += 10
+                await container.import_service.import_messages(
+                    user, conv.id, ImportPayload(messages=messages)
+                )
+                for i, m in enumerate(await container.conversations.list_messages(user, conv.id)):
+                    # 세 번 실패해 보류된 것처럼: 횟수 3, 보류 시각은 방마다·메시지마다 다르게
+                    at = HELD_AT.replace(hour=3 + len(made), minute=i)
+                    for attempt in range(3):
+                        await container.conversations.record_graph_failure(user, m.id, attempt == 2, at)
+                made[f"{user}/{key}"] = conv.id
+            return made
+
+        conversations = client.portal.call(_seed)
+        yield HeldEnv(
+            client=client, boss=boss, log=log_repo, ingest=ingest, store=store, conversations=conversations
+        )
+        container.graph_store, container.graph_ingest = None, None
+
+
+def test_held_list_groups_by_conversation_without_private_text(held_env: HeldEnv) -> None:
+    rows = held_env.held()
+    assert all(sorted(row) == sorted(HELD_FIELDS) for row in rows)
+    by_conv = {row["conversation_id"]: row for row in rows}
+    ids = {key: str(conv_id) for key, conv_id in held_env.conversations.items()}
+    assert set(by_conv) == set(ids.values())
+    # 최근에 보류된 방부터
+    assert [row["conversation_id"] for row in rows] == [ids["ub/c1"], ids["ua/c2"], ids["ua/c1"]]
+    first = by_conv[ids["ua/c1"]]
+    assert (first["messages"], first["attempts"]) == (2, 3)
+    assert first["oldest_held_at"] == "2026-11-20T03:00:00Z"
+    assert first["latest_held_at"] == "2026-11-20T03:01:00Z"
+    assert by_conv[ids["ua/c2"]]["messages"] == 1 and by_conv[ids["ub/c1"]]["messages"] == 2
+    # 사용자 id는 줄인다 — 같은 사용자의 두 방은 같은 줄인 id
+    assert first["user_id"] == by_conv[ids["ua/c2"]]["user_id"] == short_user_id("ua")
+    assert by_conv[ids["ub/c1"]]["user_id"] == short_user_id("ub")
+
+    # 문장이 들어가는 필드가 없다: 본문·상대 이름·방 제목 표식이 응답과 접근 기록 어디에도 없다
+    body = json.dumps([rows, held_env.log.rows], ensure_ascii=False)
+    for label, secret in SECRETS.items():
+        assert secret not in body, f"{label} 표식이 보류 목록에 나왔다"
+    for forbidden_key in ('"text"', "title", "speaker", "alias", "me_name", "source_key"):
+        assert forbidden_key not in body, forbidden_key
+    assert held_env.log.rows == [("graph_held", "limit=50")]
+
+    held_env.as_boss()
+    assert len(held_env.client.get(f"{HELD_PATH}?limit=1").json()) == 1
+    assert held_env.client.get(f"{HELD_PATH}?limit=0").status_code == 422
+    assert held_env.client.get(HELD_PATH).headers["cache-control"] == "no-store"
+
+
+def test_held_list_and_retry_refuse_non_admins(held_env: HeldEnv) -> None:
+    client = held_env.client
+    client.cookies.clear()
+    assert client.get(HELD_PATH).status_code == 401
+    assert client.get(HELD_PATH, headers={"X-User-Id": "boss"}).status_code == 401
+    user = client.post("/v1/auth/register", json={"username": "minsu_kim", "password": PASSWORD}).json()
+    scope = {"conversation_id": str(held_env.conversations["ua/c1"])}
+    denied = client.get(HELD_PATH)
+    assert denied.status_code == 403 and _code(denied) == "forbidden"
+    denied = client.post(RETRY_PATH, json=scope, headers={"X-CSRF-Token": user["csrf_token"]})
+    assert denied.status_code == 403 and _code(denied) == "forbidden"
+    # 관리자여도 CSRF 토큰이 없으면 풀지 않는다
+    held_env.as_boss()
+    assert client.post(RETRY_PATH, json=scope).status_code == 403
+    assert held_env.held_counts() == {"ua/c1": 2, "ua/c2": 1, "ub/c1": 2}
+    assert held_env.log.rows == [] and held_env.store.added == []
+
+
+def test_retry_held_releases_only_the_chosen_scope(held_env: HeldEnv) -> None:
+    ids = held_env.conversations
+    wait = held_env.ingest.wait_tasks
+
+    # 대화방 하나만: 같은 사용자의 다른 방과 다른 사용자는 그대로 보류다
+    one = held_env.retry({"conversation_id": str(ids["ua/c2"])})
+    assert one.status_code == 200, one.text
+    assert one.json() == {"released": 1, "users": 1, "started": True}
+    held_env.client.portal.call(wait)
+    assert held_env.held_counts() == {"ua/c1": 2, "ua/c2": 0, "ub/c1": 2}
+    assert [(a["group_id"], a["name"]) for a in held_env.store.added] == [("ua", "c2:m00")]
+    assert [row["conversation_id"] for row in held_env.held()] == [str(ids["ub/c1"]), str(ids["ua/c1"])]
+
+    # 사용자와 대화방이 어긋나면(남의 방) 아무것도 풀지 않는다. 없는 방·없는 사용자도 0건이다
+    for scope in (
+        {"user_id": "ub", "conversation_id": str(ids["ua/c1"])},
+        {"conversation_id": str(uuid4())},
+        {"user_id": "nobody"},
+    ):
+        none = held_env.retry(scope)
+        assert none.status_code == 200 and none.json() == {"released": 0, "users": 0, "started": False}
+    assert held_env.held_counts() == {"ua/c1": 2, "ua/c2": 0, "ub/c1": 2}
+
+    # 사용자 하나만
+    user = held_env.retry({"user_id": "ua"})
+    assert user.json() == {"released": 2, "users": 1, "started": True}
+    held_env.client.portal.call(wait)
+    assert held_env.held_counts() == {"ua/c1": 0, "ua/c2": 0, "ub/c1": 2}
+    assert sorted(a["name"] for a in held_env.store.added if a["group_id"] == "ua") == [
+        "c1:m00",
+        "c1:m01",
+        "c2:m00",
+    ]
+    assert not [a for a in held_env.store.added if a["group_id"] == "ub"]
+
+    # 잘못된 범위는 422이고 아무것도 풀지 않는다
+    assert held_env.retry({"conversation_id": "not-a-uuid"}).status_code == 422
+    assert held_env.retry({"user_id": ""}).status_code == 422
+    assert held_env.held_counts()["ub/c1"] == 2
+
+    # 접근 기록: 범위와 결과가 남고, 사용자 id는 줄여 적는다
+    retries = [row for row in held_env.log.rows if row[0].startswith("graph_retry_held")]
+    assert retries[:2] == [
+        ("graph_retry_held", f"conversation={ids['ua/c2']}"),
+        ("graph_retry_held_done", "released=1 users=1"),
+    ]
+    assert ("graph_retry_held", f"user={short_user_id('ub')} conversation={ids['ua/c1']}") in retries
+    assert retries[-2:] == [
+        ("graph_retry_held", f"user={short_user_id('ua')}"),
+        ("graph_retry_held_done", "released=2 users=1"),
+    ]
+
+
+@pytest.mark.parametrize("body", [None, {}])
+def test_retry_held_without_scope_releases_everything(held_env: HeldEnv, body: dict | None) -> None:
+    done = held_env.retry(body)
+    assert done.status_code == 200, done.text
+    assert done.json() == {"released": 5, "users": 2, "started": True}
+    held_env.client.portal.call(held_env.ingest.wait_tasks)
+    assert held_env.held_counts() == {"ua/c1": 0, "ua/c2": 0, "ub/c1": 0}
+    assert len(held_env.store.added) == 5
+    assert held_env.held() == []
+    assert ("graph_retry_held", None) in held_env.log.rows
+    assert held_env.retry(body).json() == {"released": 0, "users": 0, "started": False}
 
 
 def test_retry_held_releases_and_reingests_in_the_background(env: AdminEnv) -> None:
@@ -1489,3 +1735,82 @@ def test_retry_held_releases_and_reingests_in_the_background(env: AdminEnv) -> N
         assert again == {"released": 0, "users": 0, "started": False}
     finally:
         container.graph_store, container.graph_ingest, imports._graph_ingest, imports.graph_mode = saved
+
+
+def test_held_list_and_scoped_retry_on_postgres(env: AdminEnv) -> None:
+    """PostgreSQL 저장소의 묶기 SQL과 범위 풀기를 API로 본다 (테스트 DB는 함께 쓰므로 우리 방만 확인한다)."""
+    from app.graph.ingest import GraphIngestService
+    from tests.test_graph import FakeGraphStore
+
+    container = env.client.app.state.container
+    store = FakeGraphStore()
+    ingest = GraphIngestService(store, container.conversations, container.contacts, max_attempts=3)
+    saved = (container.graph_store, container.graph_ingest)
+    user = env.register(_name("held"))
+    stub_id = f"held-{uuid4().hex[:12]}"
+    held_at = datetime(2026, 11, 20, 3, 0, tzinfo=UTC)
+
+    async def _seed() -> dict[str, UUID]:
+        conn = await _connect(env.pg_url)
+        try:
+            made = {}
+            for owner in (user["user_id"], stub_id):
+                contact = await _add_contact(conn, owner, "superior", held_at)
+                conv = await _add_conversation(conn, owner, contact, held_at)
+                for _ in range(2):
+                    await _add_message(conn, owner, conv, held_at, None)
+                await conn.execute(
+                    "UPDATE messages SET graph_attempts = 3, graph_held_at = $2 WHERE conversation_id = $1",
+                    conv,
+                    held_at,
+                )
+                made[owner] = conv
+            return made
+        finally:
+            await conn.close()
+
+    convs = _run(_seed())
+    try:
+        container.graph_store, container.graph_ingest = store, ingest
+        listed = env.admin_get("/v1/admin/graph/held?limit=200")
+        assert listed.status_code == 200, listed.text
+        assert all(sorted(row) == sorted(HELD_FIELDS) for row in listed.json())
+        by_conv = {row["conversation_id"]: row for row in listed.json()}
+        for owner, conv in convs.items():
+            row = by_conv[str(conv)]
+            assert (row["user_id"], row["messages"], row["attempts"]) == (short_user_id(owner), 2, 3)
+            assert row["oldest_held_at"] == row["latest_held_at"] == "2026-11-20T03:00:00Z"
+        body = json.dumps(listed.json(), ensure_ascii=False)
+        for label, secret in SECRETS.items():
+            assert secret not in body, f"{label} 표식이 보류 목록에 나왔다"
+        assert user["user_id"] not in body and stub_id not in body and env.boss_id not in body
+
+        env.use(env.boss_token)
+        csrf = {"X-CSRF-Token": env.client.get("/v1/auth/me").json()["csrf_token"]}
+        # 사용자와 대화방이 어긋나면 풀지 않는다
+        miss = env.client.post(
+            RETRY_PATH,
+            headers=csrf,
+            json={"user_id": stub_id, "conversation_id": str(convs[user["user_id"]])},
+        )
+        assert miss.status_code == 200 and miss.json() == {"released": 0, "users": 0, "started": False}
+        # 대화방 하나만, 그다음 사용자 하나만
+        one = env.client.post(RETRY_PATH, headers=csrf, json={"conversation_id": str(convs[stub_id])})
+        assert one.status_code == 200 and one.json() == {"released": 2, "users": 1, "started": True}
+        env.client.portal.call(ingest.wait_tasks)
+        left = {row["conversation_id"] for row in env.admin_get("/v1/admin/graph/held?limit=200").json()}
+        assert str(convs[stub_id]) not in left and str(convs[user["user_id"]]) in left
+        env.use(env.boss_token)
+        mine = env.client.post(RETRY_PATH, headers=csrf, json={"user_id": user["user_id"]})
+        assert mine.status_code == 200 and mine.json() == {"released": 2, "users": 1, "started": True}
+        env.client.portal.call(ingest.wait_tasks)
+        assert {a["group_id"] for a in store.added} == {user["user_id"], stub_id} and len(store.added) == 4
+
+        log_rows = env.admin_get("/v1/admin/access-log?limit=20").json()
+        details = [r["detail"] for r in log_rows if r["action"] == "graph_retry_held"]
+        assert f"user={short_user_id(user['user_id'])}" in details
+        assert f"conversation={convs[stub_id]}" in details
+        assert user["user_id"] not in json.dumps(log_rows, ensure_ascii=False)
+        assert any(r["action"] == "graph_held" and r["detail"] == "limit=200" for r in log_rows)
+    finally:
+        container.graph_store, container.graph_ingest = saved

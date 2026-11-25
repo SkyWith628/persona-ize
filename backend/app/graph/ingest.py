@@ -589,14 +589,18 @@ class GraphIngestService:
             reset = await self._conversations.reset_graph_ingested(user_id, conversation_id)
         return removed, reset
 
-    async def release_held(self) -> dict[str, int]:
-        """보류된 메시지를 풀어 다시 수집 대상으로 만든다 (모든 사용자). {사용자 id: 푼 건수}.
+    async def release_held(
+        self, user_id: str | None = None, conversation_id: UUID | None = None
+    ) -> dict[str, int]:
+        """보류된 메시지를 풀어 다시 수집 대상으로 만든다. {사용자 id: 푼 건수}.
+
+        인자가 없으면 모든 사용자, `user_id`·`conversation_id`를 주면 그 범위만 푼다.
 
         `reset`과 달리 그래프와 이미 들어간 메시지는 그대로 둔다. 풀기만 하고 수집은 하지 않는다 —
         이어서 `start_resume`을 부르거나, 다음 재시작·주기 이어받기(`resume_all`)가 넣는다.
         지금 돌고 있는 수집은 시작할 때 고른 목록만 넣으므로 잠금을 쥐지 않아도 겹치지 않는다.
         """
-        return await self._conversations.release_held_graph()
+        return await self._conversations.release_held_graph(user_id, conversation_id)
 
     async def resume_users(self, user_ids: Iterable[str]) -> dict[str, int]:
         """이 사용자들의 미수집 메시지를 순서대로 이어서 넣는다 (API 경로 — 상한을 따르고 카운터에 센다).

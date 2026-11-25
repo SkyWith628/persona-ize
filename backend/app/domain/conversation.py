@@ -219,6 +219,17 @@ class SpeakerRoleChange(BaseModel):
     job: ImportJob | None = Field(None, description="묶음을 다시 만드는 작업. 바뀐 것이 없으면 None")
 
 
+class HeldGraphGroup(BaseModel):
+    """그래프 수집이 보류된 메시지를 대화방별로 묶은 한 줄 (관리자 화면). 본문·이름·방 제목은 싣지 않는다."""
+
+    user_id: str
+    conversation_id: UUID
+    messages: int = Field(description="보류된 메시지 수")
+    attempts: int = Field(description="그 메시지들의 실패 횟수 중 가장 큰 값")
+    oldest_held_at: datetime
+    latest_held_at: datetime
+
+
 class ConversationStats(BaseModel):
     """대화방 하나의 집계 (`GET /v1/conversations/{id}/stats`)."""
 

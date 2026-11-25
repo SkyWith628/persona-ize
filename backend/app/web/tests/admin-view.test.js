@@ -35,7 +35,7 @@ class FakeNode {
 }
 
 globalThis.document = { createElement: (tagName) => new FakeNode(tagName) };
-const { renderIngest } = await import("../js/admin/view.js");
+const { renderHeld, renderIngest } = await import("../js/admin/view.js");
 
 function overview(graph) {
   return {
@@ -82,4 +82,66 @@ test("보류가 0건이거나 수집이 꺼져 있거나 처리기가 없으면 
   assert.match(off.root.text(), /4건 –수집이 꺼져 다시 시도할 수 없음/);
 
   assert.equal(draw({ held_messages: 4 }).buttons.length, 0); // 처리기를 주지 않은 호출(읽기 전용)
+});
+
+// ---------- 보류 표 (대화방별) ----------
+
+const GROUPS = [
+  {
+    user_id: "u_8f2…a1",
+    conversation_id: "11111111-2222-4333-8444-555555555555",
+    messages: 2,
+    attempts: 3,
+    oldest_held_at: "2026-11-20T03:00:00Z",
+    latest_held_at: "2026-11-20T03:01:00Z",
+  },
+  {
+    user_id: "u_c07…9e",
+    conversation_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+    messages: 1,
+    attempts: 3,
+    oldest_held_at: "2026-11-19T01:00:00Z",
+    latest_held_at: "2026-11-19T01:00:00Z",
+  },
+];
+
+function drawHeld(items, actions) {
+  const root = new FakeNode("div");
+  renderHeld(root, items, actions);
+  return { root, buttons: root.all().filter((n) => n.tagName === "button") };
+}
+
+test("보류 표: 줄마다 다시 시도 버튼이 있고, 누르면 그 줄과 버튼을 넘긴다", () => {
+  const seen = [];
+  const { root, buttons } = drawHeld(GROUPS, { canRetry: true, onRetry: (group, button) => seen.push([group, button]) });
+  assert.equal(buttons.length, 2);
+  assert.deepEqual(
+    buttons.map((b) => [b.textContent, b.attrs.type, b.attrs["data-conversation"]]),
+    GROUPS.map((g) => ["다시 시도", "button", g.conversation_id]),
+  );
+  const rows = root.all().filter((n) => n.tagName === "tr");
+  assert.equal(rows.length, 3); // 머리 1 + 줄 2
+  assert.match(rows[1].text(), /u_8f2…a1.*11111111….*2건.*3번/);
+  // 대화방 id 전체는 화면 글자로 나오지 않는다 (요청에만 싣는다)
+  assert.doesNotMatch(root.text(), /11111111-2222/);
+
+  buttons[1].listeners.click[0]();
+  assert.deepEqual(seen, [[GROUPS[1], buttons[1]]]);
+});
+
+test("보류 표: 수집이 꺼져 있거나 처리기가 없으면 버튼이 없고, 비면 안내만 낸다", () => {
+  const onRetry = () => assert.fail("부르면 안 된다");
+  const off = drawHeld(GROUPS, { canRetry: false, onRetry });
+  assert.equal(off.buttons.length, 0);
+  assert.match(off.root.text(), /수집이 꺼져 있어 다시 시도할 수 없습니다/);
+  assert.equal(drawHeld(GROUPS, { canRetry: true }).buttons.length, 0);
+  assert.equal(drawHeld(GROUPS).buttons.length, 0);
+
+  const none = drawHeld([], { canRetry: true, onRetry });
+  assert.equal(none.buttons.length, 0);
+  assert.equal(none.root.text(), "보류된 메시지가 없습니다.");
+
+  // 건수가 0이거나 대화방 id가 없는 줄에는 버튼을 내지 않는다
+  const odd = drawHeld([{ ...GROUPS[0], messages: 0 }, { ...GROUPS[1], conversation_id: null }], { canRetry: true, onRetry });
+  assert.equal(odd.buttons.length, 0);
 });
