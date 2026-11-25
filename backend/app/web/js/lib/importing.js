@@ -581,3 +581,25 @@ export function existingSpeakerNotes(speakers, roles, stored) {
     fresh: fresh.length ? `이 대화방에 없던 사람: ${fresh.join(", ")}. 이 사람의 메시지가 새로 들어와요.` : null,
   };
 }
+
+const IGNORED_ROLES_SHOWN = 5; // 결과 화면의 한 줄에 이름을 이만큼만 적는다
+
+/**
+ * 가져오기 결과: 서버가 따르지 않은 화자 지정(응답의 ignored_speaker_roles)을 알리는 한 줄. 없으면 null.
+ * 미리보기에서 이미 알렸더라도(existingSpeakerNotes) 결과에 남긴다 — 저장된 화자를 못 읽었으면 그때는 몰랐다.
+ * @param {{ignored_speaker_roles?: Array<{name: string, requested_role: string, stored_role: string, messages: number}>}} job
+ */
+export function ignoredRolesLine(job) {
+  const ignored = (Array.isArray(job?.ignored_speaker_roles) ? job.ignored_speaker_roles : []).filter(
+    (ig) => ig && ig.name && ROLE_WORD[ig.requested_role] && ROLE_WORD[ig.stored_role],
+  );
+  if (!ignored.length) return null;
+  const shown = ignored
+    .slice(0, IGNORED_ROLES_SHOWN)
+    .map(
+      (ig) =>
+        `${ig.name}('${ROLE_WORD[ig.requested_role]}'로 골랐지만 '${ROLE_WORD[ig.stored_role]}'로 저장된 메시지 ${formatNumber(ig.messages ?? 0)}개)`,
+    );
+  const rest = ignored.length - shown.length;
+  return `이미 가져온 메시지의 화자는 바뀌지 않았어요: ${shown.join(", ")}${rest > 0 ? ` 외 ${formatNumber(rest)}건` : ""}. 바꾸거나 빼려면 상대 화면의 과거 대화에서 '화자별로 고치기'를 써 주세요.`;
+}

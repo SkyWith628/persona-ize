@@ -374,3 +374,122 @@ def test_failed_reindex_can_be_retried_with_the_same_upload(
     retried = client.post(url, json=body, headers=user_a).json()
     assert (retried["id"], retried["status"], retried["episodes"]) == (failed["id"], "completed", 1)
     assert (retried["imported"], retried["duplicates"]) == (0, 2)  # 메시지는 이미 들어가 있었다
+
+
+# ---------- 다시 올릴 때 따르지 않은 화자 지정 (`ignored_speaker_roles`) ----------
+
+MORE_PC = PC_SNIPPET + "[박지현] [오전 9:40] 화요일은 어려워요?\n[이서연] [오전 9:41] 저도 궁금해요.\n"
+
+
+def test_reupload_with_the_same_roles_reports_nothing_ignored(
+    client: TestClient, user_a: dict[str, str]
+) -> None:
+    _, conv_id = _conversation(client, user_a)
+    url = f"/v1/conversations/{conv_id}/imports/raw"
+    first = client.post(url, json={"text": PC_SNIPPET, "speaker_map": PC_MAP}, headers=user_a).json()
+    assert (first["imported"], first["ignored_speaker_roles"]) == (2, [])
+    again = client.post(url, json={"text": PC_SNIPPET, "speaker_map": PC_MAP}, headers=user_a).json()
+    assert (again["id"], again["imported"], again["ignored_speaker_roles"]) == (first["id"], 2, [])
+
+
+def test_reupload_with_other_roles_lists_what_was_ignored_and_changes_nothing(
+    client: TestClient, user_a: dict[str, str]
+) -> None:
+    _, conv_id = _conversation(client, user_a)
+    url = f"/v1/conversations/{conv_id}/imports/raw"
+    first = client.post(url, json={"text": PC_SNIPPET, "speaker_map": PC_MAP}, headers=user_a).json()
+    before = client.get(f"/v1/conversations/{conv_id}/messages", headers=user_a).json()
+
+    # 같은 파일, 나와 상대를 거꾸로: 역할이 해시에 들어가므로 새 작업이지만 메시지는 전부 건너뛴다
+    swapped = client.post(
+        url, json={"text": PC_SNIPPET, "speaker_map": {"김민수": "contact", "박지현": "me"}}, headers=user_a
+    )
+    assert swapped.status_code == 202, swapped.text
+    body = swapped.json()
+    assert body["id"] != first["id"] and (body["imported"], body["duplicates"]) == (0, 2)
+    assert body["ignored_speaker_roles"] == [
+        {"name": "김민수", "requested_role": "contact", "stored_role": "me", "messages": 1},
+        {"name": "박지현", "requested_role": "me", "stored_role": "contact", "messages": 1},
+    ]
+    assert client.get(f"/v1/conversations/{conv_id}/messages", headers=user_a).json() == before
+    # 저장하지 않는 값이다 — 작업을 다시 읽으면 빈 목록
+    assert client.get(f"/v1/imports/{body['id']}", headers=user_a).json()["ignored_speaker_roles"] == []
+
+    # 제외(skip)로 골라도 이미 가져온 메시지는 남는다 — 그것도 알린다
+    skipped = client.post(
+        url, json={"text": PC_SNIPPET, "speaker_map": {"김민수": "me", "박지현": "skip"}}, headers=user_a
+    ).json()
+    assert skipped["ignored_speaker_roles"] == [
+        {"name": "박지현", "requested_role": "skip", "stored_role": "contact", "messages": 1}
+    ]
+    assert len(client.get(f"/v1/conversations/{conv_id}/messages", headers=user_a).json()) == 2
+
+
+def test_new_speakers_and_new_messages_are_not_reported_as_ignored(
+    client: TestClient, user_a: dict[str, str]
+) -> None:
+    _, conv_id = _conversation(client, user_a)
+    url = f"/v1/conversations/{conv_id}/imports/raw"
+    client.post(url, json={"text": PC_SNIPPET, "speaker_map": PC_MAP}, headers=user_a)
+
+    # 이어진 파일: 박지현을 '나'로 달리 지정했고 새 화자(이서연)가 섞였다. 박지현의 새 메시지는 지정대로
+    # 들어가므로 세지 않고, 이미 있던 한 건만 알린다. 새 화자는 따르지 않은 것이 없다.
+    more = client.post(
+        url,
+        json={"text": MORE_PC, "speaker_map": {"김민수": "me", "박지현": "me", "이서연": "contact"}},
+        headers=user_a,
+    ).json()
+    assert (more["imported"], more["duplicates"]) == (2, 2)
+    assert more["ignored_speaker_roles"] == [
+        {"name": "박지현", "requested_role": "me", "stored_role": "contact", "messages": 1}
+    ]
+    speakers = client.get(f"/v1/conversations/{conv_id}/speakers", headers=user_a).json()
+    assert {(sp["name"], sp["speaker_role"], sp["messages"]) for sp in speakers} == {
+        ("김민수", "me", 1),
+        ("박지현", "contact", 1),
+        ("박지현", "me", 1),
+        ("이서연", "contact", 1),
+    }
+    # 한 이름에 두 역할이 저장된 뒤에는 저장된 역할마다 한 줄
+    mixed = client.post(
+        url,
+        json={"text": MORE_PC, "speaker_map": {"김민수": "me", "박지현": "skip", "이서연": "contact"}},
+        headers=user_a,
+    ).json()
+    assert mixed["ignored_speaker_roles"] == [
+        {"name": "박지현", "requested_role": "skip", "stored_role": "contact", "messages": 1},
+        {"name": "박지현", "requested_role": "skip", "stored_role": "me", "messages": 1},
+    ]
+
+
+def test_messages_stored_without_a_speaker_name_are_left_out_of_the_report(
+    client: TestClient, user_a: dict[str, str]
+) -> None:
+    """0011 이전처럼 이름 없이(역할 낱말로) 들어온 메시지는 누구 것인지 몰라 세지 않는다."""
+    _, conv_id = _conversation(client, user_a)
+    sample = client.post("/v1/imports/parse", json={"text": PC_SNIPPET}, headers=user_a).json()["sample"]
+    nameless = [
+        {"id": m["id"], "speaker": PC_MAP[m["speaker"]], "sent_at": m["sent_at"], "text": m["text"]}
+        for m in sample
+    ]
+    saved = client.post(
+        f"/v1/conversations/{conv_id}/imports", json={"messages": nameless}, headers=user_a
+    ).json()
+    assert saved["imported"] == 2 and saved["ignored_speaker_roles"] == []
+
+    def names() -> list[str | None]:
+        msgs = client.get(f"/v1/conversations/{conv_id}/messages", headers=user_a).json()
+        return [m["speaker_name"] for m in msgs]
+
+    assert names() == [None, None]
+    url = f"/v1/conversations/{conv_id}/imports/raw"
+    flipped = {"김민수": "contact", "박지현": "me"}
+    first = client.post(url, json={"text": PC_SNIPPET, "speaker_map": flipped}, headers=user_a).json()
+    assert (first["imported"], first["duplicates"], first["ignored_speaker_roles"]) == (0, 2, [])
+    # 그 업로드가 이름을 채웠으므로(역할은 그대로) 다음부터는 알린다
+    assert names() == ["박지현", "김민수"]
+    second = client.post(url, json={"text": PC_SNIPPET, "speaker_map": flipped}, headers=user_a).json()
+    assert [(ig["name"], ig["stored_role"]) for ig in second["ignored_speaker_roles"]] == [
+        ("김민수", "me"),
+        ("박지현", "contact"),
+    ]
