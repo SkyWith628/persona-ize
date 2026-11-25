@@ -13,7 +13,7 @@ import {
   encodingLabel,
   existingSpeakerNotes,
   graphPhaseView,
-  ignoredRolesLine,
+  importResultView,
   isGroupRoom,
   keepRecentFor,
   keptMessages,
@@ -1023,8 +1023,9 @@ export function mountImport(root, ctx) {
 
   function mountProgress(job) {
     const c = contact();
-    const nothingNew = (job.imported ?? 0) === 0;
-    const ignoredRoles = ignoredRolesLine(job);
+    // 제목과 안내(많아야 하나, 해법도 하나)는 importResultView가 정한다 — 여기서는 그리기만 한다
+    const result = importResultView(job);
+    const nothingNew = result.nothingNew;
     const styleBox = h("div", { class: "phase" });
     const graphBox = h("div", { class: "phase" });
     // 새로 저장한 메시지가 있을 때만 말투를 제안한다
@@ -1078,16 +1079,15 @@ export function mountImport(root, ctx) {
       h(
         "section",
         { class: "card section" },
-        stepTitle(nothingNew ? "새로 저장한 메시지가 없어요" : "가져왔어요"),
-        nothingNew
-          ? note([
-              "이미 가져온 대화와 같은 내용이라 건너뛰었어요. 전에 저장한 메시지는 그대로 있어요. 나와 상대를 잘못 정해서 다시 올린 거라면, ",
-              c ? h("a", { href: buildHash("contact", { id: c.id }) }, "상대 화면") : "상대 화면",
-              "에서 그 대화방을 지운 뒤 다시 가져와 주세요.",
-            ])
+        stepTitle(result.title),
+        result.note
+          ? note(
+              result.note.parts.map((part) =>
+                typeof part === "string" ? part : c ? h("a", { href: buildHash("contact", { id: c.id }) }, part.text) : part.text,
+              ),
+              result.note.tone,
+            )
           : null,
-        // 서버가 따르지 않은 화자 지정(이미 저장된 메시지는 역할이 바뀌지 않는다) — 응답에만 온다
-        ignoredRoles ? note(ignoredRoles, "warn") : null,
         styleBox,
         graphBox,
         register?.box,

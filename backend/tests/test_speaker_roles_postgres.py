@@ -135,6 +135,8 @@ async def test_service_fixes_roles_episodes_and_graph_on_postgres(repos) -> None
     stats = await convs.conversation_stats(user, conv.id)
     assert (stats.messages, stats.my_messages, stats.episodes, stats.graph_ingested) == (4, 2, 2, 4)
     assert (await convs.latest_job(user, conv.id)).id == r.job.id
+    stored = await convs.get_job(user, r.job.id)  # 저장된 행도 역할 고치기로 읽힌다 (건수 둘 다 0)
+    assert (stored.imported, stored.duplicates, stored.kind) == (0, 0, "speaker_roles")
 
     again = await svc.set_speaker_role(user, conv.id, m2.id, "me")
     assert (again.changed, again.job) == (False, None)

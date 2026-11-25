@@ -111,6 +111,18 @@ async def test_swaps_roles_rebuilds_episodes_and_is_idempotent() -> None:
     assert (again.changed, again.messages, again.job, again.me_name) == (False, 0, None, "김민수")
     assert await _roles(conversations, conv) == {"m1": "contact", "m2": "me", "m3": "contact", "m4": "me"}
     assert (await conversations.latest_job("u", conv.id)).id == r.job.id
+    # 작업 종류: 역할 고치기 작업은 넣은 메시지가 없어 건수가 둘 다 0이고, 가져오기는 그렇지 않다
+    assert (first.kind, r.job.kind) == ("import", "speaker_roles")
+    assert (r.job.imported, r.job.duplicates) == (0, 0)
+    # 같은 메시지를 다른 화자 지정으로 다시 올린 것(전부 중복)은 가져오기다 — imported=0만으로 가르면 안 된다
+    flipped = ImportPayload(
+        messages=[
+            m.model_copy(update={"speaker": "contact" if m.speaker == "me" else "me"}) for m in WRONG.messages
+        ]
+    )
+    reup = await svc.import_messages("u", conv.id, flipped)
+    assert reup.id not in (first.id, r.job.id)
+    assert (reup.imported, reup.duplicates, reup.kind) == (0, 4, "import")
     # 상대의 메시지를 기준으로 말해도 같다
     m1 = await _anchor(conversations, conv, "m1")
     assert (await svc.set_speaker_role("u", conv.id, m1.id, "contact")).changed is False

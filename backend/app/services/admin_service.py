@@ -319,6 +319,7 @@ class JobOut(BaseModel):
     id: str
     user_id: str
     status: str
+    kind: str = Field(description="import(가져오기) | speaker_roles(화자 역할 고치기 — 넣은 메시지 없음)")
     imported: int
     episodes: int
     error_code: str | None
@@ -553,6 +554,7 @@ class AdminService:
                 id=r.id,
                 user_id=short_user_id(r.user_id),
                 status=safe_code(r.status),
+                kind=safe_code(r.kind),
                 imported=r.imported,
                 episodes=r.episodes,
                 error_code=safe_code(r.error_code) if r.error_code else None,

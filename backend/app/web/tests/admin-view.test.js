@@ -35,7 +35,7 @@ class FakeNode {
 }
 
 globalThis.document = { createElement: (tagName) => new FakeNode(tagName) };
-const { renderHeld, renderIngest } = await import("../js/admin/view.js");
+const { renderHeld, renderIngest, renderJobs } = await import("../js/admin/view.js");
 
 function overview(graph) {
   return {
@@ -144,4 +144,30 @@ test("보류 표: 수집이 꺼져 있거나 처리기가 없으면 버튼이 �
   // 건수가 0이거나 대화방 id가 없는 줄에는 버튼을 내지 않는다
   const odd = drawHeld([{ ...GROUPS[0], messages: 0 }, { ...GROUPS[1], conversation_id: null }], { canRetry: true, onRetry });
   assert.equal(odd.buttons.length, 0);
+});
+
+test("작업 표: 역할 고치기는 종류로 가르고 메시지 수를 적지 않는다 (다시 올린 0건은 가져오기)", () => {
+  const job = (over) => ({
+    id: "j",
+    user_id: "u_8f2…a1",
+    status: "completed",
+    kind: "import",
+    imported: 3,
+    episodes: 2,
+    error_code: null,
+    graph_status: "skipped",
+    graph_episodes: 0,
+    graph_error: null,
+    created_at: "2026-11-25T01:00:00Z",
+    ...over,
+  });
+  const root = new FakeNode("div");
+  renderJobs(root, [job({}), job({ kind: "speaker_roles", imported: 0 }), job({ imported: 0 })]);
+  const rows = root.all().filter((n) => n.tagName === "tr");
+  const cells = (row) => row.children.map((td) => td.text());
+  const [, , kind, , messages] = cells(rows[0]);
+  assert.deepEqual([kind, messages], ["종류", "메시지"]);
+  assert.deepEqual([cells(rows[1])[2], cells(rows[1])[4]], ["가져오기", "3건"]);
+  assert.deepEqual([cells(rows[2])[2], cells(rows[2])[4]], ["역할 고치기", "–"]);
+  assert.deepEqual([cells(rows[3])[2], cells(rows[3])[4]], ["가져오기", "0건"]);
 });

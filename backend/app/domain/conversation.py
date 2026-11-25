@@ -170,6 +170,20 @@ class IgnoredSpeakerRole(BaseModel):
     messages: int = Field(description="이 지정을 따르지 않고 그대로 둔 저장된 메시지 수")
 
 
+ImportJobKind = Literal["import", "speaker_roles"]
+
+
+def import_job_kind(imported: int, duplicates: int) -> ImportJobKind:
+    """`import_jobs` 행이 가져오기인지 화자 역할 고치기(묶음 다시 만들기)인지.
+
+    열이 따로 없어 건수로 가른다: 가져오기는 메시지가 1건 이상이어야 저장되므로(빈 가져오기는 422)
+    `imported + duplicates >= 1`이고, 역할 고치기 작업은 메시지를 넣지 않아 둘 다 0이다
+    (`ImportService._start_role_reindex`). 전부 중복인 다시 올리기(`imported=0`, `duplicates=N`)는
+    가져오기다. 가져오기 건수를 세거나 보여 주는 쪽은 `imported = 0`이 아니라 이 함수를 쓴다.
+    """
+    return "speaker_roles" if imported == 0 and duplicates == 0 else "import"
+
+
 class ImportJob(BaseModel):
     id: UUID
     user_id: str
@@ -191,6 +205,10 @@ class ImportJob(BaseModel):
         default_factory=list,
         description="원문 가져오기 응답에만 싣는다(저장하지 않는다): 저장된 역할과 달라 따르지 않은 지정",
     )
+
+    @property
+    def kind(self) -> ImportJobKind:
+        return import_job_kind(self.imported, self.duplicates)
 
 
 class SpeakerCount(BaseModel):

@@ -5,6 +5,7 @@ import {
   applyKnownRoles,
   existingSpeakerNotes,
   ignoredRolesLine,
+  importResultView,
   knownRoles,
   MAX_IMPORT_CHARS,
   chatTypeLabel,
@@ -595,4 +596,58 @@ test("가져오기 결과: 서버가 따르지 않은 화자 지정을 한 줄�
   const many = Array.from({ length: 7 }, (_, i) => ({ name: `화자${i}`, requested_role: "me", stored_role: "contact", messages: 1 }));
   assert.match(ignoredRolesLine({ ignored_speaker_roles: many }), /화자4\([^)]*\) 외 2건\. /);
   assert.doesNotMatch(ignoredRolesLine({ ignored_speaker_roles: many }), /화자5/);
+});
+
+// 결과 화면 안내를 한 줄 글로(링크 자리는 글자만) — 문구 전체를 견주기 쉽게
+const noteText = (view) => view.note.parts.map((part) => (typeof part === "string" ? part : part.text)).join("");
+const noteLinks = (view) => view.note.parts.filter((part) => typeof part !== "string");
+const IGNORED = [{ name: "박지현", requested_role: "me", stored_role: "contact", messages: 12 }];
+
+test("가져오기 결과: 새 메시지 0건이고 따르지 않은 화자 지정이 있으면 화자별로 고치기만 권한다", () => {
+  const view = importResultView({ imported: 0, ignored_speaker_roles: IGNORED });
+  assert.equal(view.nothingNew, true);
+  assert.equal(view.title, "새로 저장한 메시지가 없어요");
+  assert.equal(view.note.kind, "roles-only");
+  assert.equal(view.note.tone, "warn");
+  assert.equal(
+    noteText(view),
+    "이미 가져온 대화와 같은 내용이라 건너뛰었어요. 전에 저장한 메시지는 그대로 있고, 화자도 바뀌지 않았어요: 박지현('나'로 골랐지만 '상대'로 저장된 메시지 12개). 바꾸거나 빼려면 상대 화면의 과거 대화에서 '화자별로 고치기'를 써 주세요. 대화방을 지우지 않아도 돼요.",
+  );
+  // 삭제를 권하는 문장은 없다
+  assert.doesNotMatch(noteText(view), /지운 뒤|다시 가져와/);
+  assert.deepEqual(noteLinks(view), [{ link: "contact", text: "상대 화면" }]);
+});
+
+test("가져오기 결과: 새 메시지 0건이고 따르지 않은 지정이 없으면 기존 안내 그대로다", () => {
+  const expected =
+    "이미 가져온 대화와 같은 내용이라 건너뛰었어요. 전에 저장한 메시지는 그대로 있어요. 나와 상대를 잘못 정해서 다시 올린 거라면, 상대 화면에서 그 대화방을 지운 뒤 다시 가져와 주세요.";
+  // 필드가 없는 예전 응답, 빈 목록, 모양이 어긋난 줄만 있는 응답 모두 같다
+  for (const job of [{ imported: 0 }, { imported: 0, ignored_speaker_roles: [] }, { ignored_speaker_roles: [{ name: "" }] }, {}]) {
+    const view = importResultView(job);
+    assert.equal(view.title, "새로 저장한 메시지가 없어요");
+    assert.equal(view.note.kind, "skipped");
+    assert.equal(view.note.tone, "");
+    assert.equal(noteText(view), expected);
+    assert.doesNotMatch(noteText(view), /화자별로 고치기/);
+    assert.deepEqual(noteLinks(view), [{ link: "contact", text: "상대 화면" }]);
+  }
+});
+
+test("가져오기 결과: 새 메시지가 있고 따르지 않은 지정이 있으면 경고 한 줄만 보인다", () => {
+  const job = { imported: 5, ignored_speaker_roles: IGNORED };
+  const view = importResultView(job);
+  assert.equal(view.nothingNew, false);
+  assert.equal(view.title, "가져왔어요");
+  assert.equal(view.note.kind, "roles");
+  assert.equal(view.note.tone, "warn");
+  assert.equal(noteText(view), ignoredRolesLine(job)); // 전과 같은 문구(상대 화면만 링크가 됐다)
+  assert.doesNotMatch(noteText(view), /지운 뒤|지우지/);
+  assert.deepEqual(noteLinks(view), [{ link: "contact", text: "상대 화면" }]);
+});
+
+test("가져오기 결과: 새 메시지가 있고 따르지 않은 지정이 없으면 안내가 없다", () => {
+  // 필드가 없는 예전 응답도 같다
+  for (const job of [{ imported: 3 }, { imported: 3, ignored_speaker_roles: [] }]) {
+    assert.deepEqual(importResultView(job), { nothingNew: false, title: "가져왔어요", note: null });
+  }
 });

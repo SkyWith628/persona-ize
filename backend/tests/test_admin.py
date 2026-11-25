@@ -51,7 +51,7 @@ PASSWORD = "long-enough-pw"
 # 목록 응답의 필드 (계약 §4.6 + 작업의 error_code). 이 밖의 열이 섞여 나오면 실패한다.
 USER_FIELDS = "user_id username created_at consent_version contacts messages rewrites last_rewrite_at".split()
 JOB_FIELDS = (
-    "id user_id status imported episodes error_code graph_status graph_episodes graph_error created_at"
+    "id user_id status kind imported episodes error_code graph_status graph_episodes graph_error created_at"
 ).split()
 FEEDBACK_FIELDS = "user_id relationship_type channel condition reason_code created_at".split()
 ACCESS_FIELDS = "admin_username action detail created_at".split()
@@ -490,6 +490,8 @@ async def _add_job(
     graph_error: str | None = None,
     status: str = "completed",
     error_code: str | None = None,
+    imported: int = 6,
+    duplicates: int = 0,
 ) -> UUID:
     job_id = uuid4()
     await conn.execute(
@@ -497,7 +499,7 @@ async def _add_job(
         INSERT INTO import_jobs
             (id, user_id, conversation_id, source_hash, status, imported, duplicates, episodes,
              error_code, error_message, graph_status, graph_episodes, graph_error, created_at)
-        VALUES ($1, $2, $3, $4, $5, 6, 0, 2, $6, $7, $8, 1, $9, $10)
+        VALUES ($1, $2, $3, $4, $5, $11, $12, 2, $6, $7, $8, 1, $9, $10)
         """,
         job_id,
         user_id,
@@ -509,6 +511,8 @@ async def _add_job(
         graph_status,
         graph_error,
         at,
+        imported,
+        duplicates,
     )
     return job_id
 
@@ -740,9 +744,18 @@ def test_overview_moves_with_new_activity_and_lists_hide_private_text(env: Admin
                 status="failed",
                 error_code="reindex_failed",
             )
+            # 화자 역할 고치기가 남기는 작업(넣은 메시지 없음, 그래프 다시 넣기 대기)과
+            # 같은 파일을 다시 올린 가져오기(전부 중복)
+            made["role_fix"] = await _add_job(
+                conn, user["user_id"], conv_id, now, graph_status="pending", imported=0, duplicates=0
+            )
+            made["reupload"] = await _add_job(
+                conn, user["user_id"], conv_id, now, graph_status="skipped", imported=0, duplicates=3
+            )
         finally:
             await conn.close()
 
+    made: dict[str, UUID] = {}
     _run(_direct())
 
     after = env.overview(1)
@@ -802,6 +815,8 @@ def test_overview_moves_with_new_activity_and_lists_hide_private_text(env: Admin
     assert after["graph"]["enabled"] is False
     assert delta("graph", "pending_messages") == 3  # 가져온 메시지 3건은 그래프에 들어가지 않았다
     assert delta("graph", "jobs", "failed") == 1
+    # 역할 고치기 작업도 그래프를 다시 넣으므로 그래프 작업 수에는 그대로 센다
+    assert delta("graph", "jobs", "pending") == 1
     assert delta("limits", "today_rewrites") == 4
     assert delta("limits", "today_tokens") == tok_in + tok_out
     assert after["limits"]["daily_rewrite_limit"] == 200
@@ -843,6 +858,16 @@ def test_overview_moves_with_new_activity_and_lists_hide_private_text(env: Admin
     )
     assert failed["graph_error"] == "RuntimeError"  # 오류 종류만
     assert (failed["status"], failed["error_code"]) == ("failed", "reindex_failed")
+    # 작업 종류: 역할 고치기만 speaker_roles다. 메시지 0건이어도 중복이 있으면(다시 올림) 가져오기다
+    by_id = {j["id"]: j for j in jobs.json()}
+    assert (imported["kind"], failed["kind"]) == ("import", "import")
+    role_fix, reupload = by_id[str(made["role_fix"])], by_id[str(made["reupload"])]
+    assert (role_fix["kind"], role_fix["imported"], role_fix["graph_status"]) == (
+        "speaker_roles",
+        0,
+        "pending",
+    )
+    assert (reupload["kind"], reupload["imported"]) == ("import", 0)
     created = [datetime.fromisoformat(j["created_at"]) for j in jobs.json()]
     assert created == sorted(created, reverse=True)  # 최근 것이 먼저
 

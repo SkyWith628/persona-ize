@@ -130,7 +130,7 @@ settings: `formality·friendliness·directness`(1~5), `length`(shorter/same/long
 |---|---|
 | `GET /v1/admin/overview?days=1\|7\|30` | 기간 요약: `users`, `rewrites`(성공률, `by_condition`·`by_channel`·`by_day`), `latency_ms`(p50·p95), `fallback_reasons`, `feedback`, `tokens`, `graph`, `limits`, `health` |
 | `GET /v1/admin/users?limit=50&offset=0` | `{total, items[]}` 최근 가입 순 |
-| `GET /v1/admin/jobs?limit=50` | 최근 가져오기 작업. `graph_error`는 오류 종류만 |
+| `GET /v1/admin/jobs?limit=50` | 최근 가져오기 작업. `kind`는 `import` 또는 `speaker_roles`(화자 역할 고치기 — 넣은 메시지 없음). `graph_error`는 오류 종류만 |
 | `GET /v1/admin/feedback?limit=50` | 최근 거절 피드백 (선택형 사유만) |
 | `GET /v1/admin/access-log?limit=50` | 관리자 접근 기록 |
 | `GET /v1/admin/graph/held?limit=50` | 보류된 메시지를 사용자·대화방별로 묶은 목록(최근에 보류된 방부터): `[{user_id(줄인 id), conversation_id, messages, attempts(가장 큰 실패 횟수), oldest_held_at, latest_held_at}]`. 본문·화자 이름·방 제목은 없다. `conversation_id`를 `retry-held`의 범위로 쓴다 (2026-11-25) |
