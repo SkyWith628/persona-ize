@@ -1,6 +1,7 @@
 # Persona_ize 설계 보완 v3 — 그래프 실험(D) 중심
 
 > 설계도: [architecture_v2.drawio](architecture_v2.drawio)
+> 스택 구조 그림(2026-11-25, `main` 기준): [한글](images/architecture-stack-ko.png) · [영문](images/architecture-stack-en.png) · 어두운 배경은 파일 이름에 `-dark`. 고칠 때는 같은 폴더의 `architecture-stack-*.html`을 고쳐 다시 캡처한다
 > **기준 문서는 팀 설계다.** [project-design.md](projects/persona-ize/docs/project-design.md) · [literature-review.md](projects/persona-ize/docs/literature-review.md)
 > 이 문서는 그 위에 (1) 전체 흐름을 한 장으로 정리하고 (2) 후속 실험 D(그래프 검색)를 논문 근거로 구체화한다. 충돌하면 팀 문서를 따른다.
 
