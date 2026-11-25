@@ -1,4 +1,6 @@
-"""시나리오 담당의 시트 CSV → `data/synthetic/*.json` (docs/dataset-guide.md 5절, data/synthetic/README.md).
+"""시나리오 담당의 시트 CSV → `data/synthetic/*.json`.
+
+기준: docs/guides/dataset-guide.md 5절, data/synthetic/README.md.
 
 CSV 열(한글·영문 둘 다 받는다, 순서 무관):
   대화방|conversation   번호|id   날짜시간|sent_at   말한 사람|speaker   내용|text

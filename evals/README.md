@@ -1,7 +1,7 @@
 # evals/ — 평가셋·루브릭·비교 실험
 
 담당: 평가·품질 팀원 (정답표·루브릭), 팀장 (실행 하니스).
-**사례를 쓰는 법(열 설명·예시·흔한 실수)은 [docs/dataset-guide.md](../docs/dataset-guide.md)** — 열 이름은 그 문서가 기준이고 코드가 그 열을 읽는다.
+**사례를 쓰는 법(열 설명·예시·흔한 실수)은 [docs/guides/dataset-guide.md](../docs/guides/dataset-guide.md)** — 열 이름은 그 문서가 기준이고 코드가 그 열을 읽는다.
 
 | 파일 | 내용 |
 |---|---|
@@ -47,7 +47,7 @@ python evals/run_eval.py --split dev --conditions A,B,C --repeat 3 --provider an
 우리 서비스는 과거 대화를 보고 "이 상대에게는 이런 말투·호칭이 맞아 보입니다"라고 **설정을 제안**합니다.
 이 제안이 맞는지 채점하려면, 사람이 먼저 "이 날짜에 이 상대에게 맞는 설정은 이것"이라고 적어 둔 답안지가
 필요합니다. 그 답안지가 `gold_personas.csv`(정답 설정 타임라인)입니다.
-배경은 `docs/graph-redesign-2026-11-16.md` 6.1절.
+배경은 `docs/design/graph-redesign-2026-11-16.md` 6.1절.
 
 ### 1단계: 정답 파일 쓰기 (평가 담당)
 
@@ -139,7 +139,7 @@ python evals/run_eval.py --conditions C --apply-suggestion matching --gold evals
 
 ## 실패 신호 열 (`run_eval.py`)
 
-결과 CSV의 `fm*` 열은 `docs/design.md` "실패 유형 점검 (MAST)" 표의 유형 번호를 따른다. 숫자와 참/거짓뿐이고 참고 신호다.
+결과 CSV의 `fm*` 열은 `docs/design/design.md` "실패 유형 점검 (MAST)" 표의 유형 번호를 따른다. 숫자와 참/거짓뿐이고 참고 신호다.
 
 | 열 | 뜻 |
 |---|---|

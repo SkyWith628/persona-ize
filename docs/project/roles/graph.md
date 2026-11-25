@@ -27,7 +27,7 @@
 ## 어떻게 하나
 
 1. **질의 쓰기**: "첨삭하려는 순간 과거의 무엇을 알아야 하나"를 한 문장으로. 예) `팀장님과 일정 조율에서 갈등이 있었던 일`. 정답은 그 사실이 들어 있는 메시지 id들(`c1:m03;c1:m04`). **여러 방·여러 날에 흩어진** 것이 `needs_graph=Y`, 인접 메시지 2개로 충분하면 `N`. 둘 다 있어야 D의 이득을 잴 수 있다.
-2. **그래프 보기**: `make up` 뒤 http://localhost:7474 (계정은 `.env`의 NEO4J_USERNAME/PASSWORD). Cypher는 [docs/api.md](../api.md) 맨 아래 — `group_id`는 사용자 id(시연 계정은 `scripts/prepare_demo.py`가 출력). 보는 순서: Entity 이름 목록 → 사람별 RELATES_TO 사실 → Episodic(원문) 시간 순.
+2. **그래프 보기**: `make up` 뒤 http://localhost:7474 (계정은 `.env`의 NEO4J_USERNAME/PASSWORD). Cypher는 [docs/guides/api.md](../../guides/api.md) 맨 아래 — `group_id`는 사용자 id(시연 계정은 `scripts/prepare_demo.py`가 출력). 보는 순서: Entity 이름 목록 → 사람별 RELATES_TO 사실 → Episodic(원문) 시간 순.
    - 점검 질문: 같은 사람이 둘로 서 있나? 바뀐 관계의 옛 사실에 `invalid_at`이 찍혔나? 사실 문장이 원문과 맞나? Event의 `event_type`·`importance`가 채워졌나(재정렬 가중치에 쓴다).
 3. **재수집**: 데이터가 바뀌면 팀장이 `scripts/prepare_demo.py --graph` 또는 `import_synthetic.py --graph`로 다시 넣는다(메시지당 10~15초, haiku 비용). 당신은 "언제, 어느 데이터셋으로" 요청하고 결과를 점검한다.
 4. **올리기**: GitHub Desktop → 브랜치 `graph/…` → PR.

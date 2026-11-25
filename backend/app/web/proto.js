@@ -10,7 +10,7 @@ const state = {
 };
 
 const REL_LABEL = { superior: "상사", colleague: "동료", subordinate: "후배", friend: "친구", family: "가족", partner: "연인", acquaintance: "지인" };
-// 시연 대본(docs/demo-script.md)의 원문. 상대 이름에 들어 있으면 초안으로 채운다.
+// 시연 대본(docs/guides/demo-script.md)의 원문. 상대 이름에 들어 있으면 초안으로 채운다.
 const DEMO_DRAFTS = {
   박지현: "이번 주 금요일은 어렵고 다음 주 수요일까지는 가능합니다.",
   이서연: "어제는 제가 좀 예민했던 것 같아요. 미안합니다.",

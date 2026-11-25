@@ -27,7 +27,7 @@ help:
 	@echo "make test      - 백엔드 테스트"
 	@echo "make lint      - ruff"
 	@echo "make import-synthetic - data/synthetic 합성 대화를 DB에 적재 (헤더 스텁 user=demo)"
-	@echo "make demo-prepare - 시연 계정(demo)·페르소나·합성 대화·그래프 준비 (docs/demo-script.md)"
+	@echo "make demo-prepare - 시연 계정(demo)·페르소나·합성 대화·그래프 준비 (docs/guides/demo-script.md)"
 	@echo "make eval      - evals/eval_cases.csv 로 A/B/C 실행, 결과 CSV 저장"
 	@echo "make blind RESULTS=evals/results/<결과>.csv - 블라인드 채점 시트 생성 (evals/blind/)"
 	@echo "make graph-dry-run - 그래프 스파이크 변환만 확인 (네트워크 없음)"
@@ -40,7 +40,7 @@ help:
 	@echo "make lint-docker   - ruff (저장소 전체)"
 	@echo "make lock          - 의존성 버전 고정 파일(backend/constraints.txt)을 운영 이미지의 설치 목록으로 갱신"
 	@echo ""
-	@echo "운영 (docs/deploy.md, 값은 .env.production — 다른 파일은 PROD_ENV=...)"
+	@echo "운영 (docs/guides/deploy.md, 값은 .env.production — 다른 파일은 PROD_ENV=...)"
 	@echo "make prod-config   - docker-compose.prod.yml + env 파일 검증 (빠진 필수 값이 있으면 실패)"
 	@echo "make prod-up       - 이미지 빌드 → 기동 → 전 서비스 healthy까지 대기 (백업·스모크까지 하려면 scripts/ops/deploy.sh)"
 	@echo "make prod-down     - 컨테이너만 내린다. 데이터(볼륨)는 남는다"
@@ -122,7 +122,7 @@ lock:
 	@mv backend/constraints.txt.new backend/constraints.txt
 	@echo "backend/constraints.txt 갱신: $$(grep -cvE '^#' backend/constraints.txt)개 패키지"
 
-# ---- 운영 (docker-compose.prod.yml). 안내는 docs/deploy.md ----
+# ---- 운영 (docker-compose.prod.yml). 안내는 docs/guides/deploy.md ----
 prod-config:
 	$(PROD_COMPOSE) config --quiet && echo "docker-compose.prod.yml 설정 OK ($(PROD_ENV))"
 

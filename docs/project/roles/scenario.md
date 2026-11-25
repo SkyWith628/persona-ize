@@ -6,7 +6,7 @@
 
 | 파일 | 내용 | 검사 |
 |---|---|---|
-| `data/synthetic/*.json` | 대화방별 메시지 (형식은 [data/synthetic/README.md](../../data/synthetic/README.md)). 시트/CSV로 쓰면 팀장이 변환 | `python scripts/validate_data_files.py` (PR 올리면 CI가 자동으로) |
+| `data/synthetic/*.json` | 대화방별 메시지 (형식은 [data/synthetic/README.md](../../../data/synthetic/README.md)). 시트/CSV로 쓰면 팀장이 변환 | `python scripts/validate_data_files.py` (PR 올리면 CI가 자동으로) |
 | `evals/characters.csv` | 등장인물 표 — 새 인물을 넣을 때 **다 같이** | 같은 스크립트 |
 | `docs/persona_attributes.md` (신규) | 페르소나 속성(격식·친근함·직접성·길이·이모지·호칭·금지 표현)의 **사람 말 설명**과 우선순위 규칙 | 팀장 검토 |
 | 화면 피드백 | http://localhost:8000 에서 써 보고 느낀 점 → GitHub Issue 또는 `docs/user-feedback.md` | — |
@@ -16,7 +16,7 @@
 | 주 | 할 일 | 완료 기준 |
 |---|---|---|
 | 11/10~15 | 합성 대화 **60줄 이상 추가**(새 대화방 c5~). 그중 **사건이 여러 방에 흩어진 장면 5개 이상**(예: 약속을 A방에서 잡고 B방에서 취소). 상대별 말투가 확 다르게 | PR 병합, 검사 통과, 그래프 담당이 "흩어진 장면" 5개를 `graph_queries.csv`에 질의로 적을 수 있음 |
-| 11/16~22 | 사례 120개 중 시나리오 쪽 몫(평가 담당과 배분): 현실적인 초안·상황 쓰기. 시연 대본 리허설 참여(`docs/demo-script.md`) | 사례 CSV 병합, 11/22 시연에서 "이런 상황 실제로 있어요"라고 말할 수 있음 |
+| 11/16~22 | 사례 120개 중 시나리오 쪽 몫(평가 담당과 배분): 현실적인 초안·상황 쓰기. 시연 대본 리허설 참여(`docs/guides/demo-script.md`) | 사례 CSV 병합, 11/22 시연에서 "이런 상황 실제로 있어요"라고 말할 수 있음 |
 | 11/23~29 | 블라인드 평가 참여(조건 모르는 상태로 "내 말투 같은가" 채점) | 평가 시트 제출 |
 | 11/30~12/6 | **사용자 테스트 5명 이상** 모집·진행(지인에게 화면 보여 주고 과제 3개) → 관찰 기록 | `docs/user-feedback.md`에 5명분 기록 |
 | 12/7~13 | 와이어프레임 반영 요청 정리, 최종 사례 보강 | 팀장에게 우선순위 목록 전달 |

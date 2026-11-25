@@ -2,9 +2,9 @@
 
 2026-11-25 · 설계입니다. 아직 학습시킨 것도, 데이터를 만든 것도 없습니다. [학습 모델 설계안](ml-design-2026-11-24.md)의 과제 1 가운데 "의미 보존" 판정 하나를 실제로 만들 수 있는 수준까지 풀어 쓴 것입니다. 그 문서와 어긋나는 데가 있으면 아래 "설계안에서 바꾸자는 것"에 적어 둔 세 가지뿐이고, 나머지는 그 문서를 따릅니다.
 
-![의미 보존 판정 모델 설계도](images/ml-judge-stack-ko.png)
+![의미 보존 판정 모델 설계도](../images/ml-judge-stack-ko.png)
 
-그림 원본은 [images/ml-judge-stack-ko.html](images/ml-judge-stack-ko.html)입니다. 어두운 배경 판은 `images/ml-judge-stack-ko-dark.png`입니다.
+그림 원본은 [images/ml-judge-stack-ko.html](../images/ml-judge-stack-ko.html)입니다. 어두운 배경 판은 `images/ml-judge-stack-ko-dark.png`입니다.
 
 이 문서의 숫자 가운데 GPU 메모리, 학습 시간, 판정 시간은 전부 짐작입니다. 재 본 것은 "확인한 것" 절에 따로 적었습니다.
 

@@ -1,7 +1,7 @@
 # Persona_ize
 
 상대·상황에 맞는 **사용자 본인의 말투**로 메시지를 첨삭하되, **원문의 사실과 의도를 보존**하는 서비스.
-공모전(2026-12) + 포트폴리오. 설계: [docs/project-design.md](docs/project-design.md) · 그래프 실험: [docs/design.md](docs/design.md) · 결정: [docs/decisions.md](docs/decisions.md) · API: [docs/api.md](docs/api.md) · **배포: [docs/deploy.md](docs/deploy.md)**
+공모전(2026-12) + 포트폴리오. 설계: [docs/design/project-design.md](docs/design/project-design.md) · 그래프 실험: [docs/design/design.md](docs/design/design.md) · 결정: [docs/project/decisions.md](docs/project/decisions.md) · API: [docs/guides/api.md](docs/guides/api.md) · **배포: [docs/guides/deploy.md](docs/guides/deploy.md)**
 
 ```
 상대 선택 + 초안 + 상황
@@ -25,7 +25,7 @@ make test                        # 백엔드 테스트 (Postgres 없으면 통�
 make dev                         # 화면 http://localhost:8000 · Swagger /docs
 ```
 
-인메모리로만 빠르게 보려면 `.env`의 `DATABASE_URL`을 비운다 (C/D 검색은 가져온 대화를 메모리에 둔다). API 상세: [docs/api.md](docs/api.md).
+인메모리로만 빠르게 보려면 `.env`의 `DATABASE_URL`을 비운다 (C/D 검색은 가져온 대화를 메모리에 둔다). API 상세: [docs/guides/api.md](docs/guides/api.md).
 
 실제 Claude를 쓰려면 `.env`에 `LLM_PROVIDER=anthropic`, `ANTHROPIC_API_KEY`, `LLM_MODEL`을 채운다. Console에서 사용량 한도를 먼저 건다.
 
@@ -33,7 +33,7 @@ Docker로 전체(PostgreSQL+pgvector, Neo4j, 백엔드): `make up-all` → 화�
 호스트 파이썬을 못 쓰는 PC는 테스트·lint도 컨테이너로: `make test-docker` · `make lint-docker`.
 
 ### 배포
-리눅스 VM 한 대에 Docker Compose로 올린다(Caddy 자동 HTTPS → 백엔드 → PostgreSQL·Neo4j, 주기 백업 포함). 순서와 점검표는 [docs/deploy.md](docs/deploy.md).
+리눅스 VM 한 대에 Docker Compose로 올린다(Caddy 자동 HTTPS → 백엔드 → PostgreSQL·Neo4j, 주기 백업 포함). 순서와 점검표는 [docs/guides/deploy.md](docs/guides/deploy.md).
 ```bash
 cp .env.production.example .env.production   # 도메인·비밀번호·초대 코드·관리자 아이디·API 키·비용 상한을 채운다
 scripts/ops/deploy.sh                        # 백업 → 이미지 빌드 → 기동 → 스모크 테스트
@@ -63,10 +63,10 @@ curl -s -X POST localhost:8000/v1/rewrites -H "X-User-Id: me" -H "Idempotency-Ke
 | `graph/` | 지식그래프 | 스키마, 호칭 병합·질의 정답, Graphiti 스파이크 |
 | `docs/` | 전원 | 설계·결정·일정 |
 | `backend/app/web/` | 팀장 | PC 웹 앱(빌드 없는 ES 모듈, 서버 `/`에서 서빙)·운영 대시보드(`/admin`)·시연 프로토타입(`/static/proto.html`). `apps/web/`(React)는 보류 |
-| `apps/ios/` | 팀장 | 아이폰 앱(SwiftUI)·보조 키보드 확장. 설치는 `apps/ios/README.md`, 화면 설계는 `docs/iphone-mobile.md` |
+| `apps/ios/` | 팀장 | 아이폰 앱(SwiftUI)·보조 키보드 확장. 설치는 `apps/ios/README.md`, 화면 설계는 `docs/design/iphone-mobile.md` |
 | `docker/`, `scripts/ops/` | 팀장 | 운영 구성(Caddy·백업)과 배포·복원 스크립트 |
 
-협업 규칙(GitHub Desktop, PR, 폴더 소유): [CONTRIBUTING.md](CONTRIBUTING.md) · 역할·일정: [docs/team-roles-and-schedule.md](docs/team-roles-and-schedule.md) · **역할별 플레이북**: [시나리오](docs/roles/scenario.md) · [평가·품질](docs/roles/evaluation.md) · [지식그래프](docs/roles/graph.md) · **평가 사례·합성 대화 쓰는 법: [docs/dataset-guide.md](docs/dataset-guide.md)**
+협업 규칙(GitHub Desktop, PR, 폴더 소유): [CONTRIBUTING.md](CONTRIBUTING.md) · 역할·일정: [docs/project/team-roles-and-schedule.md](docs/project/team-roles-and-schedule.md) · **역할별 플레이북**: [시나리오](docs/project/roles/scenario.md) · [평가·품질](docs/project/roles/evaluation.md) · [지식그래프](docs/project/roles/graph.md) · **평가 사례·합성 대화 쓰는 법: [docs/guides/dataset-guide.md](docs/guides/dataset-guide.md)**
 
 ## 명령어
 
@@ -75,7 +75,7 @@ curl -s -X POST localhost:8000/v1/rewrites -H "X-User-Id: me" -H "Idempotency-Ke
 | `make test` | 백엔드 테스트 |
 | `make lint` | ruff |
 | `make test-docker` · `make lint-docker` | 위 둘을 컨테이너에서 (호스트 venv를 못 쓰는 PC) |
-| `scripts/ops/deploy.sh` · `make prod-ps` · `make backup` | 운영 배포·상태·백업 ([docs/deploy.md](docs/deploy.md)) |
+| `scripts/ops/deploy.sh` · `make prod-ps` · `make backup` | 운영 배포·상태·백업 ([docs/guides/deploy.md](docs/guides/deploy.md)) |
 | `python scripts/smoke_test.py --base-url <주소>` | 떠 있는 서버의 전 흐름 점검(가입 → 첨삭 → 계정 삭제) |
 | `make eval` | 평가 사례 A/B 실행 → `evals/results/` |
 | `make graph-dry-run` | 그래프 스파이크 변환만 확인 |
@@ -93,6 +93,6 @@ Windows에 `make`가 없으면 Makefile의 명령을 그대로 실행한다.
 - 화면: PC 웹 앱(`/`), 모바일 웹(`/m`), 운영 대시보드(`/admin`), 안내 문서 초안. 아이폰 앱·보조 키보드는 `apps/ios/`(CI에서 빌드·시뮬레이터까지, 실기기 미검증).
 - 검증: 백엔드 테스트 1,539개 · 화면 단위 테스트 212개. 11/24에 PC 화면으로 가입 → 가져오기 → 제안 → 첨삭 → 이력 → 계정 삭제를 실제 모델로 끝까지 확인했고, 모바일 웹은 폰 크기에서 전 탭을 확인했다.
 - 실측: Opus 5.5로 5사례 × A/B/C/D × 3회 — 60회 전부 추천, 원문 유지·재생성 0건([11/24 메모](evals/results/2026-11-24-rules1124-repeat3.md)). 이전 측정은 `evals/results/`. 사례 20개·블라인드 평가는 진행 중.
-- 배포: 운영 모드 검사·보안 헤더·요청 제한, 운영용 Docker 구성(Caddy HTTPS, 백업), 배포·복원 스크립트, 스모크 테스트([docs/deploy.md](docs/deploy.md)).
-- 시연: [docs/demo-script.md](docs/demo-script.md) (demo 계정의 카카오톡 대화 551건, 4장면, 보험). 시연 데이터 적재는 `scripts/load_kakao_demo.py`.
-- 다음: [docs/backlog.md](docs/backlog.md) — 팀장 단독 항목(A), 팀원 산출물 대기(B), 보류(C).
+- 배포: 운영 모드 검사·보안 헤더·요청 제한, 운영용 Docker 구성(Caddy HTTPS, 백업), 배포·복원 스크립트, 스모크 테스트([docs/guides/deploy.md](docs/guides/deploy.md)).
+- 시연: [docs/guides/demo-script.md](docs/guides/demo-script.md) (demo 계정의 카카오톡 대화 551건, 4장면, 보험). 시연 데이터 적재는 `scripts/load_kakao_demo.py`.
+- 다음: [docs/project/backlog.md](docs/project/backlog.md) — 팀장 단독 항목(A), 팀원 산출물 대기(B), 보류(C).

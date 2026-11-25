@@ -85,7 +85,7 @@ class Settings(BaseSettings):
     neo4j_password: str = ""
     graph_llm_model: str = "claude-haiku-4-5"  # 5.5 계열은 graphiti 강제 tool_choice에 400 (decisions 11-04)
     graph_search_top_k: int = Field(4, ge=1, le=20)
-    # ---- 말투 프로필 (docs/graph-redesign-2026-11-16.md). 기본값은 지금 동작을 바꾸지 않는다 ----
+    # ---- 말투 프로필 (docs/design/graph-redesign-2026-11-16.md). 기본값은 지금 동작을 바꾸지 않는다 ----
     register_suggestions: bool = Field(
         True,
         description="페르소나 제안에 규칙 기반 말투 프로필(구간·바뀐 시점)을 붙인다 (제안일 뿐, 저장 안 함)",

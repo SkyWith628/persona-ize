@@ -1,4 +1,4 @@
-"""말투 프로필에서 설정 제안과 제안 카드를 만든다 (docs/graph-redesign-2026-11-16.md 5.1).
+"""말투 프로필에서 설정 제안과 제안 카드를 만든다 (docs/design/graph-redesign-2026-11-16.md 5.1).
 
 `app.ai.register.build_profile`이 내 메시지에서 계산한 프로필(말투 구간·호칭 구간)을 받아
 - `register_signals`: 지금 설정과 다른 항목만 `Signal(source="register")`로,

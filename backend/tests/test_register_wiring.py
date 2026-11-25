@@ -1,4 +1,4 @@
-"""말투 프로필 플래그가 `build_state`에서 각 부품까지 닿는지 (docs/graph-redesign-2026-11-16.md 5절).
+"""말투 프로필 플래그가 `build_state`에서 각 부품까지 닿는지 (docs/design/graph-redesign-2026-11-16.md 5절).
 
 기본값에서는 예전 구성 그대로여야 하고, 켜면 해당 부품만 바뀌어야 한다. 부품 각각의 동작은
 test_register_*.py · test_style_gating.py · test_graph_invalidation.py가 본다.

@@ -189,7 +189,8 @@ async def get_contact_graph(contact_id: UUID, user_id: UserId, state: State) -> 
     """상대 노드와 그 상대가 관여한 사건에 닿은 사실들. 유효한 사실 먼저, 그 안에서는 최근 순.
 
     `register`는 내가 이 상대에게 쓰는 말투의 구간이다 — 화면에는 (나)→(상대) 간선처럼 보이지만 그래프에
-    저장된 값이 아니라 메시지에서 읽을 때 규칙으로 계산한다 (docs/graph-redesign-2026-11-16.md 3.2). 그래서
+    저장된 값이 아니라 메시지에서 읽을 때 규칙으로 계산한다
+    (docs/design/graph-redesign-2026-11-16.md 3.2). 그래서
     그래프가 꺼져 있어도 온다. 그래프가 켜져 있으면 말투가 바뀐 시점 앞뒤의 계기 사건을 그 구간에 붙인다.
     """
     contact = await state.contacts.get(user_id, contact_id)

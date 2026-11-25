@@ -17,7 +17,8 @@ class PassthroughReranker(CrossEncoderClient):
     """리랭킹을 하지 않고 입력 순서를 유지한다.
 
     graphiti 기본 리랭커(OpenAIRerankerClient)는 OpenAI 키를 요구한다. Claude만 쓰는 이 프로젝트에서는
-    검색 순서를 그대로 두고, 리랭킹이 필요해지면 로컬 cross-encoder로 교체한다 (docs/decisions.md 2026-11-04).
+    검색 순서를 그대로 두고, 리랭킹이 필요해지면 로컬 cross-encoder로 교체한다
+    (docs/project/decisions.md 2026-11-04).
     """
 
     async def rank(self, query: str, passages: list[str]) -> list[tuple[str, float]]:

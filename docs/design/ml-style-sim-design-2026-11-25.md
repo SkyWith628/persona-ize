@@ -2,9 +2,9 @@
 
 2026-11-25 · 설계입니다. 만든 것도, 학습시킨 것도 없습니다. [학습 모델 설계안](ml-design-2026-11-24.md)의 과제 2를 실제로 만들 수 있는 수준까지 풀어 쓴 것입니다. GPU 메모리와 학습 시간은 짐작입니다.
 
-![문체 유사도 모델 설계도](images/ml-style-sim-stack-ko.png)
+![문체 유사도 모델 설계도](../images/ml-style-sim-stack-ko.png)
 
-그림 원본은 [images/ml-style-sim-stack-ko.html](images/ml-style-sim-stack-ko.html)입니다. 어두운 배경 판은 `images/ml-style-sim-stack-ko-dark.png`입니다.
+그림 원본은 [images/ml-style-sim-stack-ko.html](../images/ml-style-sim-stack-ko.html)입니다. 어두운 배경 판은 `images/ml-style-sim-stack-ko-dark.png`입니다.
 
 ## 먼저 결론
 

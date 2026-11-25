@@ -2,9 +2,9 @@
 
 2026-11-25 · 설계입니다. 만든 것도, 학습시킨 것도 없습니다. [학습 모델 설계안](ml-design-2026-11-24.md)의 "수집 전 거르기" 절을 실제로 만들 수 있는 수준까지 풀어 쓴 것입니다. 틀은 [의미 보존 판정 모델 설계](ml-judge-design-2026-11-25.md)와 같이 씁니다.
 
-![수집 전 거르기 설계도](images/ml-prefilter-stack-ko.png)
+![수집 전 거르기 설계도](../images/ml-prefilter-stack-ko.png)
 
-그림 원본은 [images/ml-prefilter-stack-ko.html](images/ml-prefilter-stack-ko.html)입니다. 어두운 배경 판은 `images/ml-prefilter-stack-ko-dark.png`입니다.
+그림 원본은 [images/ml-prefilter-stack-ko.html](../images/ml-prefilter-stack-ko.html)입니다. 어두운 배경 판은 `images/ml-prefilter-stack-ko-dark.png`입니다.
 
 설계안은 "정답을 실제로 뽑아 본 적이 없다"고 적었습니다. 이번에 개발 PC의 Neo4j에서 처음 뽑아 봤고, 그 결과가 설계안의 전제 하나를 바꿉니다. "먼저 세어 본 것" 절에 적었습니다.
 

@@ -34,7 +34,7 @@ die() {
 
 require_env_file() {
 	[ -f "$ENV_FILE" ] || die "env 파일이 없습니다: $ENV_FILE
-  cp .env.production.example .env.production 뒤 값을 채우세요 (docs/deploy.md 3단계)."
+  cp .env.production.example .env.production 뒤 값을 채우세요 (docs/guides/deploy.md 3단계)."
 }
 
 # env_get KEY [기본값] — env 파일에서 값 하나를 읽는다 (마지막 정의, 양끝 따옴표·CR 제거).

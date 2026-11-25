@@ -177,7 +177,7 @@ def build_state(settings: Settings) -> AppState:
     embedder = build_embedder(settings)
     graph_store, graph_ingest, graph_retriever = _build_graph(settings, embedder, contacts, conversations)
     null = NullRetriever()
-    # 아래 말투 프로필 플래그들(docs/graph-redesign-2026-11-16.md 5절)은 기본값에서 예전 동작 그대로다.
+    # 아래 말투 프로필 플래그들(docs/design/graph-redesign-2026-11-16.md 5절)은 기본값에서 예전 동작 그대로다.
     # 문체 예시를 현재 말투 구간으로 좁히기 (경로 X)
 
     async def alias_of(user_id: str, contact_id: UUID) -> str:

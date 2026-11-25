@@ -2,9 +2,9 @@
 
 2026-11-25 · 설계입니다. 만든 것도, 학습시킨 것도 없습니다. [학습 모델 설계안](ml-design-2026-11-24.md)의 "조건 선택기" 절을 풀어 쓴 것입니다. 설계안이 "나중에"로 둔 과제이고, 이 문서도 그 판단을 바꾸지 않습니다. 지금 할 수 있는 것과 없는 것을 가르는 데 무게를 둡니다.
 
-![조건 선택기 설계도](images/ml-condition-selector-stack-ko.png)
+![조건 선택기 설계도](../images/ml-condition-selector-stack-ko.png)
 
-그림 원본은 [images/ml-condition-selector-stack-ko.html](images/ml-condition-selector-stack-ko.html)입니다. 어두운 배경 판은 `images/ml-condition-selector-stack-ko-dark.png`입니다.
+그림 원본은 [images/ml-condition-selector-stack-ko.html](../images/ml-condition-selector-stack-ko.html)입니다. 어두운 배경 판은 `images/ml-condition-selector-stack-ko-dark.png`입니다.
 
 ## 먼저 결론
 
@@ -27,7 +27,7 @@
 
 초안은 보지 않습니다. 그래프에 메시지가 한 건이라도 있는 상대에게는 "넵 확인했습니다"를 고칠 때도 D가 됩니다.
 
-설계안에 적힌 실측(11/24)으로는 D가 A보다 입력 토큰이 3배쯤, 걸리는 시간이 1.7배쯤입니다. 그보다 앞선 기록(`docs/decisions.md`)에는 D의 입력 토큰이 C의 1.8배라고 적혀 있습니다.
+설계안에 적힌 실측(11/24)으로는 D가 A보다 입력 토큰이 3배쯤, 걸리는 시간이 1.7배쯤입니다. 그보다 앞선 기록(`docs/project/decisions.md`)에는 D의 입력 토큰이 C의 1.8배라고 적혀 있습니다.
 
 ## 정답이 얼마나 있나
 

@@ -1,7 +1,7 @@
 """스파이크 실행 설정을 환경변수(.env)에서 읽는다.
 
 LLM은 Claude(anthropic), 임베딩은 로컬 sentence-transformers 또는 Voyage AI를 쓴다.
-Anthropic은 임베딩 API가 없으므로 임베딩 제공자를 따로 고른다 (docs/decisions.md 2026-11-08).
+Anthropic은 임베딩 API가 없으므로 임베딩 제공자를 따로 고른다 (docs/project/decisions.md 2026-11-08).
 """
 
 from __future__ import annotations
@@ -15,7 +15,8 @@ from dotenv import load_dotenv
 
 DEFAULT_GROUP_ID = "p0-sample"
 # graphiti AnthropicClient는 강제 tool_choice로 구조화 출력을 받는데, 5.5 계열(Opus/Sonnet/Haiku)은
-# 강제 tool_choice를 400으로 거부한다 (docs/decisions.md 2026-11-04). 그래프 추출은 4.5 Haiku로 시작하고,
+# 강제 tool_choice를 400으로 거부한다 (docs/project/decisions.md 2026-11-04).
+# 그래프 추출은 4.5 Haiku로 시작하고,
 # 다른 모델은 GRAPH_LLM_MODEL로 지정하기 전에 --limit 5로 검증한다.
 DEFAULT_GRAPH_LLM_MODEL = "claude-haiku-4-5"
 DEFAULT_EMBEDDING_PROVIDER = "local"
