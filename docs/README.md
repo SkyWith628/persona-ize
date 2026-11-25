@@ -36,6 +36,7 @@
 
 - 구조 그림: [images/architecture-stack-ko.png](images/architecture-stack-ko.png) (영문은 `-en`, 어두운 배경은 `-dark`)
 - 학습 모델 제안의 그림: `images/ml-overview-*`
+- 코드 지도: [floorplan/persona-ize-map.html](floorplan/persona-ize-map.html) — 받아서 브라우저로 열면 파일 하나하나까지 눌러 볼 수 있습니다. 설명은 [floorplan/README.md](floorplan/README.md)
 
 ## archive
 

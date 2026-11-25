@@ -1,0 +1,8 @@
+{
+  "files": {
+    "apps/ios/Keyboard/KeyboardController.swift": {
+      "name": "보조 키보드 패널",
+      "description": "자판 없이 고쳐 쓰기 패널만 띄워, 입력칸의 글을 추천 문장으로 바꿔 넣습니다."
+    }
+  }
+}

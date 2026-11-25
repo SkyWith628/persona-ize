@@ -1,0 +1,16 @@
+{
+  "files": {
+    "apps/ios/Tests/ImportParserTests.swift": {
+      "name": "대화 읽기·키보드 연결 점검",
+      "description": "붙여 넣은 대화와 텔레그램 파일 읽기, 그래프 배치, 최근 상대, 키보드 연결과 글자 바꾸기 계획을 확인합니다."
+    },
+    "apps/ios/Tests/LoginLogicTests.swift": {
+      "name": "로그인 판단 점검",
+      "description": "서버 주소 고르기와 가입·로그인 응답을 로그인됨, 승인 대기, 정지, 실패로 가르는 규칙을 확인합니다."
+    },
+    "apps/ios/Tests/OnboardingTests.swift": {
+      "name": "첫 실행 안내 점검",
+      "description": "첫 실행 단계 순서, 상대 이름 다듬기, 예시가 초안의 사실을 지키는지를 확인합니다."
+    }
+  }
+}

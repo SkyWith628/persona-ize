@@ -1,0 +1,72 @@
+{
+  "files": {
+    "graph/graphiti_p0/eval_queries.py": {
+      "name": "그래프 검색 정확도 재기",
+      "description": "준비한 질문으로 지식 그래프를 검색해, 정답 메시지를 얼마나 찾아내는지 질문별로 잽니다."
+    },
+    "graph/graphiti_p0/ingest.py": {
+      "name": "샘플 대화 넣기 실험",
+      "description": "샘플 대화를 시간 순으로 하나씩 지식 그래프에 넣고, 걸린 시간을 보고서로 남깁니다."
+    },
+    "graph/graphiti_p0/inspect_graph.py": {
+      "name": "그래프 내용 살펴보기",
+      "description": "지식 그래프에 들어간 사람과 사실을 뽑아 보고, 한국어 대화에서 제대로 뽑혔는지 기준에 맞춰 확인합니다."
+    },
+    "graph/graphiti_p0/p0/__init__.py": {
+      "name": "실험 묶음 표시",
+      "description": "한국어 대화에서 지식 그래프가 잘 뽑히는지 본 초기 실험이라는 설명 한 줄만 들어 있습니다."
+    },
+    "graph/graphiti_p0/p0/config.py": {
+      "name": "실험 설정 읽기",
+      "description": "Neo4j와 Claude 접속 정보, 실험 범위 같은 설정을 읽고, 빠졌거나 틀린 값이 있으면 알립니다."
+    },
+    "graph/graphiti_p0/p0/dates.py": {
+      "name": "날짜 표현 풀기",
+      "description": "대화 속 상대적인 날짜 표현을 메시지 시각 기준의 실제 날짜로 풀어 본문에 덧붙입니다."
+    },
+    "graph/graphiti_p0/p0/embedder_local.py": {
+      "name": "기기 안 글 비교 모델",
+      "description": "글의 뜻을 숫자로 바꾸는 모델을 외부 서비스 없이 이 컴퓨터에서 돌리며, 처음 쓸 때 불러옵니다."
+    },
+    "graph/graphiti_p0/p0/episodes.py": {
+      "name": "대화를 그래프 입력으로 변환",
+      "description": "대화 파일을 읽어 모든 메시지를 말한 시각 순으로 정렬하고, 지식 그래프에 넣을 한 건씩으로 만듭니다."
+    },
+    "graph/graphiti_p0/p0/graph.py": {
+      "name": "그래프 연결 만들기",
+      "description": "Claude와 Neo4j를 묶어 지식 그래프 연결을 만들고, 검색 결과 순서는 다시 매기지 않고 그대로 둡니다."
+    },
+    "graph/graphiti_p0/p0/queries.py": {
+      "name": "검색 질문과 정답률 계산",
+      "description": "검색 질문과 정답 메시지 목록을 읽고, 위쪽 결과 안에 정답이 든 비율을 계산합니다."
+    },
+    "graph/graphiti_p0/p0/schema.py": {
+      "name": "사람·사건·관계 정의",
+      "description": "지식 그래프에 담을 사람, 사건, 사람 사이 관계, 사건에 관여함이 각각 어떤 내용을 갖는지 정합니다."
+    },
+    "graph/graphiti_p0/tests/test_config.py": {
+      "name": "실험 설정 읽기 점검",
+      "description": "설정 기본값, 빠진 값과 틀린 값 처리, 비밀 값이 화면에 드러나지 않는지를 확인합니다."
+    },
+    "graph/graphiti_p0/tests/test_dates.py": {
+      "name": "날짜 표현 풀기 점검",
+      "description": "연습용 대화의 실제 문장으로, 상대적인 날짜와 요일이 맞는 날짜로 풀리는지 확인합니다."
+    },
+    "graph/graphiti_p0/tests/test_episodes.py": {
+      "name": "그래프 입력 변환 점검",
+      "description": "대화가 시각 순으로 정렬되는지, 말한 사람이 맞게 붙는지, 형식이 틀린 파일을 잡아내는지 확인합니다."
+    },
+    "graph/graphiti_p0/tests/test_graph.py": {
+      "name": "그래프 연결 점검",
+      "description": "Claude에 보내는 요청에서 맞지 않는 설정 하나만 빼는지, 검색 결과 순서가 그대로인지 확인합니다."
+    },
+    "graph/graphiti_p0/tests/test_queries.py": {
+      "name": "정답률 계산 점검",
+      "description": "검색 질문 파일을 읽는 것과 정답률 계산이 겹친 결과와 빈 정답을 바르게 다루는지 확인합니다."
+    },
+    "graph/graphiti_p0/tests/test_schema.py": {
+      "name": "사람·사건·관계 정의 점검",
+      "description": "사람·사건·관계 정의가 그래프 도구의 규칙과 부딪히지 않고 값의 범위를 지키는지 확인합니다."
+    }
+  }
+}

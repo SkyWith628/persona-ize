@@ -1,0 +1,60 @@
+{
+  "files": {
+    "docker/backup/healthcheck.sh": {
+      "name": "백업이 밀렸는지 확인",
+      "description": "최근 백업 파일이 백업 주기에 두 시간을 더한 시간 안에 있는지 보고 정상 여부를 알립니다."
+    },
+    "docker/backup/loop.sh": {
+      "name": "주기 백업",
+      "description": "몇 분마다 가장 최근 백업이 정해진 주기보다 오래됐는지 보고, 오래됐으면 백업을 한 번 뜹니다."
+    },
+    "docker/backup/pg-backup.sh": {
+      "name": "데이터베이스 백업 한 번",
+      "description": "PostgreSQL을 파일로 백업한 뒤 읽히는지 확인하고, 보존 기간이 지난 백업 파일을 지웁니다."
+    },
+    "docker/backup/pg-restore.sh": {
+      "name": "백업 파일 넣기",
+      "description": "대상 데이터베이스를 지우고 새로 만든 뒤 백업 파일을 넣고, 목록별 기록 수를 보여 줍니다."
+    },
+    "docker/postgres/init/001_extensions.sql": {
+      "name": "데이터베이스 첫 준비",
+      "description": "PostgreSQL이 처음 만들어질 때 한 번, 비슷한 글 찾기와 암호 처리에 쓰는 추가 기능 두 가지를 켭니다."
+    },
+    "docker/test/entrypoint.py": {
+      "name": "자동 점검 준비",
+      "description": "자동 점검을 돌리기 전에 점검용 데이터베이스가 없으면 만들고, 받은 명령을 그대로 실행합니다."
+    },
+    "scripts/ops/_lib.sh": {
+      "name": "운영 스크립트 공통 부분",
+      "description": "배포·백업 스크립트가 함께 쓰는 설정 파일 위치와 공통 동작을 모아 둔 것으로, 직접 실행하지 않습니다."
+    },
+    "scripts/ops/backup.sh": {
+      "name": "데이터베이스 백업",
+      "description": "지금 PostgreSQL 백업을 한 번 뜨거나, 이미 있는 백업 목록을 보여 줍니다."
+    },
+    "scripts/ops/compose.sh": {
+      "name": "운영 서버 명령 줄임",
+      "description": "운영 구성에 내리는 명령에 설정 파일 위치를 대신 붙여 짧게 쓸 수 있게 합니다."
+    },
+    "scripts/ops/deploy.sh": {
+      "name": "배포",
+      "description": "새 코드를 받아 설정을 점검하고 백업부터 한 뒤, 새 버전을 띄워 기본 동작까지 확인합니다."
+    },
+    "scripts/ops/neo4j-dump.sh": {
+      "name": "지식 그래프 백업·복구",
+      "description": "Neo4j를 잠깐 내렸다가 올리며 지식 그래프를 파일로 백업하거나, 백업 파일로 덮어씁니다."
+    },
+    "scripts/ops/restore.sh": {
+      "name": "데이터베이스 복구",
+      "description": "백업 파일로 PostgreSQL을 덮어쓰기 전에 한 번 묻고, 다른 이름의 데이터베이스에 넣어 연습할 수도 있습니다."
+    },
+    "scripts/ops/rollback.sh": {
+      "name": "되돌리기",
+      "description": "서버를 직전 배포 버전으로 되돌리며, 데이터베이스는 그대로 두고 서버 코드만 바꿉니다."
+    },
+    "scripts/ops/run.sh": {
+      "name": "운영 서버에서 스크립트 실행",
+      "description": "사용량 보고서나 비밀번호 재설정 같은 운영 스크립트를 운영 서버와 같은 설정으로 돌립니다."
+    }
+  }
+}

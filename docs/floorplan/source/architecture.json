@@ -1,0 +1,561 @@
+{
+  "$schema": "floorplan/architecture@1",
+  "project": {
+    "name": "Persona_ize",
+    "summary": "상대와 상황에 맞는 내 말투로 메시지를 고쳐 주되 원문의 사실과 의도는 지키는 서비스입니다. PC 화면과 아이폰 앱이 같은 서버를 쓰고, 서버는 대화를 가져와 말투를 읽어 두었다가 고쳐 쓸 때만 Claude를 부릅니다.",
+    "entrypoints": [
+      "backend/app/main.py",
+      "backend/app/web/js/main.js",
+      "apps/ios/App/PersonaApp.swift"
+    ]
+  },
+  "audience": "everyone",
+  "nodes": [
+    {
+      "id": "web",
+      "label": "PC 화면",
+      "kind": "ui",
+      "summary": "브라우저에서 쓰는 화면입니다. 메시지 고쳐 쓰기, 상대 관리, 대화 가져오기, 이력, 내 데이터, 설정을 다룹니다.",
+      "paths": [
+        "backend/app/web"
+      ],
+      "exclude": [
+        "backend/app/web/tests/**"
+      ]
+    },
+    {
+      "id": "web.views",
+      "parent": "web",
+      "label": "화면들",
+      "kind": "feature",
+      "summary": "주소마다 하나씩 있는 화면입니다. 고쳐 쓰기, 상대, 가져오기, 이력, 데이터, 설정.",
+      "paths": [
+        "backend/app/web/js/views"
+      ]
+    },
+    {
+      "id": "web.ui",
+      "parent": "web",
+      "label": "화면 부품",
+      "kind": "library",
+      "summary": "여러 화면이 함께 쓰는 버튼, 창, 알림 같은 부품입니다.",
+      "paths": [
+        "backend/app/web/js/ui"
+      ]
+    },
+    {
+      "id": "web.core",
+      "parent": "web",
+      "label": "화면 뼈대와 공통 로직",
+      "kind": "library",
+      "summary": "화면을 띄우고, 서버에 요청을 보내고, 로그인 상태와 화면이 기억하는 값을 관리합니다.",
+      "paths": [
+        "backend/app/web/js/lib",
+        "backend/app/web/js/main.js",
+        "backend/app/web/js/api.js",
+        "backend/app/web/js/session.js",
+        "backend/app/web/js/store.js",
+        "backend/app/web/js/theme-boot.js",
+        "backend/app/web/index.html",
+        "backend/app/web/css"
+      ]
+    },
+    {
+      "id": "web.admin",
+      "parent": "web",
+      "label": "관리자 화면",
+      "kind": "feature",
+      "summary": "운영자가 사용량, 작업 상태, 회원을 숫자로 보는 화면입니다. 대화 문장은 보이지 않습니다.",
+      "paths": [
+        "backend/app/web/admin.html",
+        "backend/app/web/js/admin",
+        "backend/app/web/js/admin.js",
+        "backend/app/web/css/admin.css"
+      ]
+    },
+    {
+      "id": "web.proto",
+      "parent": "web",
+      "label": "시연용 화면",
+      "kind": "feature",
+      "summary": "시연에 쓰는 프로토타입과 휴대폰용 화면입니다.",
+      "paths": [
+        "backend/app/web/proto.*",
+        "backend/app/web/mobile.*"
+      ]
+    },
+    {
+      "id": "web.pages",
+      "parent": "web",
+      "label": "안내 문서",
+      "kind": "feature",
+      "summary": "개인정보 처리방침과 이용약관 페이지입니다.",
+      "paths": [
+        "backend/app/web/privacy.html",
+        "backend/app/web/terms.html"
+      ]
+    },
+    {
+      "id": "ios",
+      "label": "아이폰 앱",
+      "kind": "ui",
+      "summary": "아이폰에서 쓰는 앱과 보조 키보드입니다. 메신저 안에서 키보드를 불러 고쳐 쓴 문장을 바로 넣을 수 있습니다.",
+      "paths": [
+        "apps/ios"
+      ],
+      "exclude": [
+        "apps/ios/Tests/**"
+      ]
+    },
+    {
+      "id": "ios.app",
+      "parent": "ios",
+      "label": "앱 화면",
+      "kind": "feature",
+      "summary": "고쳐 쓰기, 상대, 이력, 계정, 대화 가져오기 화면과 서버에 요청을 보내는 부분입니다.",
+      "paths": [
+        "apps/ios/App"
+      ]
+    },
+    {
+      "id": "ios.keyboard",
+      "parent": "ios",
+      "label": "보조 키보드",
+      "kind": "feature",
+      "summary": "다른 앱의 입력칸 위에 뜨는 키보드입니다. 앱이 준비해 둔 문장을 입력칸에 넣습니다.",
+      "paths": [
+        "apps/ios/Keyboard"
+      ]
+    },
+    {
+      "id": "ios.shared",
+      "parent": "ios",
+      "label": "앱과 키보드가 함께 쓰는 것",
+      "kind": "library",
+      "summary": "앱과 키보드가 문장을 주고받는 방법, 기록의 모양, 색과 글꼴을 함께 씁니다.",
+      "paths": [
+        "apps/ios/Shared"
+      ]
+    },
+    {
+      "id": "api",
+      "label": "요청을 받는 입구",
+      "kind": "service",
+      "summary": "화면과 앱이 보내는 모든 요청이 처음 닿는 곳입니다. 누가 보냈는지 확인하고 알맞은 일꾼에게 넘깁니다.",
+      "paths": [
+        "backend/app/main.py",
+        "backend/app/__init__.py",
+        "backend/app/api"
+      ]
+    },
+    {
+      "id": "api.routes",
+      "parent": "api",
+      "label": "받는 요청들",
+      "kind": "feature",
+      "summary": "로그인, 상대, 대화, 고쳐 쓰기, 내 데이터, 관리자, 상태 확인 요청을 종류별로 받습니다.",
+      "paths": [
+        "backend/app/api/routes"
+      ]
+    },
+    {
+      "id": "api.core",
+      "parent": "api",
+      "label": "공통 장치",
+      "kind": "library",
+      "summary": "설정, 비밀번호 처리, 요청 횟수 제한, 오류 모양 통일처럼 모든 요청이 거치는 장치입니다. 위험한 설정이면 서버가 뜨지 않게 막습니다.",
+      "paths": [
+        "backend/app/core"
+      ]
+    },
+    {
+      "id": "services",
+      "label": "일을 처리하는 곳",
+      "kind": "feature",
+      "summary": "요청 하나를 끝까지 책임집니다. 고쳐 쓰기, 대화 가져오기, 말투 제안, 삭제, 계정과 회원 관리, 정리 작업이 여기 있습니다.",
+      "paths": [
+        "backend/app/services"
+      ]
+    },
+    {
+      "id": "services.importers",
+      "parent": "services",
+      "label": "대화 파일 읽기",
+      "kind": "feature",
+      "summary": "카카오톡, 텔레그램, 붙여넣은 대화를 읽어 같은 모양으로 바꾸고 전화번호 같은 개인정보를 가립니다.",
+      "paths": [
+        "backend/app/importers"
+      ]
+    },
+    {
+      "id": "ai",
+      "label": "문장을 다루는 두뇌",
+      "kind": "feature",
+      "summary": "메시지를 고쳐 쓰는 순서를 정하고, 지켜야 할 사실을 뽑아 결과와 맞춰 보고, 내 말투를 읽어 둡니다.",
+      "paths": [
+        "backend/app/ai"
+      ]
+    },
+    {
+      "id": "ai.workflow",
+      "parent": "ai",
+      "label": "고쳐 쓰기 순서",
+      "kind": "feature",
+      "summary": "분석, 검색, 지시문 조립, 고쳐 쓰기, 검사를 정해진 순서로 돌립니다. 검사에 걸리면 한 번만 다시 쓰고, 또 걸리면 원문을 돌려줍니다.",
+      "paths": [
+        "backend/app/ai/workflow.py",
+        "backend/app/ai/prompt.py",
+        "backend/app/ai/preserve.py",
+        "backend/app/ai/validation.py",
+        "backend/app/ai/intent.py"
+      ]
+    },
+    {
+      "id": "ai.register",
+      "parent": "ai",
+      "label": "말투 읽기",
+      "kind": "feature",
+      "summary": "내가 상대에게 보낸 메시지에서 존댓말·반말, 호칭, 말버릇을 규칙으로 읽고 언제 바뀌었는지 찾습니다.",
+      "paths": [
+        "backend/app/ai/register*.py",
+        "backend/app/ai/style_suggest.py",
+        "backend/app/ai/voice.py"
+      ]
+    },
+    {
+      "id": "ai.retrieval",
+      "parent": "ai",
+      "label": "과거 말투 찾기",
+      "kind": "feature",
+      "summary": "내 말을 묶어 숫자로 바꿔 두고, 고쳐 쓸 때 비슷한 예전 말을 찾아 줍니다.",
+      "paths": [
+        "backend/app/ai/retrieval",
+        "backend/app/ai/embeddings.py",
+        "backend/app/ai/episodes.py"
+      ]
+    },
+    {
+      "id": "ai.providers",
+      "parent": "ai",
+      "label": "Claude 연결",
+      "kind": "library",
+      "summary": "Claude에게 고쳐 쓰기를 맡기는 통로입니다. 테스트용 가짜 통로도 함께 있습니다.",
+      "paths": [
+        "backend/app/ai/providers"
+      ]
+    },
+    {
+      "id": "ai.graph",
+      "parent": "ai",
+      "label": "지식 그래프",
+      "kind": "feature",
+      "summary": "대화에서 있었던 일과 관계를 뽑아 쌓고, 고쳐 쓸 때 관련된 과거 사실을 찾아 줍니다.",
+      "paths": [
+        "backend/app/graph"
+      ]
+    },
+    {
+      "id": "data",
+      "label": "기록을 쌓는 곳",
+      "kind": "data",
+      "summary": "사용자, 상대, 메시지, 고쳐 쓴 이력, 사용량을 저장하고 꺼내는 코드입니다.",
+      "paths": [
+        "backend/app/repositories",
+        "backend/app/db",
+        "backend/app/domain",
+        "backend/migrations"
+      ]
+    },
+    {
+      "id": "data.repos",
+      "parent": "data",
+      "label": "저장하고 꺼내기",
+      "kind": "data",
+      "summary": "기록을 저장하고 찾아오는 코드입니다. 실제 데이터베이스용과 테스트용 두 벌이 있습니다.",
+      "paths": [
+        "backend/app/repositories"
+      ]
+    },
+    {
+      "id": "data.db",
+      "parent": "data",
+      "label": "기록의 모양",
+      "kind": "data",
+      "summary": "어떤 기록을 어떤 칸으로 보관하는지와 데이터베이스 연결을 정합니다.",
+      "paths": [
+        "backend/app/db"
+      ]
+    },
+    {
+      "id": "data.domain",
+      "parent": "data",
+      "label": "서비스의 낱말",
+      "kind": "library",
+      "summary": "상대, 대화, 말투 설정, 고쳐 쓰기 결과, 사용량 같은 서비스의 기본 낱말과 규칙을 정합니다.",
+      "paths": [
+        "backend/app/domain"
+      ]
+    },
+    {
+      "id": "data.migrations",
+      "parent": "data",
+      "label": "보관 방식 변경 기록",
+      "kind": "data",
+      "summary": "기록을 보관하는 방식을 바꿀 때마다 하나씩 쌓인 변경 내역입니다.",
+      "paths": [
+        "backend/migrations"
+      ]
+    },
+    {
+      "id": "tools",
+      "label": "도구와 실험",
+      "kind": "script",
+      "summary": "사람이 직접 돌리는 운영 도구, 배포와 백업, 품질 평가, 초기 그래프 실험이 모여 있습니다.",
+      "paths": [
+        "scripts",
+        "backend/app/tools"
+      ]
+    },
+    {
+      "id": "tools.scripts",
+      "parent": "tools",
+      "label": "운영 스크립트",
+      "kind": "script",
+      "summary": "연습용 대화 넣기, 시연 준비, 계정과 비밀번호, 사용량 보고서, 그래프 다시 만들기처럼 사람이 직접 돌리는 스크립트입니다.",
+      "paths": [
+        "scripts",
+        "backend/app/tools"
+      ]
+    },
+    {
+      "id": "tools.ops",
+      "parent": "tools",
+      "label": "배포와 백업",
+      "kind": "infra",
+      "summary": "새 버전을 올리고, 되돌리고, 데이터베이스를 백업하고 복구하는 스크립트입니다.",
+      "paths": [
+        "scripts/ops",
+        "docker"
+      ]
+    },
+    {
+      "id": "tools.evals",
+      "parent": "tools",
+      "label": "품질 평가",
+      "kind": "script",
+      "summary": "같은 초안을 조건을 바꿔 가며 고쳐 쓰게 하고, 사실을 지켰는지와 말투 제안이 정답과 맞는지를 표로 냅니다.",
+      "paths": [
+        "evals"
+      ]
+    },
+    {
+      "id": "tools.spike",
+      "parent": "tools",
+      "label": "초기 그래프 실험",
+      "kind": "library",
+      "summary": "지식 그래프를 처음 시험해 본 코드입니다. 지금은 고치지 않고 남겨 둔 것이며, 서버는 자기 쪽 복사본을 씁니다.",
+      "paths": [
+        "graph/graphiti_p0"
+      ]
+    },
+    {
+      "id": "tests",
+      "label": "자동 점검",
+      "kind": "test",
+      "summary": "코드를 고친 뒤에도 서버, 화면, 아이폰 앱이 제대로 도는지 자동으로 확인합니다.",
+      "paths": [
+        "backend/tests",
+        "backend/app/web/tests",
+        "apps/ios/Tests"
+      ]
+    },
+    {
+      "id": "pg",
+      "label": "PostgreSQL",
+      "kind": "external",
+      "summary": "모든 기록을 보관하는 데이터베이스입니다. 말투를 숫자로 바꾼 값도 여기서 찾습니다.",
+      "packages": [
+        "pypi:sqlalchemy",
+        "pypi:asyncpg",
+        "pypi:pgvector",
+        "pypi:alembic"
+      ]
+    },
+    {
+      "id": "neo4j",
+      "label": "Neo4j",
+      "kind": "external",
+      "summary": "사람, 사건, 관계를 이어서 보관하는 그래프 데이터베이스입니다.",
+      "packages": [
+        "pypi:graphiti_core",
+        "pypi:neo4j"
+      ]
+    },
+    {
+      "id": "claude",
+      "label": "Claude",
+      "kind": "external",
+      "summary": "문장을 고쳐 쓰고, 대화에서 사건과 관계를 뽑아 주는 AI입니다.",
+      "packages": [
+        "pypi:anthropic"
+      ]
+    },
+    {
+      "id": "oauth",
+      "label": "카카오 · 구글 로그인",
+      "kind": "external",
+      "summary": "카카오나 구글 계정으로 로그인할 때 본인 확인을 해 줍니다.",
+      "hosts": [
+        "kauth.kakao.com",
+        "kapi.kakao.com",
+        "accounts.google.com",
+        "oauth2.googleapis.com",
+        "openidconnect.googleapis.com"
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "from": "ai.graph",
+      "to": "claude",
+      "kind": "call",
+      "label": "사건·관계 뽑기",
+      "description": "메시지를 그래프에 넣을 때 Claude의 작은 모델이 사건과 관계를 뽑습니다."
+    },
+    {
+      "from": "data.repos",
+      "to": "pg",
+      "kind": "data",
+      "label": "읽고 쓰기"
+    },
+    {
+      "from": "ios.app",
+      "to": "api.routes",
+      "kind": "http",
+      "label": "서버에 요청",
+      "description": "아이폰 앱도 PC 화면과 같은 서버에 요청을 보냅니다."
+    },
+    {
+      "from": "tools.evals",
+      "to": "ai.workflow",
+      "kind": "call",
+      "label": "고쳐 쓰기 순서를 직접 돌림"
+    }
+  ],
+  "flows": [
+    {
+      "id": "rewrite",
+      "title": "메시지 한 건 고쳐 쓰기",
+      "description": "초안을 넣고 고쳐 쓴 문장을 받기까지",
+      "steps": [
+        {
+          "node": "web.views",
+          "note": "고쳐 쓰기 화면에서 상대를 고르고 초안을 넣습니다."
+        },
+        {
+          "node": "api.routes",
+          "note": "서버가 요청을 받아 누가 보냈는지 확인합니다."
+        },
+        {
+          "node": "services",
+          "note": "같은 요청이 두 번 들어오지 않았는지, 오늘 쓸 수 있는 양이 남았는지 봅니다."
+        },
+        {
+          "node": "ai.workflow",
+          "note": "초안에서 날짜, 수량, 사람, 약속처럼 지켜야 할 것을 뽑습니다."
+        },
+        {
+          "node": "ai.retrieval",
+          "note": "이 상대에게 썼던 비슷한 말을 찾아 예시로 붙입니다."
+        },
+        {
+          "node": "claude",
+          "note": "Claude가 내 말투로 고쳐 씁니다."
+        },
+        {
+          "node": "ai.workflow",
+          "note": "고친 문장에서 같은 것을 다시 뽑아 원문과 맞춰 봅니다. 다르면 한 번만 다시 쓰고, 또 다르면 원문을 돌려줍니다."
+        },
+        {
+          "node": "data.repos",
+          "note": "결과와 사용량을 기록합니다. 보내는 것은 사용자가 직접 합니다."
+        }
+      ]
+    },
+    {
+      "id": "import",
+      "title": "대화 가져오기",
+      "description": "카카오톡 파일을 올려 말투를 읽어 두기까지",
+      "steps": [
+        {
+          "node": "web.views",
+          "note": "가져오기 화면에 대화 파일을 올리고 누가 '나'인지 고릅니다."
+        },
+        {
+          "node": "api.routes",
+          "note": "서버가 파일을 받습니다."
+        },
+        {
+          "node": "services.importers",
+          "note": "파일 형식을 알아내 읽고, 전화번호 같은 개인정보를 가립니다."
+        },
+        {
+          "node": "data.repos",
+          "note": "메시지를 저장합니다. 여기까지는 바로 끝납니다."
+        },
+        {
+          "node": "ai.retrieval",
+          "note": "뒤에서 내 말을 묶어 숫자로 바꿔 둡니다."
+        },
+        {
+          "node": "ai.graph",
+          "note": "이어서 사건과 관계를 뽑아 그래프에 쌓습니다."
+        },
+        {
+          "node": "neo4j",
+          "note": "뽑은 사실이 그래프 데이터베이스에 들어갑니다."
+        }
+      ]
+    }
+  ],
+  "tour": [
+    {
+      "node": "web",
+      "title": "사람이 보는 화면",
+      "note": "브라우저에서 쓰는 PC 화면입니다. 여기서 초안을 넣고, 상대를 관리하고, 대화를 가져옵니다."
+    },
+    {
+      "node": "ios",
+      "title": "아이폰에서도",
+      "note": "아이폰 앱과 보조 키보드도 같은 서버를 씁니다. 메신저에서 키보드를 불러 고쳐 쓴 문장을 바로 넣습니다."
+    },
+    {
+      "node": "api",
+      "title": "요청이 처음 닿는 곳",
+      "note": "화면이 보내는 요청은 모두 이 입구를 지납니다. 로그인했는지, 너무 자주 보내지 않는지 여기서 확인합니다."
+    },
+    {
+      "node": "services",
+      "title": "일을 끝까지 맡는 곳",
+      "note": "고쳐 쓰기든 가져오기든, 요청 하나를 처음부터 끝까지 책임지는 코드가 모여 있습니다."
+    },
+    {
+      "node": "ai",
+      "title": "문장을 다루는 두뇌",
+      "note": "고쳐 쓰는 순서를 정하고 결과를 검사합니다. Claude를 부르는 것은 문장을 고쳐 쓸 때와 그래프에 넣을 때뿐입니다."
+    },
+    {
+      "node": "data",
+      "title": "기록을 쌓는 곳",
+      "note": "메시지, 말투 설정, 고쳐 쓴 이력이 여기를 거쳐 데이터베이스에 들어갑니다."
+    },
+    {
+      "node": "backend/app/ai/validation.py",
+      "title": "사실을 지켰는지 검사",
+      "note": "고친 문장이 원문의 날짜, 수량, 사람, 약속을 그대로 지켰는지 맞춰 보는 파일입니다. 이 서비스의 가장 중요한 약속이 여기서 지켜집니다."
+    }
+  ],
+  "ignore": [
+    "docs/**"
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "files": {
+    "apps/ios/Shared/KeyboardLink.swift": {
+      "name": "키보드에 넘기는 연결 정보",
+      "description": "앱이 로그인한 동안 키보드에 넘길 연결 정보를 담고, 입력칸 글자를 추천으로 바꿀 계획을 세웁니다."
+    },
+    "apps/ios/Shared/KeyboardMessage.swift": {
+      "name": "키보드에 준비한 문장",
+      "description": "승인한 문장 하나를 앱과 키보드가 함께 보는 자리에 저장하고 읽고 지웁니다."
+    },
+    "apps/ios/Shared/Models.swift": {
+      "name": "추천·사용량 기록의 모양",
+      "description": "추천 결과, 사용량, 서버 오류 같은 기록의 모양을 정하고 로그인 정보가 다른 주소로 넘어가지 않게 막습니다."
+    },
+    "apps/ios/Shared/Theme.swift": {
+      "name": "색·간격·버튼 모양",
+      "description": "앱과 키보드가 함께 쓰는 색, 간격, 버튼과 상태 꼬리표 모양을 밝은·어두운 화면에 맞춰 정합니다."
+    }
+  }
+}
