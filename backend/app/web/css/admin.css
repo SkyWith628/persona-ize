@@ -658,8 +658,19 @@ main:focus {
 
 /* ---- 표 ---- */
 
+/* 표가 패널보다 넓으면 표만 가로로 스크롤된다. 가려진 쪽 가장자리에 옅은 그림자를 둬서 더 있음을 알린다
+   (열 경계에서 딱 잘리면 표가 거기서 끝난 것처럼 보인다). 앞의 두 겹(가림막)은 내용과 함께 움직이고
+   뒤의 두 겹(그림자)은 제자리에 있어, 끝까지 밀면 그림자가 가려진다. */
 .table-wrap {
   overflow-x: auto;
+  background:
+    linear-gradient(to right, var(--surface) 40%, transparent) left center,
+    linear-gradient(to left, var(--surface) 40%, transparent) right center,
+    linear-gradient(to right, var(--line), transparent) left center,
+    linear-gradient(to left, var(--line), transparent) right center;
+  background-repeat: no-repeat;
+  background-size: 32px 100%, 32px 100%, 12px 100%, 12px 100%;
+  background-attachment: local, local, scroll, scroll;
 }
 
 table {

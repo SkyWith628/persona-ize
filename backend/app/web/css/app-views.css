@@ -125,6 +125,9 @@
   font-size: var(--text-s);
   text-decoration: none;
   font-variant-numeric: tabular-nums;
+  /* 좁은 폭에서 "오늘"이 글자마다 줄바꿈되지 않게 한다 */
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .usage-pill:hover {
@@ -811,6 +814,11 @@
   padding: var(--space-3) var(--space-5);
   border-top: 1px solid var(--line);
   background: var(--surface);
+}
+
+/* 붙박이 저장 줄이 포커스를 받은 입력과 그 아래 오류 문구를 가리지 않게, 스크롤될 때 줄 높이만큼 띄운다 */
+.persona-form :is(input, textarea, .field-error) {
+  scroll-margin-bottom: calc(var(--control-h) * 3);
 }
 
 .dirty {

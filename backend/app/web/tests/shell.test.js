@@ -81,3 +81,15 @@ test("화면 스크립트는 innerHTML·eval·브라우저 기본 대화상자�
     assert.doesNotMatch(raw, /["'`](?:https?:)?\/\/[a-z0-9.-]+\.[a-z]{2,}/i, `${file}: 외부 주소`);
   }
 });
+
+test("안내 문장 속 링크와 붙박이 저장 줄: 줄바꿈·가림을 막는 규칙이 있다", () => {
+  const css = (file) => read(file).replace(/\/\*[\s\S]*?\*\//g, "");
+  // "상대 화면" 링크가 줄 끝에서 "상대 / 화면"으로 나뉘지 않게(2026-11-25 브라우저 확인)
+  assert.match(css("css/app.css"), /\.note a\s*\{[^}]*white-space:\s*nowrap/);
+  // 긴 표현 칩 옆에서도 지우기 단추의 크기(40px)가 줄지 않게
+  assert.match(css("css/app.css"), /\.chip-remove\s*\{[^}]*flex-shrink:\s*0/);
+  // 포커스를 받은 입력과 오류 문구가 붙박이 저장 줄 밑에 깔리지 않게
+  assert.match(css("css/app-views.css"), /\.persona-form :is\([^)]*\.field-error[^)]*\)\s*\{[^}]*scroll-margin-bottom/);
+  // 좁은 폭에서 사용량 표시가 글자마다 줄바꿈되지 않게
+  assert.match(css("css/app-views.css"), /\.usage-pill\s*\{[^}]*white-space:\s*nowrap/);
+});

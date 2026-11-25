@@ -1,5 +1,6 @@
 // 관리자 수집 표의 "다시 시도" 버튼 검사. 브라우저 없이, 그리기에 쓰는 만큼만 흉내 낸 문서로 돌린다.
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 class FakeNode {
@@ -170,4 +171,29 @@ test("작업 표: 역할 고치기는 종류로 가르고 메시지 수를 적�
   assert.deepEqual([cells(rows[1])[2], cells(rows[1])[4]], ["가져오기", "3건"]);
   assert.deepEqual([cells(rows[2])[2], cells(rows[2])[4]], ["역할 고치기", "–"]);
   assert.deepEqual([cells(rows[3])[2], cells(rows[3])[4]], ["가져오기", "0건"]);
+});
+
+// ---------- 브라우저에서만 드러난 흠 (2026-11-25, 폭 390·768px) ----------
+// 그리기 흉내 문서로는 볼 수 없어 원본을 읽어 확인한다.
+
+const source = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
+
+test("표 스크롤 영역: 가려진 쪽에 그림자로 더 있음을 알린다 (색은 토큰만)", () => {
+  const css = source("../css/admin.css");
+  const rule = /\n\.table-wrap \{([^}]*)\}/.exec(css)?.[1] ?? "";
+  assert.match(rule, /overflow-x:\s*auto/);
+  // 가림막 두 겹은 내용과 함께 움직이고(local) 그림자 두 겹은 제자리에 있다(scroll)
+  assert.match(rule, /background-attachment:\s*local,\s*local,\s*scroll,\s*scroll/);
+  assert.equal((rule.match(/var\(--surface\)/g) ?? []).length, 2);
+  assert.doesNotMatch(rule, /#[0-9a-f]{3,8}\b|rgba?\(/i);
+});
+
+test("다시 시도: 실패하면 버튼에 포커스를 돌려주고, 새로 고치면 지난 안내를 지운다", () => {
+  const js = source("../js/admin.js");
+  const retry = js.slice(js.indexOf("async function retryHeld"), js.indexOf("function renderUsersPager"));
+  const failed = retry.slice(retry.indexOf("} catch (error) {"), retry.indexOf("return;", retry.indexOf("} catch (error) {")));
+  assert.match(failed, /button\.disabled = false;[\s\S]*button\.focus\(\)/);
+  const loadAll = js.slice(js.indexOf("async function loadAll"), js.indexOf("async function changeDays"));
+  assert.ok(loadAll.indexOf('setHeldNote("")') > 0);
+  assert.ok(loadAll.indexOf('setHeldNote("")') < loadAll.indexOf("await loadOverview()"));
 });

@@ -472,6 +472,7 @@ export function importProposal(data, current) {
 /**
  * 표현 칩 입력: 새 표현을 더한다. 쉼표로 여러 개를 한 번에 넣을 수 있다.
  * 돌려주는 error는 화면에 그대로 보여 줄 문장(없으면 null).
+ * rejected는 넣지 못한 표현(너무 긴 것, 개수 한도 뒤의 것) — 입력 칸에 남겨 고쳐 쓰게 한다.
  */
 export function addPhrases(list, raw, max) {
   const current = [...(list || [])];
@@ -479,19 +480,51 @@ export function addPhrases(list, raw, max) {
     .split(/[,\n]/)
     .map((v) => v.trim())
     .filter(Boolean);
+  const rejected = [];
   let error = null;
-  for (const v of incoming) {
+  for (let i = 0; i < incoming.length; i += 1) {
+    const v = incoming[i];
     // 서버처럼 글자(코드 포인트)로 센다 — length는 이모지를 2로 세어 서버가 받는 값을 막는다
     if (Array.from(v).length > LIMITS.phrase) {
       error = `표현 하나는 ${LIMITS.phrase}자까지 넣을 수 있어요.`;
+      rejected.push(v);
       continue;
     }
     if (current.includes(v)) continue;
     if (current.length >= max) {
       error = `${max}개까지 넣을 수 있어요.`;
+      rejected.push(...incoming.slice(i));
       break;
     }
     current.push(v);
   }
-  return { list: current, error };
+  return { list: current, error, rejected };
+}
+
+// 말투 설정 화면의 항목 이름(persona-editor.js의 라벨과 같다). 서버 오류의 항목 경로를 사람 말로 바꿀 때 쓴다.
+const EDITOR_LABEL = {
+  ...FIELD_LABEL,
+  preferred_phrases: "즐겨 쓰는 표현",
+  forbidden_phrases: "쓰지 않을 표현",
+};
+
+/**
+ * 말투 설정 저장이 422로 거절됐을 때 보여 줄 문장. 서버 문장은 "settings.forbidden_phrases: …"처럼
+ * 항목 경로로 시작하므로 화면의 항목 이름으로 바꾼다. 항목을 알 수 없으면 null(부르는 쪽이 describeError를 쓴다).
+ * @param {{status?: number, details?: Array<{loc: string, msg: string}>}} err
+ * @returns {null | {field: string, label: string, detail: string, message: string}}
+ */
+export function personaSaveError(err) {
+  if (!err || err.status !== 422 || !Array.isArray(err.details)) return null;
+  for (const d of err.details) {
+    const parts = String(d?.loc ?? "").split(".");
+    const at = parts.indexOf("settings");
+    const field = at >= 0 ? parts[at + 1] : null;
+    if (!field || !Object.hasOwn(EDITOR_LABEL, field)) continue;
+    const label = EDITOR_LABEL[field];
+    const msg = String(d.msg ?? "").trim().replace(/[.。]+$/, "");
+    const detail = msg ? `${msg}. 고친 뒤 다시 저장해 주세요.` : "입력한 내용을 확인한 뒤 다시 저장해 주세요.";
+    return { field, label, detail, message: `${label}: ${detail}` };
+  }
+  return null;
 }

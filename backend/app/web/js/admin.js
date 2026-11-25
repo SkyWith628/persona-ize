@@ -165,6 +165,8 @@ async function retryHeld(count, button, group = null) {
   } catch (error) {
     busy(-1);
     button.disabled = false;
+    // 막아 둔 동안 버튼이 포커스를 잃는다 — 키보드로 누른 사람이 그 자리에서 다시 누를 수 있게 돌려준다
+    if (document.activeElement === document.body) button.focus();
     if (error.status === 401) handleError(error);
     else if (group) setHeldNote(retryErrorText(error), { error: true });
     else setStatus(retryErrorText(error), { error: true });
@@ -371,6 +373,7 @@ async function loadAll() {
   busy(+1);
   // 처음에는 화면에 보이게, 그 뒤로는 낭독기에만 알린다 (대시보드가 흐려지는 것으로 충분하다)
   setStatus(state.loadedOnce ? "새로 고치는 중입니다…" : "불러오는 중입니다…", { quiet: state.loadedOnce });
+  setHeldNote(""); // 지난 다시 시도의 결과·오류 안내는 새로 읽은 표와 맞지 않는다
   try {
     // 요약을 먼저 읽는다. 로그인·권한·저장소 문제는 여기서 걸린다.
     try {
