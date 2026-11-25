@@ -33,29 +33,32 @@ final class LoginLogicTests: XCTestCase {
 
     // MARK: 가입·로그인 응답 읽기
 
+    /// 가입 201 `AuthOut` — 쿠키 세션용 값(`csrf_token`)이 있지만 앱은 쓰지 않는다.
     private let authBody = Data(#"""
     {"user_id":"7","username":"mina","is_admin":false,"consented_at":null,"consent_version":null,
      "consent_current":false,"email":null,"display_name":null,"role":"user","status":"active",
-     "csrf_token":"tok-1","expires_at":"2026-12-01T00:00:00Z"}
+     "csrf_token":"csrf-1","expires_at":"2026-12-01T00:00:00Z"}
+    """#.utf8)
+    /// 토큰 발급 200 `TokenOut`.
+    private let tokenBody = Data(#"""
+    {"access_token":"tok-1","token_type":"bearer","expires_at":"2026-12-09T00:00:00Z","user_id":"7","username":"mina"}
     """#.utf8)
     private let pendingBody = Data(#"{"status":"pending","username":"mina","email":null}"#.utf8)
 
-    func testRegister201StartsSession() throws {
-        XCTAssertEqual(try SignInOutcome.read(status: 201, body: authBody), .session(csrf: "tok-1"))
+    func testToken200StartsSession() throws {
+        XCTAssertEqual(try SignInOutcome.read(status: 200, body: tokenBody), .session(token: "tok-1"))
     }
 
-    func testLogin200StartsSession() throws {
-        XCTAssertEqual(try SignInOutcome.read(status: 200, body: authBody), .session(csrf: "tok-1"))
-    }
-
-    func testRegister202IsPendingApproval() throws {
-        XCTAssertEqual(try SignInOutcome.read(status: 202, body: pendingBody), .pendingApproval)
+    func testCookieLoginBodyIsNotASession() {
+        // 쿠키 로그인 응답(`csrf_token`만 있고 `access_token`이 없다)으로는 로그인하지 않는다.
+        XCTAssertThrowsError(try SignInOutcome.read(status: 200, body: authBody))
     }
 
     func test202IsPendingWhateverTheBodySays() throws {
-        // 202에는 쿠키가 없다 — 본문이 비었거나 다른 모양이어도 세션을 시작하지 않는다.
+        // 202에는 토큰이 없다 — 본문이 비었거나 다른 모양이어도 로그인하지 않는다.
+        XCTAssertEqual(try SignInOutcome.read(status: 202, body: pendingBody), .pendingApproval)
         XCTAssertEqual(try SignInOutcome.read(status: 202, body: Data()), .pendingApproval)
-        XCTAssertEqual(try SignInOutcome.read(status: 202, body: authBody), .pendingApproval)
+        XCTAssertEqual(try SignInOutcome.read(status: 202, body: tokenBody), .pendingApproval)
     }
 
     func testPendingBodyWithoutTokenIsPendingEvenOnOtherStatus() throws {
@@ -64,11 +67,72 @@ final class LoginLogicTests: XCTestCase {
     }
 
     func testSuccessWithoutTokenOrPendingStatusIsAnError() {
-        for body in [Data(), Data("{}".utf8), Data(#"{"csrf_token":""}"#.utf8), Data(#"{"status":"active"}"#.utf8)] {
-            XCTAssertThrowsError(try SignInOutcome.read(status: 201, body: body)) { error in
-                XCTAssertEqual((error as? ServiceError)?.status, 201)
+        for body in [Data(), Data("{}".utf8), Data(#"{"access_token":""}"#.utf8), Data(#"{"status":"active"}"#.utf8)] {
+            XCTAssertThrowsError(try SignInOutcome.read(status: 200, body: body)) { error in
+                XCTAssertEqual((error as? ServiceError)?.status, 200)
             }
         }
+    }
+
+    func testRegister201CanGoOnToToken() {
+        XCTAssertTrue(SignInOutcome.signedUp(status: 201, body: authBody))
+        // 본문을 못 읽어도 201이면 계정은 만들어졌다 — 토큰 발급이 결과를 가린다.
+        XCTAssertTrue(SignInOutcome.signedUp(status: 201, body: Data()))
+    }
+
+    func testRegister202OrPendingBodyStopsBeforeToken() {
+        XCTAssertFalse(SignInOutcome.signedUp(status: 202, body: pendingBody))
+        XCTAssertFalse(SignInOutcome.signedUp(status: 202, body: Data()))
+        XCTAssertFalse(SignInOutcome.signedUp(status: 201, body: pendingBody))
+    }
+
+    func testTokenRequestNamesTheMobileClient() {
+        XCTAssertEqual(API.tokenRequest(name: "mina", password: "pw-123456"),
+                       ["username": "mina", "password": "pw-123456", "client": "mobile"])
+    }
+
+    // MARK: Bearer 토큰
+
+    func testBearerHeader() {
+        var request = URLRequest(url: URL(string: "https://example.test/v1/contacts")!)
+        BearerAuth.apply("tok-1", to: &request)
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer tok-1")
+    }
+
+    func testOnlyInvalidTokenChallengeMeansExpired() {
+        XCTAssertTrue(BearerAuth.rejected(status: 401, challenge: #"Bearer error="invalid_token""#))
+        // 비밀번호 변경·계정 삭제에서 비밀번호가 틀린 401에는 이 헤더가 없다 — 로그아웃시키지 않는다.
+        XCTAssertFalse(BearerAuth.rejected(status: 401, challenge: nil))
+        XCTAssertFalse(BearerAuth.rejected(status: 401, challenge: ""))
+        XCTAssertFalse(BearerAuth.rejected(status: 403, challenge: #"Bearer error="invalid_token""#))
+    }
+
+    func testSavedLoginSurvivesEncoding() throws {
+        let login = SavedLogin(server: "https://example.test", username: "mina", token: "tok-1")
+        XCTAssertEqual(try JSONDecoder().decode(SavedLogin.self, from: JSONEncoder().encode(login)), login)
+    }
+
+    @MainActor
+    func testClientHandsOutCredentialsOnlyWhenItHasAToken() throws {
+        let fresh = try API(server: "https://example.test")
+        XCTAssertNil(fresh.keyboardCredentials())
+        XCTAssertNil(fresh.savedLogin(username: "mina"))
+
+        let restored = try API(server: "https://example.test", token: "tok-1")
+        XCTAssertEqual(restored.keyboardCredentials()?.server, "https://example.test")
+        XCTAssertEqual(restored.keyboardCredentials()?.token, "tok-1")
+        XCTAssertEqual(restored.savedLogin(username: "mina"),
+                       SavedLogin(server: "https://example.test", username: "mina", token: "tok-1"))
+    }
+
+    // MARK: 첨삭 조건
+
+    func testDefaultConditionIsAutoLikeTheWeb() {
+        XCTAssertEqual(Labels.defaultCondition, "auto")
+        XCTAssertEqual(Labels.conditions.first?.0, "auto")
+        XCTAssertFalse(Labels.needsPersona("auto"))
+        XCTAssertFalse(Labels.needsPersona("A"))
+        for condition in ["B", "C", "D"] { XCTAssertTrue(Labels.needsPersona(condition), condition) }
     }
 
     func testPendingSignupNoticePointsToLogin() {

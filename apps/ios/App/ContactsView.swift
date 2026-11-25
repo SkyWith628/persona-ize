@@ -360,6 +360,8 @@ private struct ConversationView: View {
     @State private var meName = ""
     @State private var contactName = ""
     @State private var job: ImportJob?
+    /// 이번 가져오기에서 서버가 따르지 않은 화자 지정. 가져오기 응답에만 오고 진행 확인(GET) 응답에는 없어 따로 둔다.
+    @State private var ignoredRoles: [IgnoredSpeakerRole] = []
     @State private var picking = false
     @State private var confirming = false
     @FocusState private var editing: Bool
@@ -507,12 +509,34 @@ private struct ConversationView: View {
             default:
                 EmptyView()
             }
+            if let note = IgnoredRolesNote.make(imported: job.imported, ignored: ignoredRoles) {
+                rolesNote(note)
+            }
         } header: {
             Text("분석")
         } footer: {
             Text("이 상대에게 쓰는 말투는 이전 화면에서 직접 정해요.")
         }
         .listRowBackground(Theme.surface)
+    }
+
+    /// 서버가 따르지 않은 화자 지정 안내: 하나면 한 문단, 둘 이상이면 머리말 · 화자마다 한 줄 · 해법.
+    /// 색만이 아니라 기호와 문구로 알리고, 화면 낭독기에는 한 문장으로 읽힌다.
+    private func rolesNote(_ note: IgnoredRolesNote) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Space.s) {
+            Label(note.head, systemImage: "exclamationmark.circle.fill")
+            ForEach(note.items.indices, id: \.self) { index in
+                Text("· \(note.items[index].name) — \(note.items[index].detail)")
+            }
+            if let more = note.more { Text(more) }
+            if let tail = note.tail { Text(tail) }
+        }
+        .font(.footnote).foregroundStyle(Theme.ink)
+        .fixedSize(horizontal: false, vertical: true)
+        .card(padding: Theme.Space.m, fill: Theme.warnSoft)
+        .listRowSeparator(.hidden)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(note.text)
     }
 
     /// 고른 파일을 글로 읽는다. 큰 파일은 요청 한 번에 담기 어려워 막는다.
@@ -542,10 +566,14 @@ private struct ConversationView: View {
                 let partner = [contactName.trimmingCharacters(in: .whitespaces), contact.alias].filter { !$0.isEmpty }
                 let roles = try ImportParser.roles(for: preview.speakers, me: me, contact: partner)
                 let payload = RawImportPayload(format: "kakao", text: text, speaker_map: roles)
-                job = try await api.importRaw(conversation: conversation.id, payload: payload)
+                let done = try await api.importRaw(conversation: conversation.id, payload: payload)
+                ignoredRoles = done.ignoredRoles
+                job = done
             } else {
                 let payload = try ImportParser.parse(text, me: me, contact: contact.alias)
-                job = try await api.importMessages(conversation: conversation.id, payload: payload)
+                let done = try await api.importMessages(conversation: conversation.id, payload: payload)
+                ignoredRoles = []
+                job = done
             }
             text = ""
             try await loadMessages()

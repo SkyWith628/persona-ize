@@ -6,18 +6,65 @@ struct PersonaApp: App {
     var body: some Scene { WindowGroup { Root().environmentObject(session) } }
 }
 
-/// 로그인한 동안의 API 연결과 상대 목록. 앱을 종료하면 사라진다.
+/// 로그인한 동안의 API 연결과 상대 목록. 로그인 토큰은 키체인에 남겨 다음 실행 때 되살린다.
 @MainActor
 final class Session: ObservableObject {
     @Published private(set) var api: API?
     @Published private(set) var username = ""
     @Published private(set) var contacts: [Contact] = []
+    /// 기기에 남은 로그인을 확인하는 중인가. 끝나기 전에는 로그인 화면을 보이지 않는다.
+    @Published private(set) var restoring = true
+    /// 로그인 화면이 한 번 보여 줄 안내 (토큰 만료 등). 보여 준 쪽이 비운다.
+    @Published var notice = ""
+
+    static let expiredNotice = "로그인이 만료됐어요. 다시 로그인해 주세요."
+    static let offlineNotice = "서버에 연결하지 못했어요. 연결을 확인한 뒤 다시 로그인해 주세요."
 
     func start(_ client: API, username: String) async throws {
         contacts = try await client.contacts()
         self.username = username
+        // 이후 요청에서 토큰이 거절되면(만료·폐기) 로그인 화면으로 돌아간다.
+        client.onExpired = { [weak self] in self?.expire() }
         api = client
+        // 키체인에 못 남겨도 이번 실행 동안은 그대로 쓴다.
+        if let login = client.savedLogin(username: username) { try? TokenStore.save(login) }
         syncKeyboard()
+    }
+
+    /// 앱을 열 때 한 번: 키체인의 토큰으로 로그인 상태를 되살린다.
+    /// 토큰이 거절되면(401) 지우고 로그인 화면으로, 연결 문제면 토큰은 두고 로그인 화면으로 보낸다.
+    func restore() async {
+        guard restoring else { return }
+        defer { restoring = false }
+        guard api == nil, let saved = TokenStore.load() else { return }
+        guard let client = try? API(server: saved.server, token: saved.token) else {
+            TokenStore.clear()
+            return
+        }
+        do {
+            try await start(client, username: saved.username)
+        } catch let error as ServiceError where error.status == 401 {
+            end()
+            notice = Self.expiredNotice
+        } catch {
+            notice = Self.offlineNotice
+        }
+    }
+
+    /// 새로 로그인하기 전에 기기에 남은 예전 토큰을 그 토큰을 준 서버에서 폐기하고 지운다.
+    /// 서버 주소를 바꿔 로그인해도 예전 토큰이 다른 서버로 가지 않는다. 폐기에 실패해도 계속한다.
+    func discardSaved() async {
+        guard let saved = TokenStore.load() else { return }
+        if let old = try? API(server: saved.server, token: saved.token) { try? await old.logout() }
+        TokenStore.clear()
+        KeyboardLink.clear()
+    }
+
+    /// 서버가 토큰을 거절했다(만료·폐기·정지). 기기의 로그인을 지우고 로그인 화면으로 돌린다.
+    func expire() {
+        guard api != nil else { return }
+        end()
+        notice = Self.expiredNotice
     }
 
     func reload() async throws {
@@ -32,7 +79,7 @@ final class Session: ObservableObject {
         guard let credentials = api?.keyboardCredentials() else { return }
         let defaults = UserDefaults.standard
         let link = KeyboardLink(
-            server: credentials.server, cookie: credentials.cookie, csrf: credentials.csrf,
+            server: credentials.server, token: credentials.token,
             contacts: contacts.map { .init(id: $0.id, alias: $0.alias, ready: $0.persona_version != nil) },
             selected: defaults.string(forKey: "lastContact") ?? "",
             recents: (defaults.string(forKey: "recentContacts") ?? "").split(separator: ",").map(String.init))
@@ -41,10 +88,11 @@ final class Session: ObservableObject {
 
     func alias(_ contact: String) -> String { contacts.first { $0.id == contact }?.alias ?? "삭제된 상대" }
 
-    /// 준비한 문장을 지우고 화면을 로그인으로 돌린다. 서버 세션 정리는 호출한 쪽이 먼저 한다.
+    /// 준비한 문장과 기기에 남긴 토큰을 지우고 화면을 로그인으로 돌린다. 서버의 토큰 폐기는 호출한 쪽이 먼저 한다.
     func end() {
         try? KeyboardMessage.clear()
         KeyboardLink.clear()
+        TokenStore.clear()
         api = nil
         contacts = []
         username = ""
@@ -124,8 +172,13 @@ enum Haptic {
 enum Labels {
     static let relationships = [("superior", "상사"), ("colleague", "동료·동기"), ("subordinate", "후배"), ("friend", "친구"),
                                 ("family", "가족"), ("partner", "연인"), ("acquaintance", "지인·거래처")]
-    static let conditions = [("D", "D 말투 + 예전 표현 + 지난 일"), ("C", "C 말투 + 예전 표현"),
-                             ("B", "B 말투"), ("A", "A 기준선(말투 없음)")]
+    /// 첨삭 요청의 기본 조건: 서버가 이 상대에게 쓸 수 있는 가장 풍부한 조건을 고른다 (웹과 같다).
+    static let defaultCondition = "auto"
+    static let conditions = [("auto", "자동 (서버가 고름)"), ("D", "D 말투 + 예전 표현 + 지난 일"),
+                             ("C", "C 말투 + 예전 표현"), ("B", "B 말투"), ("A", "A 기준선(말투 없음)")]
+
+    /// 직접 고른 B~D는 저장된 말투 설정이 있어야 한다(없으면 서버가 422). 자동과 A는 없어도 된다.
+    static func needsPersona(_ condition: String) -> Bool { ["B", "C", "D"].contains(condition) }
 
     /// 페르소나 5단계의 말 풀이 (와이어프레임 M6). 값은 1~5.
     static let formality = ["반말·캐주얼", "편한 말", "보통", "정중", "매우 정중"]
@@ -167,8 +220,17 @@ private struct Root: View {
     var body: some View {
         Group {
             if session.api == nil {
-                // 처음 한 번은 가입 전에 예시부터 보여 준다.
-                if seenIntro { NavigationStack { LoginView() } } else { IntroView { seenIntro = true } }
+                if session.restoring {
+                    // 기기에 남은 로그인을 확인하는 동안. 토큰이 없으면 바로 지나간다.
+                    ProgressView("로그인 상태를 확인하고 있어요")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(Theme.bg.ignoresSafeArea())
+                } else if seenIntro {
+                    NavigationStack { LoginView() }
+                } else {
+                    // 처음 한 번은 가입 전에 예시부터 보여 준다.
+                    IntroView { seenIntro = true }
+                }
             } else if !setupDone {
                 NavigationStack { SetupView(hasContacts: !session.contacts.isEmpty) { setupDone = true } }
             } else {
@@ -181,6 +243,7 @@ private struct Root: View {
             }
         }
         .tint(Theme.accent)
+        .task { await session.restore() }
     }
 }
 
@@ -213,7 +276,7 @@ private struct LoginView: View {
                 fields
                 if !awaitingApproval { signupFields }
                 if defaultServer != nil { serverSettings }
-                Text("서버 주소와 아이디만 기기에 기억해요. 비밀번호와 로그인 상태는 앱을 끄면 사라져요.")
+                Text("비밀번호는 기기에 저장하지 않아요. 로그인 상태는 이 기기에만 안전하게 보관하고, 로그아웃하면 지워요.")
                     .font(.footnote).foregroundStyle(Theme.muted)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, Theme.Space.xs)
@@ -238,6 +301,13 @@ private struct LoginView: View {
         .status(run)
         .navigationTitle("Persona_ize")
         .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            // 토큰이 만료돼 돌아온 경우 등: 왜 로그인 화면인지 한 번 알린다.
+            if !session.notice.isEmpty {
+                run.notice = session.notice
+                session.notice = ""
+            }
+        }
     }
 
     /// 첫인상: 큰 제목 하나와 한 줄 소개.
@@ -383,21 +453,29 @@ private struct LoginView: View {
         run {
             guard let address else { throw ServiceError(message: "HTTPS 서버 주소를 확인해 주세요.") }
             let client = try API(server: address)
+            // 기기에 남은 예전 토큰(다른 서버의 것일 수도 있다)은 새 로그인 전에 폐기한다.
+            await session.discardSaved()
             do {
                 switch try await client.signIn(name: name, password: password, register: register,
                                                     inviteCode: code, consent: consent) {
                 case .session:
                     password = ""
-                    try await session.start(client, username: name)
+                    do {
+                        try await session.start(client, username: name)
+                    } catch {
+                        // 토큰은 받았는데 첫 요청이 실패했다. 쓰지 못할 토큰을 서버에 남기지 않는다.
+                        try? await client.logout()
+                        throw error
+                    }
                     pendingName = ""
                 case .pendingApproval:
-                    // 승인제 가입(202): 계정만 만들어졌고 세션은 없다. 상대 목록을 읽지 않고 로그인으로 유도한다.
+                    // 승인제 가입(202): 계정만 만들어졌고 토큰은 없다. 상대 목록을 읽지 않고 로그인으로 유도한다.
                     password = ""
                     pendingName = name
                     run.notice = SignInOutcome.pendingNotice
                 }
             } catch let error as AccountStateError {
-                // 로그인 403: 서버가 세션을 열지 않았다. 승인 대기면 같은 아이디로 다시 가입하지 않게 한다.
+                // 로그인 403: 서버가 토큰을 주지 않았다. 승인 대기면 같은 아이디로 다시 가입하지 않게 한다.
                 if error.state == .pending { pendingName = name }
                 throw ServiceError(message: error.state.notice, status: error.status)
             }
