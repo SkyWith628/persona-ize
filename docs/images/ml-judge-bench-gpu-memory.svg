@@ -1,13 +1,17 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 470" width="960" height="470" font-family="'Malgun Gothic','Apple SD Gothic Neo','Noto Sans KR',system-ui,sans-serif">
 <rect width="960" height="470" fill="#fcfcfb"/>
 <text x="32.0" y="38.0" font-size="17" fill="#0b0b0b" text-anchor="start" font-weight="700">학습할 때 GPU 메모리 (혼합 정밀도)</text>
-<text x="32.0" y="60.0" font-size="12.5" fill="#52514e" text-anchor="start" font-weight="400">입력이 커질수록(길이 × 배치) 메모리가 늘고, large는 길이 256·배치 64에서 넘친다. 단위 GB.</text>
+<text x="32.0" y="60.0" font-size="12.5" fill="#52514e" text-anchor="start" font-weight="400">입력이 커질수록(길이 × 배치) 메모리가 늘고, 무거운 두 모델은 길이 256·배치 64에서 넘친다. 단위 GB.</text>
 <rect x="70" y="82" width="12" height="12" rx="3" fill="#2a78d6"/>
 <text x="88.0" y="92.0" font-size="12" fill="#52514e" text-anchor="start" font-weight="400">KLUE base</text>
-<rect x="173.8" y="82" width="12" height="12" rx="3" fill="#eb6834"/>
-<text x="191.8" y="92.0" font-size="12" fill="#52514e" text-anchor="start" font-weight="400">KcELECTRA base</text>
-<rect x="318.6" y="82" width="12" height="12" rx="3" fill="#1baf7a"/>
-<text x="336.6" y="92.0" font-size="12" fill="#52514e" text-anchor="start" font-weight="400">KLUE large</text>
+<rect x="173" y="82" width="12" height="12" rx="3" fill="#eb6834"/>
+<text x="191.0" y="92.0" font-size="12" fill="#52514e" text-anchor="start" font-weight="400">KcELECTRA base</text>
+<rect x="311" y="82" width="12" height="12" rx="3" fill="#1baf7a"/>
+<text x="329.0" y="92.0" font-size="12" fill="#52514e" text-anchor="start" font-weight="400">A.X Encoder</text>
+<rect x="428" y="82" width="12" height="12" rx="3" fill="#eda100"/>
+<text x="446.0" y="92.0" font-size="12" fill="#52514e" text-anchor="start" font-weight="400">KF-DeBERTa</text>
+<rect x="538" y="82" width="12" height="12" rx="3" fill="#e87ba4"/>
+<text x="556.0" y="92.0" font-size="12" fill="#52514e" text-anchor="start" font-weight="400">KLUE large</text>
 <line x1="70" y1="390.0" x2="930" y2="390.0" stroke="#c3c2b7"/>
 <text x="62.0" y="394.0" font-size="11.5" fill="#898781" text-anchor="end" font-weight="400">0</text>
 <line x1="70" y1="322.5" x2="930" y2="322.5" stroke="#e1e0d9"/>
@@ -20,43 +24,55 @@
 <text x="62.0" y="124.0" font-size="11.5" fill="#898781" text-anchor="end" font-weight="400">16</text>
 <line x1="70" y1="150.4" x2="930" y2="150.4" stroke="#52514e" stroke-width="1.5" stroke-dasharray="6 4"/>
 <text x="76.0" y="143.4" font-size="12" fill="#0b0b0b" text-anchor="start" font-weight="700">이 PC에서 쓸 수 있는 한계 14.2GB</text>
-<path d="M94.7,390.0 V355.7 Q94.7,351.7 98.7,351.7 H120.7 Q124.7,351.7 124.7,355.7 V390.0 Z" fill="#2a78d6"/>
-<path d="M126.7,390.0 V351.5 Q126.7,347.5 130.7,347.5 H152.7 Q156.7,347.5 156.7,351.5 V390.0 Z" fill="#eb6834"/>
-<path d="M158.7,390.0 V282.8 Q158.7,278.8 162.7,278.8 H184.7 Q188.7,278.8 188.7,282.8 V390.0 Z" fill="#1baf7a"/>
-<text x="173.7" y="272.8" font-size="11.5" fill="#0b0b0b" text-anchor="middle" font-weight="700">6.6</text>
+<path d="M85.2,390.0 V355.7 Q85.2,351.7 89.2,351.7 H102.2 Q106.2,351.7 106.2,355.7 V390.0 Z" fill="#2a78d6"/>
+<path d="M108.2,390.0 V351.5 Q108.2,347.5 112.2,347.5 H125.2 Q129.2,347.5 129.2,351.5 V390.0 Z" fill="#eb6834"/>
+<path d="M131.2,390.0 V341.4 Q131.2,337.4 135.2,337.4 H148.2 Q152.2,337.4 152.2,341.4 V390.0 Z" fill="#1baf7a"/>
+<path d="M154.2,390.0 V324.8 Q154.2,320.8 158.2,320.8 H171.2 Q175.2,320.8 175.2,324.8 V390.0 Z" fill="#eda100"/>
+<path d="M177.2,390.0 V282.8 Q177.2,278.8 181.2,278.8 H194.2 Q198.2,278.8 198.2,282.8 V390.0 Z" fill="#e87ba4"/>
+<text x="187.7" y="272.8" font-size="11.5" fill="#0b0b0b" text-anchor="middle" font-weight="700">6.6</text>
 <text x="141.7" y="410.0" font-size="12" fill="#52514e" text-anchor="middle" font-weight="400">길이 64</text>
 <text x="141.7" y="427.0" font-size="12" fill="#52514e" text-anchor="middle" font-weight="400">배치 16</text>
-<path d="M238.0,390.0 V348.8 Q238.0,344.8 242.0,344.8 H264.0 Q268.0,344.8 268.0,348.8 V390.0 Z" fill="#2a78d6"/>
-<path d="M270.0,390.0 V344.6 Q270.0,340.6 274.0,340.6 H296.0 Q300.0,340.6 300.0,344.6 V390.0 Z" fill="#eb6834"/>
-<path d="M302.0,390.0 V265.8 Q302.0,261.8 306.0,261.8 H328.0 Q332.0,261.8 332.0,265.8 V390.0 Z" fill="#1baf7a"/>
-<text x="317.0" y="255.8" font-size="11.5" fill="#0b0b0b" text-anchor="middle" font-weight="700">7.6</text>
+<path d="M228.5,390.0 V348.8 Q228.5,344.8 232.5,344.8 H245.5 Q249.5,344.8 249.5,348.8 V390.0 Z" fill="#2a78d6"/>
+<path d="M251.5,390.0 V344.6 Q251.5,340.6 255.5,340.6 H268.5 Q272.5,340.6 272.5,344.6 V390.0 Z" fill="#eb6834"/>
+<path d="M274.5,390.0 V331.2 Q274.5,327.2 278.5,327.2 H291.5 Q295.5,327.2 295.5,331.2 V390.0 Z" fill="#1baf7a"/>
+<path d="M297.5,390.0 V307.1 Q297.5,303.1 301.5,303.1 H314.5 Q318.5,303.1 318.5,307.1 V390.0 Z" fill="#eda100"/>
+<path d="M320.5,390.0 V265.8 Q320.5,261.8 324.5,261.8 H337.5 Q341.5,261.8 341.5,265.8 V390.0 Z" fill="#e87ba4"/>
+<text x="331.0" y="255.8" font-size="11.5" fill="#0b0b0b" text-anchor="middle" font-weight="700">7.6</text>
 <text x="285.0" y="410.0" font-size="12" fill="#52514e" text-anchor="middle" font-weight="400">길이 64</text>
 <text x="285.0" y="427.0" font-size="12" fill="#52514e" text-anchor="middle" font-weight="400">배치 32</text>
-<path d="M381.3,390.0 V336.1 Q381.3,332.1 385.3,332.1 H407.3 Q411.3,332.1 411.3,336.1 V390.0 Z" fill="#2a78d6"/>
-<path d="M413.3,390.0 V331.7 Q413.3,327.7 417.3,327.7 H439.3 Q443.3,327.7 443.3,331.7 V390.0 Z" fill="#eb6834"/>
-<path d="M445.3,390.0 V231.7 Q445.3,227.7 449.3,227.7 H471.3 Q475.3,227.7 475.3,231.7 V390.0 Z" fill="#1baf7a"/>
-<text x="460.3" y="221.7" font-size="11.5" fill="#0b0b0b" text-anchor="middle" font-weight="700">9.6</text>
+<path d="M371.8,390.0 V336.1 Q371.8,332.1 375.8,332.1 H388.8 Q392.8,332.1 392.8,336.1 V390.0 Z" fill="#2a78d6"/>
+<path d="M394.8,390.0 V331.7 Q394.8,327.7 398.8,327.7 H411.8 Q415.8,327.7 415.8,331.7 V390.0 Z" fill="#eb6834"/>
+<path d="M417.8,390.0 V311.6 Q417.8,307.6 421.8,307.6 H434.8 Q438.8,307.6 438.8,311.6 V390.0 Z" fill="#1baf7a"/>
+<path d="M440.8,390.0 V271.8 Q440.8,267.8 444.8,267.8 H457.8 Q461.8,267.8 461.8,271.8 V390.0 Z" fill="#eda100"/>
+<path d="M463.8,390.0 V231.7 Q463.8,227.7 467.8,227.7 H480.8 Q484.8,227.7 484.8,231.7 V390.0 Z" fill="#e87ba4"/>
+<text x="474.3" y="221.7" font-size="11.5" fill="#0b0b0b" text-anchor="middle" font-weight="700">9.6</text>
 <text x="428.3" y="410.0" font-size="12" fill="#52514e" text-anchor="middle" font-weight="400">길이 64</text>
 <text x="428.3" y="427.0" font-size="12" fill="#52514e" text-anchor="middle" font-weight="400">배치 64</text>
-<path d="M524.7,390.0 V336.1 Q524.7,332.1 528.7,332.1 H550.7 Q554.7,332.1 554.7,336.1 V390.0 Z" fill="#2a78d6"/>
-<path d="M556.7,390.0 V331.7 Q556.7,327.7 560.7,327.7 H582.7 Q586.7,327.7 586.7,331.7 V390.0 Z" fill="#eb6834"/>
-<path d="M588.7,390.0 V231.7 Q588.7,227.7 592.7,227.7 H614.7 Q618.7,227.7 618.7,231.7 V390.0 Z" fill="#1baf7a"/>
-<text x="603.7" y="221.7" font-size="11.5" fill="#0b0b0b" text-anchor="middle" font-weight="700">9.6</text>
+<path d="M515.2,390.0 V336.1 Q515.2,332.1 519.2,332.1 H532.2 Q536.2,332.1 536.2,336.1 V390.0 Z" fill="#2a78d6"/>
+<path d="M538.2,390.0 V331.7 Q538.2,327.7 542.2,327.7 H555.2 Q559.2,327.7 559.2,331.7 V390.0 Z" fill="#eb6834"/>
+<path d="M561.2,390.0 V311.3 Q561.2,307.3 565.2,307.3 H578.2 Q582.2,307.3 582.2,311.3 V390.0 Z" fill="#1baf7a"/>
+<path d="M584.2,390.0 V273.3 Q584.2,269.3 588.2,269.3 H601.2 Q605.2,269.3 605.2,273.3 V390.0 Z" fill="#eda100"/>
+<path d="M607.2,390.0 V231.7 Q607.2,227.7 611.2,227.7 H624.2 Q628.2,227.7 628.2,231.7 V390.0 Z" fill="#e87ba4"/>
+<text x="617.7" y="221.7" font-size="11.5" fill="#0b0b0b" text-anchor="middle" font-weight="700">9.6</text>
 <text x="571.7" y="410.0" font-size="12" fill="#52514e" text-anchor="middle" font-weight="400">길이 256</text>
 <text x="571.7" y="427.0" font-size="12" fill="#52514e" text-anchor="middle" font-weight="400">배치 16</text>
-<path d="M668.0,390.0 V310.1 Q668.0,306.1 672.0,306.1 H694.0 Q698.0,306.1 698.0,310.1 V390.0 Z" fill="#2a78d6"/>
-<path d="M700.0,390.0 V305.7 Q700.0,301.7 704.0,301.7 H726.0 Q730.0,301.7 730.0,305.7 V390.0 Z" fill="#eb6834"/>
-<path d="M732.0,390.0 V163.7 Q732.0,159.7 736.0,159.7 H758.0 Q762.0,159.7 762.0,163.7 V390.0 Z" fill="#1baf7a"/>
-<text x="747.0" y="176.7" font-size="11.5" fill="#ffffff" text-anchor="middle" font-weight="700">13.7</text>
+<path d="M658.5,390.0 V310.1 Q658.5,306.1 662.5,306.1 H675.5 Q679.5,306.1 679.5,310.1 V390.0 Z" fill="#2a78d6"/>
+<path d="M681.5,390.0 V305.7 Q681.5,301.7 685.5,301.7 H698.5 Q702.5,301.7 702.5,305.7 V390.0 Z" fill="#eb6834"/>
+<path d="M704.5,390.0 V271.0 Q704.5,267.0 708.5,267.0 H721.5 Q725.5,267.0 725.5,271.0 V390.0 Z" fill="#1baf7a"/>
+<path d="M727.5,390.0 V203.7 Q727.5,199.7 731.5,199.7 H744.5 Q748.5,199.7 748.5,203.7 V390.0 Z" fill="#eda100"/>
+<path d="M750.5,390.0 V163.7 Q750.5,159.7 754.5,159.7 H767.5 Q771.5,159.7 771.5,163.7 V390.0 Z" fill="#e87ba4"/>
+<text x="745.5" y="171.7" font-size="11.5" fill="#0b0b0b" text-anchor="end" font-weight="700">13.7</text>
 <text x="715.0" y="410.0" font-size="12" fill="#52514e" text-anchor="middle" font-weight="400">길이 256</text>
 <text x="715.0" y="427.0" font-size="12" fill="#52514e" text-anchor="middle" font-weight="400">배치 32</text>
-<path d="M811.3,390.0 V258.2 Q811.3,254.2 815.3,254.2 H837.3 Q841.3,254.2 841.3,258.2 V390.0 Z" fill="#2a78d6"/>
-<text x="826.3" y="248.2" font-size="11.5" fill="#0b0b0b" text-anchor="middle" font-weight="400">8.1</text>
-<path d="M843.3,390.0 V253.8 Q843.3,249.8 847.3,249.8 H869.3 Q873.3,249.8 873.3,253.8 V390.0 Z" fill="#eb6834"/>
-<text x="858.3" y="243.8" font-size="11.5" fill="#0b0b0b" text-anchor="middle" font-weight="400">8.3</text>
-<text x="902.3" y="364.0" font-size="11.5" fill="#0b0b0b" text-anchor="middle" font-weight="700">메모리</text>
-<text x="902.3" y="380.0" font-size="11.5" fill="#0b0b0b" text-anchor="middle" font-weight="700">부족</text>
+<path d="M801.8,390.0 V258.2 Q801.8,254.2 805.8,254.2 H818.8 Q822.8,254.2 822.8,258.2 V390.0 Z" fill="#2a78d6"/>
+<text x="812.3" y="248.2" font-size="11" fill="#52514e" text-anchor="middle" font-weight="400">8.1</text>
+<path d="M824.8,390.0 V253.8 Q824.8,249.8 828.8,249.8 H841.8 Q845.8,249.8 845.8,253.8 V390.0 Z" fill="#eb6834"/>
+<text x="835.3" y="243.8" font-size="11" fill="#52514e" text-anchor="middle" font-weight="400">8.3</text>
+<path d="M847.8,390.0 V190.2 Q847.8,186.2 851.8,186.2 H864.8 Q868.8,186.2 868.8,190.2 V390.0 Z" fill="#1baf7a"/>
+<text x="858.3" y="180.2" font-size="11" fill="#52514e" text-anchor="middle" font-weight="400">12.1</text>
+<text x="892.8" y="364.0" font-size="11.5" fill="#0b0b0b" text-anchor="middle" font-weight="700">메모리</text>
+<text x="892.8" y="380.0" font-size="11.5" fill="#0b0b0b" text-anchor="middle" font-weight="700">부족</text>
 <text x="858.3" y="410.0" font-size="12" fill="#52514e" text-anchor="middle" font-weight="400">길이 256</text>
 <text x="858.3" y="427.0" font-size="12" fill="#52514e" text-anchor="middle" font-weight="400">배치 64</text>
-<text x="70.0" y="452.0" font-size="12" fill="#898781" text-anchor="start" font-weight="400">base 두 모델의 나머지 값은 본문 표에 있다. 길이 64·배치 64와 길이 256·배치 16은 토큰 수가 같아 메모리도 같다.</text>
+<text x="70.0" y="452.0" font-size="12" fill="#898781" text-anchor="start" font-weight="400">굵은 숫자는 KLUE large다. 나머지 값은 본문 표에 있다.</text>
 </svg>
