@@ -43,6 +43,7 @@
 |---|---|
 | [decisions.md](project/decisions.md) | 결정 기록 |
 | [backlog.md](project/backlog.md) | 남은 일 |
+| [roadmap-2026-11-25.md](project/roadmap-2026-11-25.md) | 완성까지의 계획: 먼저 정할 것, 트랙별 항목과 담당, 주차별 목표, 에이전트로 이어서 일하는 방법 |
 | [team-roles-and-schedule.md](project/team-roles-and-schedule.md) | 역할과 일정 |
 | [roles/](project/roles/) | 담당별 안내 (평가, 그래프, 시나리오) |
 
