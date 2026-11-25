@@ -20,6 +20,10 @@
 | [graph-redesign-2026-11-16.md](design/graph-redesign-2026-11-16.md) | 지식 그래프 재설계와 말투 프로필 |
 | [knowledge-graph.md](design/knowledge-graph.md) | 지식 그래프 구조와 쓰는 법 |
 | [ml-design-2026-11-24.md](design/ml-design-2026-11-24.md) | 학습 모델 도입 제안 (그림 원본: [ml-overview.drawio](design/ml-overview.drawio)) |
+| [ml-judge-design-2026-11-25.md](design/ml-judge-design-2026-11-25.md) | 학습 모델 ① 의미 보존 판정 모델 설계 (설계도 포함) |
+| [ml-prefilter-design-2026-11-25.md](design/ml-prefilter-design-2026-11-25.md) | 학습 모델 ② 그래프 수집 전 거르기 설계 (설계도 포함) |
+| [ml-style-sim-design-2026-11-25.md](design/ml-style-sim-design-2026-11-25.md) | 학습 모델 ③ 문체 유사도 모델 설계 (설계도 포함) |
+| [ml-condition-selector-design-2026-11-25.md](design/ml-condition-selector-design-2026-11-25.md) | 학습 모델 ④ 조건 선택기 설계 (설계도 포함) |
 | [iphone-mobile.md](design/iphone-mobile.md) | 아이폰 화면 설계 |
 | [literature-review.md](design/literature-review.md) | 참고한 논문 정리 |
 
@@ -45,6 +49,7 @@
 
 - 구조 그림: [architecture-stack-ko.png](images/architecture-stack-ko.png) (영문은 `-en`, 어두운 배경은 `-dark`, 원본은 같은 이름의 `.html`)
 - 학습 모델 제안의 그림: `ml-overview-*`
+- 학습 모델 네 개의 설계도: `ml-judge-stack-ko`, `ml-prefilter-stack-ko`, `ml-style-sim-stack-ko`, `ml-condition-selector-stack-ko` (각각 `.html` 원본과 `.png` 두 장)
 
 ## floorplan — 코드 지도
 
