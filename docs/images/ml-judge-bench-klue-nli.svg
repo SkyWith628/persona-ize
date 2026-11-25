@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 424" width="960" height="424" font-family="'Malgun Gothic','Apple SD Gothic Neo','Noto Sans KR',system-ui,sans-serif">
+<rect width="960" height="424" fill="#fcfcfb"/>
+<text x="32.0" y="38.0" font-size="17" fill="#0b0b0b" text-anchor="start" font-weight="700">KLUE-NLI 검증 정확도 (시드 3개)</text>
+<text x="32.0" y="60.0" font-size="12.5" fill="#52514e" text-anchor="start" font-weight="400">점 하나가 학습 한 번이다. 세로 막대는 세 번의 평균, 빈 마름모는 남이 보고한 값. 단위 %.</text>
+<circle cx="195" cy="88" r="5" fill="#52514e"/><text x="208.0" y="92.0" font-size="12" fill="#52514e" text-anchor="start" font-weight="400">시드별 점수</text>
+<rect x="300" y="79" width="3" height="18" fill="#0b0b0b"/><text x="312.0" y="92.0" font-size="12" fill="#52514e" text-anchor="start" font-weight="400">평균</text>
+<path d="M370,88 l6,-6 l6,6 l-6,6 z" fill="#fcfcfb" stroke="#898781" stroke-width="1.5"/><text x="390.0" y="92.0" font-size="12" fill="#52514e" text-anchor="start" font-weight="400">보고된 값</text>
+<line x1="190.0" y1="122" x2="190.0" y2="354" stroke="#e1e0d9"/>
+<text x="190.0" y="372.0" font-size="11.5" fill="#898781" text-anchor="middle" font-weight="400">84</text>
+<line x1="288.6" y1="122" x2="288.6" y2="354" stroke="#e1e0d9"/>
+<text x="288.6" y="372.0" font-size="11.5" fill="#898781" text-anchor="middle" font-weight="400">85</text>
+<line x1="387.1" y1="122" x2="387.1" y2="354" stroke="#e1e0d9"/>
+<text x="387.1" y="372.0" font-size="11.5" fill="#898781" text-anchor="middle" font-weight="400">86</text>
+<line x1="485.7" y1="122" x2="485.7" y2="354" stroke="#e1e0d9"/>
+<text x="485.7" y="372.0" font-size="11.5" fill="#898781" text-anchor="middle" font-weight="400">87</text>
+<line x1="584.3" y1="122" x2="584.3" y2="354" stroke="#e1e0d9"/>
+<text x="584.3" y="372.0" font-size="11.5" fill="#898781" text-anchor="middle" font-weight="400">88</text>
+<line x1="682.9" y1="122" x2="682.9" y2="354" stroke="#e1e0d9"/>
+<text x="682.9" y="372.0" font-size="11.5" fill="#898781" text-anchor="middle" font-weight="400">89</text>
+<line x1="781.4" y1="122" x2="781.4" y2="354" stroke="#e1e0d9"/>
+<text x="781.4" y="372.0" font-size="11.5" fill="#898781" text-anchor="middle" font-weight="400">90</text>
+<line x1="880.0" y1="122" x2="880.0" y2="354" stroke="#e1e0d9"/>
+<text x="880.0" y="372.0" font-size="11.5" fill="#898781" text-anchor="middle" font-weight="400">91</text>
+<text x="174.0" y="148.5" font-size="12.5" fill="#0b0b0b" text-anchor="end" font-weight="700">KLUE base</text>
+<line x1="360.5" y1="144" x2="374.3" y2="144" stroke="#2a78d6" stroke-width="2" opacity="0.45"/>
+<path d="M262.9,144 l6,-6 l6,6 l-6,6 z" fill="#fcfcfb" stroke="#898781" stroke-width="1.5"/>
+<circle cx="360.5" cy="144" r="6" fill="#2a78d6" stroke="#fcfcfb" stroke-width="2"/>
+<circle cx="374.3" cy="144" r="6" fill="#2a78d6" stroke="#fcfcfb" stroke-width="2"/>
+<circle cx="374.3" cy="144" r="6" fill="#2a78d6" stroke="#fcfcfb" stroke-width="2"/>
+<rect x="368.2" y="131" width="3" height="26" fill="#0b0b0b"/>
+<text x="388.3" y="148.5" font-size="12.5" fill="#0b0b0b" text-anchor="start" font-weight="700">85.82</text>
+<text x="174.0" y="194.5" font-size="12.5" fill="#0b0b0b" text-anchor="end" font-weight="700">KcELECTRA base</text>
+<line x1="249.1" y1="190" x2="298.4" y2="190" stroke="#eb6834" stroke-width="2" opacity="0.45"/>
+<circle cx="262.0" cy="190" r="6" fill="#eb6834" stroke="#fcfcfb" stroke-width="2"/>
+<circle cx="298.4" cy="190" r="6" fill="#eb6834" stroke="#fcfcfb" stroke-width="2"/>
+<circle cx="249.1" cy="190" r="6" fill="#eb6834" stroke="#fcfcfb" stroke-width="2"/>
+<rect x="268.3" y="177" width="3" height="26" fill="#0b0b0b"/>
+<text x="312.4" y="194.5" font-size="12.5" fill="#0b0b0b" text-anchor="start" font-weight="700">84.81</text>
+<text x="174.0" y="240.5" font-size="12.5" fill="#0b0b0b" text-anchor="end" font-weight="700">A.X Encoder</text>
+<line x1="574.4" y1="236" x2="633.6" y2="236" stroke="#1baf7a" stroke-width="2" opacity="0.45"/>
+<path d="M479.7,236 l6,-6 l6,6 l-6,6 z" fill="#fcfcfb" stroke="#898781" stroke-width="1.5"/>
+<circle cx="633.6" cy="236" r="6" fill="#1baf7a" stroke="#fcfcfb" stroke-width="2"/>
+<circle cx="601.0" cy="236" r="6" fill="#1baf7a" stroke="#fcfcfb" stroke-width="2"/>
+<circle cx="574.4" cy="236" r="6" fill="#1baf7a" stroke="#fcfcfb" stroke-width="2"/>
+<rect x="601.5" y="223" width="3" height="26" fill="#0b0b0b"/>
+<text x="647.6" y="240.5" font-size="12.5" fill="#0b0b0b" text-anchor="start" font-weight="700">88.19</text>
+<text x="174.0" y="286.5" font-size="12.5" fill="#0b0b0b" text-anchor="end" font-weight="700">KF-DeBERTa</text>
+<line x1="485.7" y1="282" x2="581.3" y2="282" stroke="#eda100" stroke-width="2" opacity="0.45"/>
+<path d="M391.0,282 l6,-6 l6,6 l-6,6 z" fill="#fcfcfb" stroke="#898781" stroke-width="1.5"/>
+<circle cx="498.5" cy="282" r="6" fill="#eda100" stroke="#fcfcfb" stroke-width="2"/>
+<circle cx="581.3" cy="282" r="6" fill="#eda100" stroke="#fcfcfb" stroke-width="2"/>
+<circle cx="485.7" cy="282" r="6" fill="#eda100" stroke="#fcfcfb" stroke-width="2"/>
+<rect x="520.4" y="269" width="3" height="26" fill="#0b0b0b"/>
+<text x="595.3" y="286.5" font-size="12.5" fill="#0b0b0b" text-anchor="start" font-weight="700">87.37</text>
+<text x="174.0" y="332.5" font-size="12.5" fill="#0b0b0b" text-anchor="end" font-weight="700">KLUE large</text>
+<line x1="784.4" y1="328" x2="837.6" y2="328" stroke="#e87ba4" stroke-width="2" opacity="0.45"/>
+<path d="M696.6,328 l6,-6 l6,6 l-6,6 z" fill="#fcfcfb" stroke="#898781" stroke-width="1.5"/>
+<circle cx="837.6" cy="328" r="6" fill="#e87ba4" stroke="#fcfcfb" stroke-width="2"/>
+<circle cx="784.4" cy="328" r="6" fill="#e87ba4" stroke="#fcfcfb" stroke-width="2"/>
+<circle cx="788.3" cy="328" r="6" fill="#e87ba4" stroke="#fcfcfb" stroke-width="2"/>
+<rect x="801.9" y="315" width="3" height="26" fill="#0b0b0b"/>
+<text x="851.6" y="332.5" font-size="12.5" fill="#0b0b0b" text-anchor="start" font-weight="700">90.22</text>
+<text x="190.0" y="400.0" font-size="12" fill="#898781" text-anchor="start" font-weight="400">가로축은 84에서 시작한다. KcELECTRA는 보고된 값을 찾지 못했다. 3에폭 중 검증 점수가 가장 높은 에폭의 값이다.</text>
+</svg>

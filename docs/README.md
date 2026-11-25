@@ -21,7 +21,7 @@
 | [knowledge-graph.md](design/knowledge-graph.md) | 지식 그래프 구조와 쓰는 법 |
 | [ml-design-2026-11-24.md](design/ml-design-2026-11-24.md) | 학습 모델 도입 제안 (그림 원본: [ml-overview.drawio](design/ml-overview.drawio)) |
 | [ml-judge-design-2026-11-25.md](design/ml-judge-design-2026-11-25.md) | 학습 모델 ① 의미 보존 판정 모델 설계 (설계도 포함) |
-| [ml-judge-bench-2026-11-25.md](design/ml-judge-bench-2026-11-25.md) | 판정 모델 기반 모델 측정: GPU 메모리·학습 속도·CPU 판정 시간 (후보 모델 5개) |
+| [ml-judge-bench-2026-11-25.md](design/ml-judge-bench-2026-11-25.md) | 판정 모델 기반 모델 측정: GPU 메모리·학습 속도·CPU 판정 시간·KLUE-NLI 정확도 (후보 모델 5개) |
 | [ml-prefilter-design-2026-11-25.md](design/ml-prefilter-design-2026-11-25.md) | 학습 모델 ② 그래프 수집 전 거르기 설계 (설계도 포함) |
 | [ml-style-sim-design-2026-11-25.md](design/ml-style-sim-design-2026-11-25.md) | 학습 모델 ③ 문체 유사도 모델 설계 (설계도 포함) |
 | [ml-condition-selector-design-2026-11-25.md](design/ml-condition-selector-design-2026-11-25.md) | 학습 모델 ④ 조건 선택기 설계 (설계도 포함) |
@@ -51,7 +51,7 @@
 - 구조 그림: [architecture-stack-ko.png](images/architecture-stack-ko.png) (영문은 `-en`, 어두운 배경은 `-dark`, 원본은 같은 이름의 `.html`)
 - 학습 모델 제안의 그림: `ml-overview-*`
 - 학습 모델 네 개의 설계도: `ml-judge-stack-ko`, `ml-prefilter-stack-ko`, `ml-style-sim-stack-ko`, `ml-condition-selector-stack-ko` (각각 `.html` 원본과 `.png` 두 장)
-- 판정 모델 측정 보고서의 그림: `ml-judge-bench-{flow,gpu-memory,cpu-latency,server-memory}` (각각 `.svg` 원본과 `.png`)
+- 판정 모델 측정 보고서의 그림: `ml-judge-bench-{flow,gpu-memory,cpu-latency,server-memory,klue-nli}` (각각 `.svg` 원본과 `.png`)
 
 ## floorplan — 코드 지도
 
