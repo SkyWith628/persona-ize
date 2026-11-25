@@ -7,11 +7,12 @@ from __future__ import annotations
 
 import asyncio
 import json
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
 
 from app.core.config import Settings
+from app.domain.conversation import SPEAKER_NAME_MAX, fit_speaker_name
 from app.main import create_app
 from app.services.import_service import ImportMessage, ImportPayload
 
@@ -493,3 +494,72 @@ def test_messages_stored_without_a_speaker_name_are_left_out_of_the_report(
         ("김민수", "me"),
         ("박지현", "contact"),
     ]
+
+
+# ---------- 64자를 넘는 화자 이름 (`fit_speaker_name`, 2026-11-25) ----------
+
+LONG_STEM = "Very_Long_Display_Name_For_A_Speaker_In_The_Cloud_Platform_Engineering_Team"
+LONG_A, LONG_B = LONG_STEM + "_Alpha", LONG_STEM + "_Beta"  # 앞 64자가 같은 두 사람
+LONG_TEXT = (
+    f"2026-10-05 09:25 | {LONG_A} | 언제까지 가능해요?\n"
+    f"2026-10-05 09:26 | {LONG_B} | 저도 궁금해요.\n"
+    "2026-10-05 09:27 | 김민수 | 수요일까지 가능합니다.\n"
+)
+
+
+def test_fit_speaker_name_keeps_short_names_and_tells_long_ones_apart() -> None:
+    assert fit_speaker_name("  박지현 ") == "박지현"
+    assert fit_speaker_name("가" * SPEAKER_NAME_MAX) == "가" * SPEAKER_NAME_MAX  # 딱 맞으면 그대로
+    a, b = fit_speaker_name(LONG_A), fit_speaker_name(LONG_B)
+    assert len(a) == len(b) == SPEAKER_NAME_MAX and a != b
+    assert a.startswith(LONG_STEM[:57] + "…")  # 줄인 이름임이 보인다
+    assert fit_speaker_name(a) == a and fit_speaker_name(LONG_A + " ") == a  # 다시 맞춰도 같다
+    # 자른 자리가 공백이면 떼고 붙인다 (64자를 넘기지 않는다)
+    spaced = fit_speaker_name("가" * 56 + " " + "나" * 20)
+    assert spaced.startswith("가" * 56 + "…") and len(spaced) == SPEAKER_NAME_MAX - 1
+
+
+def _long_names_stay_consistent(client: TestClient, headers: dict[str, str]) -> None:
+    """미리보기·화자 지정·저장·역할 고치기·따르지 않은 지정이 긴 이름을 같은 꼴로 쓰고, 두 사람을 가른다."""
+    a, b = fit_speaker_name(LONG_A), fit_speaker_name(LONG_B)
+    _, conv_id = _conversation(client, headers)
+    preview = client.post("/v1/imports/parse", json={"text": LONG_TEXT}, headers=headers).json()
+    assert sorted(sp["name"] for sp in preview["speakers"]) == sorted([a, b, "김민수"])
+
+    url = f"/v1/conversations/{conv_id}/imports/raw"
+    first_map = {a: "contact", b: "contact", "김민수": "me"}
+    saved = client.post(url, json={"text": LONG_TEXT, "speaker_map": first_map}, headers=headers)
+    assert saved.status_code == 202, saved.text
+    assert saved.json()["imported"] == 3
+
+    def speakers() -> list[tuple[str, str, int]]:
+        rows = client.get(f"/v1/conversations/{conv_id}/speakers", headers=headers).json()
+        return sorted((sp["name"], sp["speaker_role"], sp["messages"]) for sp in rows)
+
+    # 예전에는 둘 다 앞 64자로 저장돼 한 사람(메시지 2건)이 됐다
+    assert speakers() == sorted([(a, "contact", 1), (b, "contact", 1), ("김민수", "me", 1)])
+
+    # 원래 이름(64자 초과)으로 적은 지정도 같은 화자로 읽는다. 따르지 않은 지정의 이름은 저장된 이름과 같다
+    other_map = {LONG_A: "me", LONG_B: "skip", "김민수": "me"}
+    again = client.post(url, json={"text": LONG_TEXT, "speaker_map": other_map}, headers=headers)
+    assert again.status_code == 202, again.text
+    ignored = again.json()["ignored_speaker_roles"]
+    assert sorted((ig["name"], ig["requested_role"]) for ig in ignored) == sorted([(a, "me"), (b, "skip")])
+
+    # 한 사람만 제외하면 그 사람 메시지만 지워진다 (예전에는 두 사람 것이 함께 지워졌다)
+    fixed = client.put(
+        f"/v1/conversations/{conv_id}/speaker-roles", json={"speakers": {b: "skip"}}, headers=headers
+    )
+    assert fixed.status_code == 200, fixed.text
+    assert fixed.json()["messages_removed"] == 1
+    assert speakers() == sorted([(a, "contact", 1), ("김민수", "me", 1)])
+
+
+def test_long_speaker_names_stay_consistent(client: TestClient, user_a: dict[str, str]) -> None:
+    _long_names_stay_consistent(client, user_a)
+
+
+def test_long_speaker_names_stay_consistent_on_postgres(pg_url: str) -> None:
+    with TestClient(create_app(_settings(database_url=pg_url))) as client:
+        assert client.get("/healthz").json()["storage"] == "postgres"
+        _long_names_stay_consistent(client, {"X-User-Id": f"long-names-{uuid4().hex[:8]}"})
