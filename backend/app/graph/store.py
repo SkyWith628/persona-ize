@@ -70,7 +70,7 @@ class RelationshipFact:
     """source → target 방향의 Relationship 사실 하나와 추출기가 채운 속성 (`schema.Relationship`).
 
     시각이 둘이다. `valid_at`은 모델이 정한 값이라 틀릴 수 있다 — 로컬 그래프 105건 중 13건이 근거 메시지
-    시각보다 정확히 9시간 늦었다(한국 시간을 UTC로 적음, docs/knowledge-graph.md 10절). `observed_at`은
+    시각보다 정확히 9시간 늦었다(한국 시간을 UTC로 적음, docs/design/knowledge-graph.md 10절). `observed_at`은
     근거 에피소드의 발화 시각(수집 코드가 넣은 값) 중 가장 이른 것이라 믿을 수 있다. 순서·날짜를 따질 때는
     `observed_at`을 먼저 쓴다.
     """

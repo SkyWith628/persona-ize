@@ -3,7 +3,7 @@
 mode: work
 
 상대·상황에 맞는 사용자 말투로 메시지를 첨삭하되 원문의 사실과 의도를 보존하는 서비스. 공모전(2026-12) + 포폴.
-설계 원본과 팀 운영 문서는 iCloud `WorkSpace_M/projects/persona-ize/` — 이 저장소의 `docs/`는 그 복사본이다. 충돌하면 `docs/project-design.md`를 따른다.
+설계 원본과 팀 운영 문서는 iCloud `WorkSpace_M/projects/persona-ize/` — 이 저장소의 `docs/`는 그 복사본이다. 충돌하면 `docs/design/project-design.md`를 따른다.
 
 ## 명령어 (저장소 루트, Windows는 `.venv/Scripts/python.exe`, 맥은 `.venv/bin/python`)
 - DB 기동·마이그레이션: `docker compose up -d postgres neo4j` → `cd backend && ../.venv/Scripts/python.exe -m alembic upgrade head` (`make up`, `make migrate`)
@@ -12,14 +12,14 @@ mode: work
 - 접점 파일 검사: `.venv/Scripts/python.exe scripts/validate_data_files.py`
 - 합성 대화 적재(멱등): `.venv/Scripts/python.exe scripts/import_synthetic.py --user demo [--graph]` (DATABASE_URL 필요, 첫 실행에 e5 모델 다운로드. `--graph`는 Neo4j에 haiku로 수집, 메시지당 10~15초)
 - 평가: `.venv/Scripts/python.exe evals/run_eval.py --conditions A,B,C,D [--provider anthropic --repeat 3 --embedding fake]` — C/D는 `--dataset`을 `--user eval`로 적재한 뒤 검색하고 `recall`(relevant_msg_ids 대비) 열을 채운다. D는 그래프 수집까지 한다(처음 한 번만 느리다)
-- 층별 비교(같은 초안 × 모든 상대, `--generate` 없이는 모델 호출 없음): `.venv/Scripts/python.exe evals/layer_diff.py --embedding fake [--conditions B,C --voice --prompt rewrite-v5]`. `run_eval.py --voice`는 C·D 입력에 말투 지문을 채운다(없으면 평가에 지문이 안 들어간다). 결과 CSV의 `fm*` 열은 `docs/design.md` "실패 유형 점검"의 유형 번호
+- 층별 비교(같은 초안 × 모든 상대, `--generate` 없이는 모델 호출 없음): `.venv/Scripts/python.exe evals/layer_diff.py --embedding fake [--conditions B,C --voice --prompt rewrite-v5]`. `run_eval.py --voice`는 C·D 입력에 말투 지문을 채운다(없으면 평가에 지문이 안 들어간다). 결과 CSV의 `fm*` 열은 `docs/design/design.md` "실패 유형 점검"의 유형 번호
 - 제안 정확도(모델 호출 없음, 정답은 `evals/gold_personas.csv` — 형식은 `gold_personas.example.csv`): `.venv/Scripts/python.exe evals/suggestion_accuracy.py --embedding fake [--no-graph --segment-k 1|2|3 --register-min-messages N]` (`.env`에 DATABASE_URL이 있으면 `--user`(기본 eval)의 대화를 그 DB에 적재한다). 첨삭 비교에 제안·정답 설정을 입히려면 `run_eval.py --apply-suggestion all|matching --gold …` / `--persona-override FILE`, 무효화 처리 비교는 `--invalidation trust|artifacts|ignore`
 - 그래프 스파이크: `cd graph/graphiti_p0 && ../../.venv/Scripts/python.exe -m pytest -q` / `ingest.py --dry-run` / `--limit 5`
 - 서버: `cd backend && ../.venv/Scripts/python.exe -m uvicorn app.main:app --reload`
 - 운영: `scripts/usage_report.py [--days 7 --user <id> --csv out.csv]`(사용자·일 KST·조건별 호출·토큰), `scripts/graph_reset.py --user <username|id> [--conversation c1] [--dry-run|--yes] [--no-reingest]`(그래프 지우고 재수집, haiku 비용), `scripts/housekeeping.py`(만료 세션·오래된 작업·카운터), `scripts/load_kakao_demo.py --config <설정.json> [--user demo] [--dry-run|--yes] [--graph] [--keep-existing]`(한 사용자의 상대·대화·그래프를 지우고 카카오톡 내보내기로 다시 채운다 — 설정 꼴은 `scripts/kakao_demo.example.json`, `--dry-run`은 DB 없이 파일만 읽는다, `--graph`는 haiku 비용). 깊은 헬스체크 `GET /healthz?deep=true`(503이면 DB/Neo4j 문제)
 - 호스트 venv를 못 쓰는 PC(아래 함정의 Smart App Control): `make test-docker [ARGS="tests/test_auth.py -k login"]` · `make lint-docker` — `test` 프로필 컨테이너(이미지 `dev` 타깃)에서 돈다. **test 서비스에는 `.env`를 넣지 않는다**
 - 화면 단위 테스트(node 22, 이 PC에는 node가 없어 Docker로): `MSYS_NO_PATHCONV=1 docker run --rm -v "<저장소>:/repo" -w /repo node:22-alpine node --experimental-default-type=module --test "backend/app/web/tests/*.test.js"` (디렉터리 인자는 실패한다 — 글롭으로)
-- 운영 배포([docs/deploy.md](docs/deploy.md)): `scripts/ops/deploy.sh`(백업 → 빌드 → 기동 → 스모크) · `rollback.sh` · `backup.sh` · `restore.sh` · `run.sh scripts/<스크립트>.py`(운영 스택 안에서 실행). `make prod-config|prod-up|prod-down|prod-logs|prod-ps|backup|smoke`. 스모크만: `python scripts/smoke_test.py --base-url https://<주소> [--insecure --invite-code …]`
+- 운영 배포([docs/guides/deploy.md](docs/guides/deploy.md)): `scripts/ops/deploy.sh`(백업 → 빌드 → 기동 → 스모크) · `rollback.sh` · `backup.sh` · `restore.sh` · `run.sh scripts/<스크립트>.py`(운영 스택 안에서 실행). `make prod-config|prod-up|prod-down|prod-logs|prod-ps|backup|smoke`. 스모크만: `python scripts/smoke_test.py --base-url https://<주소> [--insecure --invite-code …]`
 - 계정: `scripts/reset_password.py --username <이름> [--create]` — 비밀번호 재설정(세션 전부 폐기). 운영에서 `ADMIN_USERNAMES` 관리자 계정은 `--create`로만 만든다. 권한(role)으로 관리자를 만들거나 올릴 때: `cd backend && ../.venv/Scripts/python.exe -m app.tools.create_user <아이디> [--admin] [--reset-password]`(승인제여도 바로 active, 비밀번호는 묻거나 표준입력으로)
 - 의존성 버전 고정: `backend/constraints.txt`(Dockerfile·CI가 `pip -c`). 올릴 때는 줄을 지우고 빌드 → 테스트 → `make lock` (`docker/README.md`)
 - Windows 콘솔에서 한글 깨지면 `PYTHONUTF8=1`. Git Bash의 curl은 한글 JSON 본문을 CP949로 보내 400이 난다 → `--data-binary @파일`
@@ -28,7 +28,7 @@ mode: work
 
 ## 구조
 - `backend/app/ai/` 워크플로: `preserve.py`(보존 항목 규칙) → `prompt.py`(prompts/*.md 조립) → `providers/`(fake | anthropic) → `validation.py` → `workflow.py`(이 단계들을 잇는 **LangGraph 상태 그래프**, 2026-11-14 도입 — 재생성 1회, 실패 시 원문 유지)
-- 말투 프로필(2026-11-16, `docs/graph-redesign-2026-11-16.md`): `ai/register.py`(문장 어미 분류 → 메시지 라벨 → 말투·호칭 구간, 순수 함수·모델 호출 없음) ← `ai/register_source.py`(내 메시지 모으기, 메시지 id `c3:m08`) → 쓰는 곳 넷: `services/suggestion_service.py`(+`ai/register_suggest.py` 제안 카드, `graph/trigger.py` 계기·범위 단서) · `services/rewrite_service.py`(상태 블록 `ai/register_block.py`, 설정 불일치 경고) · `ai/retrieval/vector.py`(예시 걸러내기) · `ai/workflow.py`(말투 사후 점검, 호칭 누출 경고). 직함 사전은 `domain/titles.py`(고치면 `VALIDATOR_VERSION`을 올린다). 플래그는 `core/config.py`의 `REGISTER_*`·`STYLE_EXAMPLE_GATING`·`GRAPH_INVALIDATION_MODE` — 제안만 기본 켜짐, 나머지는 꺼짐
+- 말투 프로필(2026-11-16, `docs/design/graph-redesign-2026-11-16.md`): `ai/register.py`(문장 어미 분류 → 메시지 라벨 → 말투·호칭 구간, 순수 함수·모델 호출 없음) ← `ai/register_source.py`(내 메시지 모으기, 메시지 id `c3:m08`) → 쓰는 곳 넷: `services/suggestion_service.py`(+`ai/register_suggest.py` 제안 카드, `graph/trigger.py` 계기·범위 단서) · `services/rewrite_service.py`(상태 블록 `ai/register_block.py`, 설정 불일치 경고) · `ai/retrieval/vector.py`(예시 걸러내기) · `ai/workflow.py`(말투 사후 점검, 호칭 누출 경고). 직함 사전은 `domain/titles.py`(고치면 `VALIDATOR_VERSION`을 올린다). 플래그는 `core/config.py`의 `REGISTER_*`·`STYLE_EXAMPLE_GATING`·`GRAPH_INVALIDATION_MODE` — 제안만 기본 켜짐, 나머지는 꺼짐
 - `backend/app/ai/retrieval/` 조건별 검색기. A/B `NullRetriever`, C `vector.py VectorStyleRetriever`(같은 상대에게 쓴 본인 발화 묶음 kNN, 저장소가 벡터 검색 담당), D `composite.py` = C + `graph/retriever.py GraphContextRetriever`. NEO4J_URI가 비면 D = C
 - `backend/app/graph/` D 경로. `store.py` Protocol(테스트는 FakeGraphStore) ← `GraphitiStore`; `ingest.py`가 미수집 메시지를 **사용자별 잠금 아래 전체 시각 순**으로 `add_episode`(group_id=user_id, `messages.graph_ingested_at`으로 멱등; 잠금은 프로세스 안에서만); `retriever.py`(v2)는 상대 노드 중심 검색 → 상대·연결 사건 노드 엣지만 → as_of 이후 출처·무효화·같은 출처 중복 제외 → e5 유사도+최근성+사건 유형·중요도로 재정렬(상수 표), `purpose=context`. `schema.py`·`dates.py`는 스파이크 `graph/graphiti_p0/p0`의 복사본이며 **백엔드 쪽이 정본**(스파이크는 동결)
 - 가져오기: `services/import_service.py`(화자 지정 `speaker_map`, 해시 중복, 대화방 단위 재색인) → `ai/episodes.py`(본인 발화 연속 구간 + 앞 맥락 최대 window-1개 = 묶음 1개, 문체 예시는 본인 발화만) → `ai/embeddings.py`(local e5-small `query:`/`passage:` 접두, fake는 테스트용). `services/synthetic_loader.py`가 data/synthetic JSON을 적재
@@ -49,8 +49,8 @@ mode: work
 - 호칭은 **페르소나 설정**이 공급한다. `synthetic_loader.persona_from_aliases`가 상사·지인·친구·가족·연인에 characters.csv 호칭을 넣고 동료는 비운다 — 모델은 설정에 없는 호칭을 만들지 않으므로 호칭이 필요하면 설정에 넣는다
 - 사실 보존 실패는 다른 점수로 상쇄하지 않는다. 검증 실패 → 원문 유지, 자동 전송 없음
 - 합성 데이터만 외부(Claude API, Neo4j)에 보낸다
-- 결정 변경은 `docs/decisions.md`에 5줄 이내로
-- 남은 일은 `docs/backlog.md`(A 바로 가능 / B 팀원 대기 / C 보류). 끝낸 줄은 지우고 decisions에 결과를 남긴다
+- 결정 변경은 `docs/project/decisions.md`에 5줄 이내로
+- 남은 일은 `docs/project/backlog.md`(A 바로 가능 / B 팀원 대기 / C 보류). 끝낸 줄은 지우고 decisions에 결과를 남긴다
 
 ## 함정
 - `ruff format`을 돌린 뒤 테스트. line-length 110
@@ -91,7 +91,7 @@ mode: work
 - `graphiti_core`는 import 시 `load_dotenv()`로 .env 전체를 os.environ에 올린다 → `deps._build_graph`가 import 뒤 새로 생긴 환경변수를 지운다. 이걸 빼면 테스트의 `Settings(_env_file=None)`이 환경변수로 DATABASE_URL을 읽어 Postgres에 붙는다
 - `.env`의 NEO4J_URI는 2026-11-08 밤부터 로컬 `bolt://localhost:7687`. 1주차 스파이크 결과는 Aura에 남아 있고 그 URI는 `.env` 주석(`NEO4J_URI_AURA`)에 있다. 로컬 Neo4j 비밀번호는 컨테이너 생성 때의 NEO4J_PASSWORD와 같다
 - 삭제는 모두 동기이고 그래프 → DB 순서다: `DELETE /v1/conversations/{id}`(에피소드 `remove_episode`), `DELETE /v1/contacts/{id}`(대화방별 삭제 → 첨삭 이력 → 상대·페르소나 CASCADE), `DELETE /v1/auth/me`(비밀번호 재확인, 상대 전부 → group `DETACH DELETE` → 사용량·세션·사용자). 그래프 실패는 `graph_error(s)`로 남고 DB는 지워진다. 서비스는 `services/deletion_service.py`
-- E2E는 컨테이너로 띄운다(`make up-all`, 또는 운영 구성 리허설 `docs/deploy.md` 14장). 호스트 venv의 uvicorn은 Smart App Control 때문에 이 PC에서 뜨지 않는다
+- E2E는 컨테이너로 띄운다(`make up-all`, 또는 운영 구성 리허설 `docs/guides/deploy.md` 14장). 호스트 venv의 uvicorn은 Smart App Control 때문에 이 PC에서 뜨지 않는다
 - DB 문자열 열 길이: `rewrite_results.*_version`은 200자(0004). D 검색기 버전 문자열이 64자를 넘어 500이 났었다. 새 버전 문자열을 만들면 열 길이를 확인한다
 - 가져오기 API는 메시지 저장까지만 요청 안에서 끝낸다. 묶음 생성·임베딩은 태스크(`ImportService._index_job`)로 돌고 요청은 `IMPORT_INDEX_WAIT_SECONDS`(기본 2초)만 기다린다 — 넘으면 작업이 `processing`으로 나가고 뒤에서 `completed`/`failed`가 된다. `ImportService`를 직접 만드는 스크립트·평가·테스트는 `index_wait=None`이라 끝까지 기다린다(예전과 같다). 잠금은 둘이다: 저장·삭제는 대화방 잠금, 묶음 생성은 `("index", 방)` 잠금 — 임베딩 동안 대화방 잠금을 쥐지 않으므로 삭제가 먼저 끝날 수 있고, 그때 묶음 생성은 NotFoundError로 조용히 그만둔다. 죽은 서버가 남긴 `processing` 작업은 시작 때 `resume_indexing`이 이어받는다(로그 `import resume:`)
 - 가져오기 API 뒤 그래프 수집은 백그라운드(`asyncio.create_task`)라 응답의 `graph_status`는 pending이다. `GET /v1/imports/{id}`로 completed를 확인한다. 서버 프로세스가 죽으면 미수집분은 다음 서버 시작 때 `resume_all`이 이어받는다(`GRAPH_RESUME_ON_START`, 로그 `graph resume:`), 또는 다음 가져오기·`import_synthetic.py --graph`·`graph_reset.py`
@@ -101,7 +101,7 @@ mode: work
 - graphiti-core 0.31.2 `AnthropicClient`는 **강제 tool_choice**를 쓰고 5.5 계열이 이를 400으로 거부한다 → 그래프 추출 기본은 `claude-haiku-4-5`. 리랭커는 `PassthroughReranker`(기본 리랭커는 OpenAI 호출). 모델별 max_tokens 표도 구버전. anthropic SDK 2.x에 없는 `temperature`를 넘기므로 `GraphAnthropicClient`가 떼어낸다
 - Aura(`neo4j+s://`) 접속 시 `self-signed certificate` 오류는 Windows 루트 저장소에 SSL.com 루트가 없어서다 → `load_settings()`가 certifi 번들을 `SSL_CERT_FILE`로 지정한다. `--limit 5` 실측(2026-11-08)은 `graph/graph-spike-report.md`
 - 원격: `github.com/SkyWith628/persona-ize`(비공개). `main` 직접 푸시는 팀장만, 나머지는 PR. 11/04 이전 원격 뼈대(`spikes/`)는 `graph/graphiti_p0/`로 대체됨
-- 평가셋 열 이름은 `docs/dataset-guide.md`가 기준. `evals/run_eval.py`·`scripts/validate_data_files.py`가 그 열을 읽으므로 열을 바꾸면 셋을 같이 고친다
+- 평가셋 열 이름은 `docs/guides/dataset-guide.md`가 기준. `evals/run_eval.py`·`scripts/validate_data_files.py`가 그 열을 읽으므로 열을 바꾸면 셋을 같이 고친다
 - 이 Windows 머신: Docker Desktop 4.98 + WSL 3.0.3 동작 확인(2026-11-08). 새 PC에서는 BIOS 가상화(SVM/VT-x) → `VirtualMachinePlatform`·WSL 기능 → `wsl --install --no-distribution` → 재부팅 순서가 필요했다(`docker/README.md`). node·gh는 없다
 - 개발은 `make up`(DB 두 개) + `make dev`(호스트 venv). 전체 컨테이너는 `make up-all` — backend 이미지는 다단계(`prod` 기본 3.0GB, 첫 빌드 3.5~5.5분, 코드만 바뀌면 몇 초), CPU torch, e5 모델 내장, 시작 때 alembic upgrade (`docker/README.md`)
 - API 비용은 구독과 별개. Console 사용량 한도 → `--limit 5` → 전체 순서

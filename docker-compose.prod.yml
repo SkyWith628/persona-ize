@@ -1,5 +1,5 @@
 # 운영용 구성 — 리눅스 VM 한 대에서 Caddy(자동 HTTPS) 뒤에 백엔드·PostgreSQL·Neo4j를 띄운다.
-# 따라 하는 순서는 docs/deploy.md.
+# 따라 하는 순서는 docs/guides/deploy.md.
 #
 #   docker compose --env-file .env.production -f docker-compose.prod.yml up -d --build --wait
 #   (make prod-up 과 scripts/ops/deploy.sh 가 같은 일을 한다)

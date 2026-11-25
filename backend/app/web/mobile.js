@@ -421,7 +421,7 @@ function quiet(action) {
 // ---------- API ----------
 
 /**
- * 같은 출처의 JSON API를 부른다. 경로·필드는 docs/api.md와 api/routes/*.py를 따른다.
+ * 같은 출처의 JSON API를 부른다. 경로·필드는 docs/guides/api.md와 api/routes/*.py를 따른다.
  * @param {string} method
  * @param {string} path
  * @param {{body?: unknown, query?: Record<string, string>, key?: string, signIn?: boolean, verifiesPassword?: boolean,

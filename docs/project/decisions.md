@@ -40,9 +40,9 @@
 - 이 폴더(iCloud)의 `docs/`가 원본이고 저장소 `docs/`는 복사본. 앱 코드는 저장소에만 있다.
 
 ## 2026-11-08 GitHub 원격 연결과 11-04 뼈대 병합
-- 상황: `github.com/SkyWith628/persona-ize`(비공개, 협업자 3명)에 11/02~11/04 뼈대(health 전용 backend, `spikes/graphiti-p0`, `docs/dataset-guide.md`)가 이미 있었다. 로컬 11/08 뼈대와 이력이 달랐다.
+- 상황: `github.com/SkyWith628/persona-ize`(비공개, 협업자 3명)에 11/02~11/04 뼈대(health 전용 backend, `spikes/graphiti-p0`, `docs/guides/dataset-guide.md`)가 이미 있었다. 로컬 11/08 뼈대와 이력이 달랐다.
 - 결정: 11/08 뼈대가 코드를 대체하고(`spikes/` → `graph/graphiti_p0/`), 원격 이력은 `-s ours` 병합으로 보존한다. 원격에만 있던 리랭커 패스스루·haiku-4-5 제약·PR 템플릿·데이터셋 가이드는 이식한다.
-- 결정: **평가셋 열은 `docs/dataset-guide.md`(비전공자용) 기준**으로 통일한다 — `case_id, relation, situation, original_text, preserve_items, must_not_change, expected_notes, needs_graph, relevant_msg_ids, as_of, split`. 등장인물 표는 `evals/characters.csv`로 두고 `relation`→`relationship_type` 매핑은 거기서 한다. 메시지 참조는 `대화방id:메시지id`(예 `c1:m03`), `graph/graph_queries.csv`와 같다.
+- 결정: **평가셋 열은 `docs/guides/dataset-guide.md`(비전공자용) 기준**으로 통일한다 — `case_id, relation, situation, original_text, preserve_items, must_not_change, expected_notes, needs_graph, relevant_msg_ids, as_of, split`. 등장인물 표는 `evals/characters.csv`로 두고 `relation`→`relationship_type` 매핑은 거기서 한다. 메시지 참조는 `대화방id:메시지id`(예 `c1:m03`), `graph/graph_queries.csv`와 같다.
 - 이유: 팀원이 이미 가이드를 보고 작성할 수 있으므로 코드가 가이드를 따르는 쪽이 맞다.
 
 ## 2026-11-08 그래프 스파이크 첫 수집: Aura Free + haiku-4-5, 판정은 36개 후
@@ -134,7 +134,7 @@
 - 결과: `backend/app/web/`(index.html·app.js·app.css)를 FastAPI `/`에서 내려준다. 로그인·가입 → 상대 → 페르소나 → 대화방·가져오기(줄 형식 또는 JSON, 화자 지정) → 그래프 수집 상태 → 첨삭(A/B/C/D) → 바꾼 이유·주의·근거 → 적용/수정/거절 피드백 → 삭제. 실제 서버·Opus·로컬 Neo4j로 전 흐름 확인(D 4.4초, 그래프 사실이 주의 문구로 쓰임).
 - 결정: 이 PC에 node가 없고 팀에 프런트 담당이 없어 **한 스택(FastAPI)으로 시연까지 간다.** React(`apps/web`)는 포트폴리오 정리 단계에서 필요하면. 화면은 같은 출처라 CORS 없이 세션 쿠키+CSRF로 동작한다.
 - 결정: 추천 적용은 "클립보드 복사 + 피드백 저장"이다. 자동 전송은 없다(설계 원칙). 클립보드가 실패해도 피드백은 저장되고 안내를 띄운다.
-- 함께 한 것: 서버 시작 시 e5 워밍업(첫 요청 13초 → 즉시), `docs/api.md`(팀원용 API·Cypher 안내), README 실행 순서 갱신.
+- 함께 한 것: 서버 시작 시 e5 워밍업(첫 요청 13초 → 즉시), `docs/guides/api.md`(팀원용 API·Cypher 안내), README 실행 순서 갱신.
 
 ## 2026-11-09 그래프 사실 재정렬 v2: 임베딩 유사도만으로는 안 갈리고, 사건 유형·중요도 가중이 갈랐다
 - 결과: 후보를 e5 유사도(0.75)+최근성(0.15)+원래 순위(0.10)로 다시 매기자 점수가 0.75~0.88에 몰려 "주간보고 초안" 같은 무관 사실이 그대로 1위였다. 여기에 **Event 노드의 `event_type`(status 0.75 … conflict/apology/promise/refusal 1.0)과 `importance`(1~10 → 0.735~1.05)** 를 곱하자 팀장 방 두 질의에서 주간보고 사실이 빠지고 "일정 조율 사과" 사실이 올라왔다. D recall은 1.0/1.0/1.0 유지. 1위보다 0.12 이상 낮은 사실은 버린다(4건 → 2~4건).
@@ -155,7 +155,7 @@
 - 결정: 이력 조건 표기는 `retrieval_version`으로 유추한다(none→A/B, graph 포함→D, 그 외→C). 요청 조건을 결과에 따로 저장하지 않았기 때문인데, A와 B를 구분해야 하면 `rewrite_requests`에 condition 열을 추가한다(블라인드 평가 전에).
 
 ## 2026-11-09 시연 준비: demo 계정 + 합성 36건 + 페르소나 v1 + 그래프, 대본 3장면
-- 결과: `scripts/prepare_demo.py --graph`(멱등)가 demo 사용자를 만들고 그 uuid로 합성 대화·그래프를 적재하며 상대마다 페르소나 v1(관계 유형 기본값 + 첫 호칭)을 만든다. 기본 페르소나 표는 `synthetic_loader.DEFAULT_PERSONAS`로 옮겨 run_eval과 공유. 대본 `docs/demo-script.md`: 팀장 거절(B→C), 동기 사과(D, 파트장 발령 경고), 친구 약속(C→D, recall 0.5→1.0) + 보험·회수 질문.
+- 결과: `scripts/prepare_demo.py --graph`(멱등)가 demo 사용자를 만들고 그 uuid로 합성 대화·그래프를 적재하며 상대마다 페르소나 v1(관계 유형 기본값 + 첫 호칭)을 만든다. 기본 페르소나 표는 `synthetic_loader.DEFAULT_PERSONAS`로 옮겨 run_eval과 공유. 대본 `docs/guides/demo-script.md`: 팀장 거절(B→C), 동기 사과(D, 파트장 발령 경고), 친구 약속(C→D, recall 0.5→1.0) + 보험·회수 질문.
 - 결정: 시연 데이터는 헤더 스텁 사용자 `demo`(문자열)가 아니라 **로그인 가능한 users 행**에 둔다 — 화면은 쿠키 인증이라서. 기존 스텁 `demo` 데이터는 평가·스크립트용으로 그대로 둔다.
 - 결정: 시연 계정 비밀번호는 저장소에 적지 않는다(기본값은 스크립트 인자/DEMO_PASSWORD). 팀 전달은 비밀번호 관리자.
 
@@ -215,7 +215,7 @@
 
 ## 2026-11-11 배포 준비 ①: 리눅스 VM 한 대 + Docker Compose + Caddy, 다섯 갈래를 `feat/deploy-ready`로 통합
 - 방식: 계약서(설정 이름·API 모양·파일 소유)와 스키마 0008을 먼저 정하고, 에이전트 5개(infra·core·data·web·admin)가 git 워크트리에서 병렬로 만든 뒤 한 브랜치로 합쳤다. 이어 독립 검토 2개(보안·정확성)가 합친 코드를 읽고 재현 테스트로 지적했고, 그 수정까지 반영했다.
-- 결과: 운영 구성(`docker-compose.prod.yml` — caddy만 80/443 공개, backend·postgres·neo4j·backup은 내부 네트워크), 다단계 이미지(`prod` 비루트·e5 모델 내장·오프라인 / `dev`), `scripts/ops/`(deploy·rollback·backup·restore·run), `scripts/smoke_test.py`, `docs/deploy.md`. 로컬 리허설(가짜 모델, 운영 모드): 빌드 → 기동 → 스모크 17단계 56초.
+- 결과: 운영 구성(`docker-compose.prod.yml` — caddy만 80/443 공개, backend·postgres·neo4j·backup은 내부 네트워크), 다단계 이미지(`prod` 비루트·e5 모델 내장·오프라인 / `dev`), `scripts/ops/`(deploy·rollback·backup·restore·run), `scripts/smoke_test.py`, `docs/guides/deploy.md`. 로컬 리허설(가짜 모델, 운영 모드): 빌드 → 기동 → 스모크 17단계 56초.
 - 결정: 워커 1개(로그인 제한·요청 제한·그래프 잠금이 프로세스 메모리). 의존성은 `backend/constraints.txt`로 고정하고 `make lock`으로 갱신 — 고정 전에는 같은 날 만든 두 이미지의 anthropic이 2.6.0과 2.8.0이었다.
 - 확인: 개발 DB 복사본에서 0007 → 0008 마이그레이션, 실제 시연 데이터로 새 API·화면, 개발 Neo4j에 읽기 전용으로 붙여 `auto` → D 선택과 그래프 맥락 검색.
 - 남은 것: 실제 VM·도메인·Let's Encrypt, **실제 Claude 호출**(새 코드로는 가짜 모델만 돌렸다), GitHub Actions(`deploy` 잡·`release.yml`) 실행 확인.
@@ -448,7 +448,7 @@
 - 한계: 속성은 모델이 추출한 값이고 사실 한 건으로도 제안한다(36건 규모에서는 호칭이 한 번만 나온다) — 틀린 제안이 나올 수 있어 승인을 거친다. 그래프는 '-요'체와 '-습니다'체를 구분하지 못해 격식은 3/4 두 단계만 말한다. 사례 하나(E004)에서만 문장 변화를 확인했다. 내 노드는 대화방의 `me_name`(없으면 '사용자')으로 찾는다 — 단체방처럼 제3자가 상대를 부른 사실은 섞이지 않는다.
 - 남은 것: 웹 화면은 근거 문장을 그대로 보여 주지만 '과거 대화 기준 제안' 제목과 메시지 5건 미만일 때의 빈 상태는 그대로다(그래프 근거만 있을 때 가려진다). 아이폰 앱은 이 API를 아직 쓰지 않는다. 관계가 바뀐 평가 사례가 더 필요하다(B1).
 
-## 2026-11-16 말투 프로필 구현 — 규칙으로 말투 구간을 읽고, 그래프는 계기를 붙인다 (`docs/graph-redesign-2026-11-16.md`)
+## 2026-11-16 말투 프로필 구현 — 규칙으로 말투 구간을 읽고, 그래프는 계기를 붙인다 (`docs/design/graph-redesign-2026-11-16.md`)
 - 구현: 문장 어미 분류기와 말투·호칭 구간(`ai/register.py`, 연속 2건 일치로 구간, 모델 호출·저장 없음) → 제안 카드(`/persona/suggestion`의 `card`, `source: "register"`, 그래프가 있으면 ±7일 계기 사건·범위 단서) · 웹 페르소나 화면 카드 · `evals/suggestion_accuracy.py`(세 출처 제안 정확도) · `run_eval.py --apply-suggestion/--persona-override/--invalidation` · 직함 사전 공유(`domain/titles.py`)와 `validator_version`(`rules-2026-11-16`, 결과 payload·평가 CSV).
 - 플래그(기본값): `REGISTER_SUGGESTIONS`(켜짐) / `REGISTER_WARNINGS` · `REGISTER_STATE_BLOCK`(+`PROMPT_VERSION=rewrite-v4`여야 모델에 보인다) · `REGISTER_POST_CHECK` · `STYLE_EXAMPLE_GATING`(꺼짐) / `GRAPH_INVALIDATION_MODE=trust`. 꺼진 것은 예전과 글자까지 같다.
 - 기본 동작이 바뀐 두 가지: ① 직함 사전 때문에 모델이 덧붙인 `파트장님`·`매니저님` 같은 맨 직함은 더 이상 `fact_added`가 아니다(`팀장님`과 같은 취급, 이름 붙은 `서연 파트장님`은 여전히 실패) — 11/16 오전 수치는 재사용하지 않는다. ② 제안 응답에 register 근거와 `card`가 붙는다(메시지 수 문턱 없음 — 아래 리뷰 반영, 카드가 물을 때(`ask`) register 값은 `settings`에 안 넣고 그래프 근거는 예전처럼 넣는다).
@@ -477,7 +477,7 @@
 - 끄는 설정은 `REGISTER_SUGGESTIONS`(제안과 같은 프로필이라 같은 플래그). false면 항목이 없고 메시지도 읽지 않는다. 기본값(켜짐)에서는 내 메시지가 있는 상대의 그래프 응답에 `register`가 새로 붙는다 — 없을 때·실패할 때는 예전 응답과 글자까지 같다.
 
 ## 2026-11-17 그래프 설정 갱신 제안의 시각 기준: 사실 `valid_at` → 근거 메시지 시각(`observed_at`)
-- 배경: 로컬 그래프 실측에서 사실 105건 중 13건의 `valid_at`이 근거 메시지보다 정확히 9시간 늦었다(모델이 한국 시간을 UTC로 적음, `docs/knowledge-graph.md` 10절).
+- 배경: 로컬 그래프 실측에서 사실 105건 중 13건의 `valid_at`이 근거 메시지보다 정확히 9시간 늦었다(모델이 한국 시간을 UTC로 적음, `docs/design/knowledge-graph.md` 10절).
 - 결정: `graph/persona_signals.py`가 순서와 "MM/DD부터"·`since`를 근거 에피소드 중 가장 이른 발화 시각(`RelationshipFact.observed_at`, 수집 코드가 넣은 값)으로 정한다. 근거 에피소드가 없는 사실만 `valid_at`으로 물러난다. `trigger.py`·검색기의 관계 상태 슬롯과 같은 기준이다.
 - 기본 동작 변경(그래프를 켠 사용자): 9시간 어긋났던 사실(13/105건) 때문에 기존 제안의 날짜가 **하루 당겨지거나** 같은 날 사실의 순서가 바뀌어 "그 전에는 …" 문구·제안 값이 달라질 수 있다. 의도한 수정이고 플래그는 없다.
 
@@ -488,7 +488,7 @@
 - **주의 — 0012가 두 가지다**: 이름과 번호는 같고 스키마가 다르다(PR 8에는 `users.email_verified`·CHECK 제약, PR 7에는 `user_identities.email`). 한쪽으로 올린 DB에 다른 쪽 코드를 돌리면 Alembic은 조용하고 요청이 500이 된다. 이 PC의 개발 DB는 PR 8의 0012다. PR 7의 0012를 올린 DB가 있으면 새로 만들거나 손으로 맞춘다. EC2의 DB는 옛 브랜치의 `0008`로 만들어졌을 수 있다(PR 7의 기록) — 재배포 전에 확인한다.
 
 
-## 2026-11-17 EC2 서버는 DB를 새로 만들어 main으로 다시 올린다 (`docs/deploy.md` 16장)
+## 2026-11-17 EC2 서버는 DB를 새로 만들어 main으로 다시 올린다 (`docs/guides/deploy.md` 16장)
 - 결정: 옛 브랜치(`design/iphone-mobile`) 빌드가 떠 있는 `43-203-31-7.sslip.io`를 PR 8 병합 뒤의 main(태그)으로 바꾼다. PostgreSQL·Neo4j는 새 볼륨으로 시작하고(기존 계정·대화·그래프는 넘기지 않는다), 코드는 rsync가 아니라 git으로 올린다. 목표 설정은 가입 열림 + 승인제(`AUTH_SIGNUP_REQUIRES_APPROVAL=true`) + 초대 코드 없음 + `REQUIRE_CONSENT=false` + 관리자 한 명(`ADMIN_USERNAMES`의 이름, `reset_password.py --create`로 만든다 — 권한 관리자를 만드는 `create_user --admin`은 관리자를 더 둘 때).
 - 이유: 서버 DB는 브랜치의 `0008`로 만들어졌는데 main의 `0008`과 revision id만 같고 내용이 다르다 — alembic이 건너뛰어 `users.consented_at`이 없고 0012는 `users.email` 중복으로 실패한다. 사용자 id가 바뀌므로 그래프(`group_id`)도 비운다. 아이폰 앱은 가입에 초대 코드·`consent`를 보내지 않아 `REQUIRE_CONSENT=true`면 422로 막힌다. 받은 코드가 PR 8인지는 0012의 `email_verified`와 `backend/app/tools/create_user.py`로 가린다.
 - 절차의 요점: PR 8의 승인제는 가입이 202(세션 없음)이고 승인 전 로그인이 403이다. 스모크 테스트는 가입에 201만 받아 승인제 서버에서 실패하고 `smoke-…` 계정을 승인 대기로 남긴다(PR 8이 고치지 않았다) → 처음에는 임시 초대 코드 + 승인제 끔으로 올려 전체 흐름을 확인하고, 관리자 계정을 만든 뒤 목표 설정으로 바꾼다. 운영 검사는 승인제를 비용 상한으로 치지 않으므로 전체 차단기·그래프 하루 상한은 0이 아니어야 한다.
@@ -573,7 +573,7 @@
 - PR 17(아이폰 카카오톡 가져오기)은 CI 넷(iOS 빌드 포함) 통과 뒤 병합했다. Swift 테스트와 기기 동작은 맥에서 봐야 한다(A8).
 
 ## 2026-11-24 시연 대본을 새 demo 데이터로 다시 쓰고, 보존 항목의 약속에 설명을 붙였다
-- 배경: `docs/demo-script.md`가 11/19에 교체하기 전의 합성 대화(박지현·이서연 등) 기준이라 지금 demo 계정으로는 따라 할 수 없었다. 네 상대의 그래프 사건을 보고 장면 넷을 잡아 실제 모델로 돌려 확인했다(김상무님 보고 B→C, 이과장 일정 변경 C→D, Michael Brown 영어 C vs D, 박영수 말투 변화 제안).
+- 배경: `docs/guides/demo-script.md`가 11/19에 교체하기 전의 합성 대화(박지현·이서연 등) 기준이라 지금 demo 계정으로는 따라 할 수 없었다. 네 상대의 그래프 사건을 보고 장면 넷을 잡아 실제 모델로 돌려 확인했다(김상무님 보고 B→C, 이과장 일정 변경 C→D, Michael Brown 영어 C vs D, 박영수 말투 변화 제안).
 - 프롬프트: 약속 어미 규칙을 넓힌 뒤 모델이 '드릴게요'를 글자 그대로 남기고 주의를 붙이는 경우가 나왔다. 보존 항목 줄의 약속에만 "뜻을 유지하고 어미·격식은 설정에 맞게 바꾼다"는 설명을 붙였다(`_preserved_block`, 프롬프트 버전 폴더는 그대로 — 모든 버전에 적용된다). 같은 초안 B 3회 모두 격식에 맞게 바뀌었고, 5사례 × A/B/C/D × 3회는 60회 전부 추천이다.
 - 알아 둘 것: demo 대화는 2025년 것이라 날짜가 든 초안에는 "이미 지난 날짜" 주의가 함께 뜬다. 주의 문구는 모델이 쓰므로 장면 1 C·장면 3 D의 주의는 1회씩만 확인했다.
 - 실물 확인: `load_kakao_demo.py --dry-run`을 실제 내보내기 4개로 돌려 130·200·92·129건(합 551, DB와 같음)을 읽었다. README의 상태 절을 11/24로 고쳤다.

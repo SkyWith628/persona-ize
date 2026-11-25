@@ -3,7 +3,7 @@
 | 파일 | 내용 |
 |---|---|
 | `../docker-compose.yml` | **개발용**: postgres(pgvector/pgvector:pg16) · neo4j:5 · backend(소스 마운트 + `--reload`) · `test`(프로필, 테스트·lint 전용) |
-| `../docker-compose.prod.yml` | **운영용**: caddy(80/443) · backend · postgres · neo4j · backup. 안내는 `../docs/deploy.md` |
+| `../docker-compose.prod.yml` | **운영용**: caddy(80/443) · backend · postgres · neo4j · backup. 안내는 `../docs/guides/deploy.md` |
 | `../backend/Dockerfile` | 백엔드 이미지(다단계). 타깃 `prod`(기본) / `dev` |
 | `postgres/init/*.sql` | 컨테이너 최초 생성 시 1회 실행(확장 설치). 스키마는 Alembic이 관리 |
 | `caddy/Caddyfile` | 운영 프록시: 자동 HTTPS, 압축, 본문 상한, HSTS, 접근 로그 |
@@ -30,7 +30,7 @@ Neo4j 자격증명은 `.env`의 `NEO4J_USERNAME`/`NEO4J_PASSWORD`. 기본 비밀
   정상이다. 모델을 바꾸려면 이미지를 다시 만든다: `docker compose build --build-arg EMBEDDING_MODEL=<모델> backend`
   (개발 compose의 `hf-cache` 볼륨은 이제 쓰이지 않는다 — 정의는 그대로 두었다).
 - 시작 명령: `alembic upgrade head` → `exec uvicorn … --workers 1 --proxy-headers`. 워커가 1개인 이유는
-  `../docs/deploy.md` 1장(로그인 제한·요청 제한·그래프 수집 잠금이 프로세스 메모리).
+  `../docs/guides/deploy.md` 1장(로그인 제한·요청 제한·그래프 수집 잠금이 프로세스 메모리).
 - `HEALTHCHECK`는 `/healthz`를 본다(`pz-healthcheck`, `TRUSTED_HOSTS`가 있으면 그 이름을 Host 헤더로 보낸다).
   배포 점검에는 `curl <주소>/healthz?deep=true` — Postgres·Neo4j에 실제로 붙어 보고 하나라도 실패하면 503.
 - **의존성 버전은 `backend/constraints.txt`로 고정한다**(`pip install -c`). 언제 빌드해도 같은 패키지가 들어간다 —
@@ -48,7 +48,7 @@ Neo4j 자격증명은 `.env`의 `NEO4J_USERNAME`/`NEO4J_PASSWORD`. 기본 비밀
 1. `backend/constraints.txt`에서 올릴 패키지의 줄을 지우거나(그 패키지만 최신으로 깔린다) 버전을 고친다.
    `pyproject.toml`에 새 패키지를 더했을 때는 그대로 두면 된다(고정에 없는 패키지는 최신으로 깔린다).
 2. 다시 빌드하고 확인한다: `docker compose --profile test build test && make test-docker`, 그리고 배포 리허설
-   (`../docs/deploy.md` 14장).
+   (`../docs/guides/deploy.md` 14장).
 3. `make lock` — 파일을 새 이미지의 설치 목록으로 다시 쓴다(머리말 주석은 남는다). 함께 커밋한다.
 
 ### 개발 흐름에서 달라진 점

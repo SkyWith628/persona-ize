@@ -1,6 +1,6 @@
 # data/synthetic/ — 사용자·시나리오 담당 폴더
 
-이 폴더에서 Claude와 일할 때 지킬 것. 전체 규칙은 저장소 루트 `CLAUDE.md`, 역할 설명은 `docs/roles/scenario.md`, 형식은 이 폴더의 `README.md`.
+이 폴더에서 Claude와 일할 때 지킬 것. 전체 규칙은 저장소 루트 `CLAUDE.md`, 역할 설명은 `docs/project/roles/scenario.md`, 형식은 이 폴더의 `README.md`.
 
 - 여기 JSON은 서비스가 읽는 **가짜 과거 대화**다. 외부 서비스(Claude API, Neo4j)로 전송되므로 **실제 대화·실존 인물은 절대 넣지 않는다.**
 - 형식: `conversations[].messages[]`의 `id`(방 안에서 유일, m01…), `speaker`(`me`/`contact`), `sent_at`(시간대 포함 ISO, `+09:00`), `text`. 대화방 `conversation_id`는 c1, c2… 순서. `contact`는 `evals/characters.csv`의 이름과 같아야 한다.

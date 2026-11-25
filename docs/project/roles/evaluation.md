@@ -6,7 +6,7 @@
 
 | 파일 | 내용 | 검사 |
 |---|---|---|
-| `evals/eval_cases.csv` | 평가 사례(원문·상황·보존 항목·기대·그래프 필요 여부·정답 메시지·as_of·split). 열 설명은 [docs/dataset-guide.md](../dataset-guide.md) 6절 | `python scripts/validate_data_files.py` (CI) |
+| `evals/eval_cases.csv` | 평가 사례(원문·상황·보존 항목·기대·그래프 필요 여부·정답 메시지·as_of·split). 열 설명은 [docs/guides/dataset-guide.md](../../guides/dataset-guide.md) 6절 | `python scripts/validate_data_files.py` (CI) |
 | `evals/preserve_rules.md` | 보존 항목 분류표(날짜·수량·사람·가능/불가·약속·조건·부정)와 "바뀌면 실패"의 정의 | 팀장이 `backend/app/ai/preserve.py`와 대조 |
 | `evals/style_rubric.md` | 말투 루브릭 v1(격식·친근함·호칭·길이·자연스러움 1~5)과 채점 예시 | 블라인드 평가 전 확정 |
 | 블라인드 평가 시트 결과 | 팀장이 만든 시트(조건 숨김)에 채점 | 제출 |

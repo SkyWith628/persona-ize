@@ -495,7 +495,7 @@ scripts/ops/compose.sh down -v              # 연습이 끝나면 볼륨까지 �
 대상은 `https://43-203-31-7.sslip.io`(AWS 서울 EC2 한 대, 4GB, 고정 IP 43.203.31.7)다. 2026-11-17 기준으로 이 서버에는
 main이 아니라 옛 브랜치 `design/iphone-mobile`의 11-16 빌드가 떠 있다. 위에서부터 따라 하면 main이 뜨도록 썼다.
 이 절에서 **main은 PR #8(`port/members-mobile` — 회원 상태·승인제·소셜 로그인, 마이그레이션 0012)이 병합된 뒤의 main**이다
-(같은 기능의 PR #7은 닫았다 — `docs/decisions.md` 2026-11-17). 계정·관리자·소셜 로그인의 일반 설명은 3장 7단계와 7-1단계에
+(같은 기능의 PR #7은 닫았다 — `docs/project/decisions.md` 2026-11-17). 계정·관리자·소셜 로그인의 일반 설명은 3장 7단계와 7-1단계에
 있고, 여기에는 이 서버에서 달라지는 것만 적는다.
 **이 절은 저장소의 파일만 읽고 썼다 — 서버에 접속해 보지 않았고, 어느 명령도 그 서버에서 돌려 보지 못했다**
 ([16.11](#1611-확인한-것과-못-한-것-2026-11-17)).
@@ -655,7 +655,7 @@ grep -c AUTH_SIGNUP_REQUIRES_APPROVAL .env.production.example           # 1 이�
 ```
 **넷 중 하나라도 어긋나면 멈춘다.** 0012 파일이 없거나 마지막 줄이 0이면 PR #8 이전의 main이다. 0012는 있는데
 `email_verified`가 0이거나 `create_user.py`가 없으면 PR #8이 아닌 다른 0012다(`users.email_verified`와 `create_user`는
-PR #8에만 있다 — `docs/decisions.md` 2026-11-17).
+PR #8에만 있다 — `docs/project/decisions.md` 2026-11-17).
 - 태그를 체크아웃하면 브랜치 위가 아니라서 `deploy.sh`의 `git pull --ff-only`가 실패한다 → 이 절은 전부 `--no-pull`로 돈다.
 - 서버가 GitHub에 닿지 못할 때만: 내 PC에서 `git bundle create pz-main.bundle main` → `scp`로 서버에 → 서버에서
   `git clone -b main pz-main.bundle ~/persona-ize`. 이력과 커밋 해시가 그대로 온다(해 보지 못했다). rsync로 파일만 덮는
@@ -767,7 +767,7 @@ curl -s https://43-203-31-7.sslip.io/v1/auth/providers
 (회원 관리 화면은 PR #8에 들어 있다. 이 서버에서 눌러 본 것은 아니다.)
 
 같은 것을 API로 볼 때(어디서 돌려도 된다). 요청·응답 모양은 `backend/app/api/routes/auth.py`·`routes/admin.py`·
-`docs/api.md`를 읽고 적었고 **실제로 돌려 보지 못했다.**
+`docs/guides/api.md`를 읽고 적었고 **실제로 돌려 보지 못했다.**
 ```bash
 BASE=https://43-203-31-7.sslip.io
 # ① 시험 계정으로 가입 — 앱과 똑같이 초대 코드·동의 없이. 202 와 {"status":"pending","username":"approval-check","email":null}

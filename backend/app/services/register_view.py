@@ -1,4 +1,4 @@
-"""상대 주변 그래프 화면에 보여 줄 "말투 간선" (docs/graph-redesign-2026-11-16.md 3.2).
+"""상대 주변 그래프 화면에 보여 줄 "말투 간선" (docs/design/graph-redesign-2026-11-16.md 3.2).
 
 설계는 말투 프로필을 `(나)-[:REGISTER]->(상대)` 간선처럼 **보여 주기만** 한다. Neo4j에는 아무것도 쓰지
 않는다 — 프로필은 PostgreSQL 메시지에서 읽을 때 규칙으로 계산하는 값이라(`ai.register.build_profile`),

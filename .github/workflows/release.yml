@@ -4,10 +4,10 @@ name: release
 #   git tag v0.1.0 && git push origin v0.1.0
 #   → ghcr.io/<소유자>/<저장소>/backend:v0.1.0 (그리고 :sha-<커밋>)
 # 서버에서는 .env.production의 BACKEND_IMAGE를 그 주소로 바꾸고 `scripts/ops/deploy.sh --no-build`
-# (비공개 저장소면 서버에서 먼저 `docker login ghcr.io` — docs/deploy.md "레지스트리 이미지로 배포").
+# (비공개 저장소면 서버에서 먼저 `docker login ghcr.io` — docs/guides/deploy.md "레지스트리 이미지로 배포").
 #
 # 2026-11-13 `v0.1.0` 태그로 처음 실행해 통과했다(1분 9초, 고친 것 없음). 올라간 이미지를 서버에서 받아
-# 띄워 보는 것은 아직이다(`docs/backlog.md` A3).
+# 띄워 보는 것은 아직이다(`docs/project/backlog.md` A3).
 # - linux/amd64만 만든다. ARM 서버(Graviton, Ampere)는 서버에서 직접 빌드한다(미검증).
 
 on:
