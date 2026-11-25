@@ -582,26 +582,39 @@ export function existingSpeakerNotes(speakers, roles, stored) {
   };
 }
 
-const IGNORED_ROLES_SHOWN = 5; // 결과 화면의 한 줄에 이름을 이만큼만 적는다
+const IGNORED_ROLES_SHOWN = 5; // 결과 화면에 이름을 이만큼만 적는다
 
-/** 따르지 않은 화자 지정을 "이름(…), 이름(…) 외 N건"으로 줄인 글. 없으면 null. */
-function ignoredRolesList(job) {
+/** 따르지 않은 화자 지정 가운데 모양이 맞는 것만. 화면에 적을 것(shown)과 적지 않은 수(rest). 없으면 null. */
+function ignoredRoles(job) {
   const ignored = (Array.isArray(job?.ignored_speaker_roles) ? job.ignored_speaker_roles : []).filter(
     (ig) => ig && ig.name && ROLE_WORD[ig.requested_role] && ROLE_WORD[ig.stored_role],
   );
   if (!ignored.length) return null;
-  const shown = ignored
-    .slice(0, IGNORED_ROLES_SHOWN)
-    .map(
-      (ig) =>
-        `${ig.name}('${ROLE_WORD[ig.requested_role]}'로 골랐지만 '${ROLE_WORD[ig.stored_role]}'로 저장된 메시지 ${formatNumber(ig.messages ?? 0)}개)`,
-    );
+  const shown = ignored.slice(0, IGNORED_ROLES_SHOWN).map((ig) => ({
+    name: String(ig.name),
+    detail: `'${ROLE_WORD[ig.requested_role]}'로 골랐지만 '${ROLE_WORD[ig.stored_role]}'로 저장된 메시지 ${formatNumber(ig.messages ?? 0)}개`,
+  }));
   const rest = ignored.length - shown.length;
-  return `${shown.join(", ")}${rest > 0 ? ` 외 ${formatNumber(rest)}건` : ""}`;
+  return { shown, more: rest > 0 ? `외 ${formatNumber(rest)}건` : null };
+}
+
+/** 화자 목록을 한 문장 속 글로: "이름(…), 이름(…) 외 N건". */
+function ignoredRolesInline(items, more) {
+  return `${items.map((it) => `${it.name}(${it.detail})`).join(", ")}${more ? ` ${more}` : ""}`;
+}
+
+/** 따르지 않은 화자 지정을 "이름(…), 이름(…) 외 N건"으로 줄인 글. 없으면 null. */
+function ignoredRolesList(job) {
+  const roles = ignoredRoles(job);
+  return roles ? ignoredRolesInline(roles.shown, roles.more) : null;
 }
 
 const CONTACT_LINK = { link: "contact", text: "상대 화면" };
 const FIX_HOW = "의 과거 대화에서 '화자별로 고치기'를 써 주세요.";
+const ROLES_KEPT = "이미 가져온 메시지의 화자는 바뀌지 않았어요";
+const SKIPPED_ROLES_KEPT =
+  "이미 가져온 대화와 같은 내용이라 건너뛰었어요. 전에 저장한 메시지는 그대로 있고, 화자도 바뀌지 않았어요";
+const NO_DELETE = " 대화방을 지우지 않아도 돼요.";
 
 /**
  * 가져오기 결과: 서버가 따르지 않은 화자 지정(응답의 ignored_speaker_roles)을 알리는 한 줄. 없으면 null.
@@ -610,7 +623,7 @@ const FIX_HOW = "의 과거 대화에서 '화자별로 고치기'를 써 주세�
  */
 export function ignoredRolesLine(job) {
   const list = ignoredRolesList(job);
-  return list ? `이미 가져온 메시지의 화자는 바뀌지 않았어요: ${list}. 바꾸거나 빼려면 ${CONTACT_LINK.text}${FIX_HOW}` : null;
+  return list ? `${ROLES_KEPT}: ${list}. 바꾸거나 빼려면 ${CONTACT_LINK.text}${FIX_HOW}` : null;
 }
 
 /**
@@ -619,22 +632,36 @@ export function ignoredRolesLine(job) {
  * - 새 메시지 0건 + 없음(kind "skipped", 옛 서버 응답 포함) → 대화방을 지우고 다시 가져오기
  * - 새 메시지 있음 + 따르지 않은 지정 있음(kind "roles") → 화자별로 고치기
  * parts의 `{link: "contact", text}`는 뷰가 그 상대 화면 링크로 그린다(상대를 모르면 글자 그대로).
- * @returns {{nothingNew: boolean, title: string, note: null | {kind: string, tone: string, parts: Array<string|{link: string, text: string}>}}}
+ *
+ * 따르지 않은 지정이 하나면 안내는 한 문단(parts)이다. 둘 이상이면 문단이 길어지므로 셋으로 나눈다:
+ * parts(머리말) → items(화자마다 한 줄, 5명까지) + more("외 N건" 또는 null) → tail(해법, parts와 같은 꼴).
+ * items가 없는 안내는 tail·more도 없다 — 뷰는 items가 있을 때만 목록으로 그린다.
+ * @returns {{nothingNew: boolean, title: string, note: null | {kind: string, tone: string,
+ *   parts: Array<string|{link: string, text: string}>, items?: Array<{name: string, detail: string}>,
+ *   more?: string|null, tail?: Array<string|{link: string, text: string}>}}}
  */
 export function importResultView(job) {
   const nothingNew = (job?.imported ?? 0) === 0;
-  const list = ignoredRolesList(job);
+  const roles = ignoredRoles(job);
+  const list = roles ? ignoredRolesInline(roles.shown, roles.more) : null;
+  // 서버가 준 줄이 둘 이상일 때(5명을 넘겨 "외 N건"이 붙는 경우 포함) 목록으로 나눈다
+  const asList = Boolean(roles) && roles.shown.length + (roles.more ? 1 : 0) > 1;
+  const listed = asList ? { items: roles.shown, more: roles.more } : null;
   const title = nothingNew ? "새로 저장한 메시지가 없어요" : "가져왔어요";
   let note = null;
-  if (nothingNew && list) {
+  if (nothingNew && listed) {
     note = {
       kind: "roles-only",
       tone: "warn",
-      parts: [
-        `이미 가져온 대화와 같은 내용이라 건너뛰었어요. 전에 저장한 메시지는 그대로 있고, 화자도 바뀌지 않았어요: ${list}. 바꾸거나 빼려면 `,
-        CONTACT_LINK,
-        `${FIX_HOW} 대화방을 지우지 않아도 돼요.`,
-      ],
+      parts: [`${SKIPPED_ROLES_KEPT}.`],
+      ...listed,
+      tail: ["바꾸거나 빼려면 ", CONTACT_LINK, `${FIX_HOW}${NO_DELETE}`],
+    };
+  } else if (nothingNew && list) {
+    note = {
+      kind: "roles-only",
+      tone: "warn",
+      parts: [`${SKIPPED_ROLES_KEPT}: ${list}. 바꾸거나 빼려면 `, CONTACT_LINK, `${FIX_HOW}${NO_DELETE}`],
     };
   } else if (nothingNew) {
     note = {
@@ -646,17 +673,34 @@ export function importResultView(job) {
         "에서 그 대화방을 지운 뒤 다시 가져와 주세요.",
       ],
     };
+  } else if (listed) {
+    note = {
+      kind: "roles",
+      tone: "warn",
+      parts: [`${ROLES_KEPT}.`],
+      ...listed,
+      tail: ["바꾸거나 빼려면 ", CONTACT_LINK, FIX_HOW],
+    };
   } else if (list) {
     note = {
       kind: "roles",
       tone: "warn",
-      parts: [`이미 가져온 메시지의 화자는 바뀌지 않았어요: ${list}. 바꾸거나 빼려면 `, CONTACT_LINK, FIX_HOW],
+      parts: [`${ROLES_KEPT}: ${list}. 바꾸거나 빼려면 `, CONTACT_LINK, FIX_HOW],
     };
   }
   return { nothingNew, title, note };
 }
 
-/** 결과 안내를 글자로만(링크 없이). 화면 낭독기에 알릴 때 쓴다. 안내가 없으면 빈 글자. */
+const partsText = (parts) => (parts || []).map((part) => (typeof part === "string" ? part : part.text)).join("");
+
+/**
+ * 결과 안내를 글자로만(링크 없이). 화면 낭독기에 알릴 때 쓴다. 안내가 없으면 빈 글자.
+ * 목록으로 나눈 안내도 문장으로 잇는다: "머리말. 이름(…), 이름(…) 외 N건. 해법."
+ */
 export function resultNoteText(view) {
-  return (view?.note?.parts || []).map((part) => (typeof part === "string" ? part : part.text)).join("");
+  const note = view?.note;
+  if (!note) return "";
+  const head = partsText(note.parts);
+  if (!note.items?.length) return head;
+  return `${head} ${ignoredRolesInline(note.items, note.more)}. ${partsText(note.tail)}`;
 }
