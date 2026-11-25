@@ -7,6 +7,7 @@ import {
   CHECK_LABEL,
   CONDITION_LABEL,
   GRAPH_STATUS_LABEL,
+  JOB_KIND_LABEL,
   JOB_STATUS_LABEL,
   NO_DATA,
   REASON_LABEL,
@@ -505,8 +506,10 @@ export function renderJobs(root, items) {
       [
         { title: "시각", cell: (j) => timeCell(j.created_at) },
         { title: "사용자", cell: (j) => idCell(j.user_id) },
-        { title: "가져오기", cell: importStatus },
-        { title: "메시지", num: true, cell: (j) => `${num(j.imported)}건` },
+        { title: "종류", cell: (j) => label(JOB_KIND_LABEL, j.kind ?? "import") },
+        { title: "처리", cell: importStatus },
+        // 역할 고치기는 가져온 메시지가 없다 — 0건으로 적으면 빈 가져오기처럼 읽힌다
+        { title: "메시지", num: true, cell: (j) => (j.kind === "speaker_roles" ? "–" : `${num(j.imported)}건`) },
         { title: "문체 묶음", num: true, cell: (j) => `${num(j.episodes)}개` },
         { title: "사건 정리", cell: graphStatus },
         { title: "정리한 메시지", num: true, cell: (j) => `${num(j.graph_episodes)}건` },
@@ -514,7 +517,9 @@ export function renderJobs(root, items) {
       ],
       items,
     ),
-    hint("오류는 종류만 보여 줍니다. 자세한 내용은 서버 로그에서 확인하세요."),
+    hint(
+      "역할 고치기는 화자 역할을 고친 뒤 문체 묶음을 다시 만든 작업입니다(가져오기가 아닙니다). 오류는 종류만 보여 줍니다. 자세한 내용은 서버 로그에서 확인하세요.",
+    ),
   );
 }
 

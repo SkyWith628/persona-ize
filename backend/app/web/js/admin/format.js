@@ -134,6 +134,9 @@ export const CONDITION_LABEL = {
 
 export const JOB_STATUS_LABEL = { processing: "처리 중", completed: "완료", failed: "실패" };
 
+// 작업 종류. 화자 역할 고치기는 메시지를 넣지 않고 묶음만 다시 만든다 — 가져오기로 세지 않는다.
+export const JOB_KIND_LABEL = { import: "가져오기", speaker_roles: "역할 고치기" };
+
 export const GRAPH_STATUS_LABEL = {
   skipped: "안 함",
   pending: "대기",

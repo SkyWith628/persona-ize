@@ -953,6 +953,9 @@ class ImportService:
                 # 파일 내용이 아니라 이번 변경을 가리키는 값 — 같은 방의 다른 작업과 겹치지 않는다
                 source_hash=hashlib.sha256(f"speaker-roles:{uuid4().hex}".encode()).hexdigest(),
                 status="processing",
+                # 넣은 메시지가 없다 — 둘 다 0인 것이 이 작업의 표식이다 (`import_job_kind`)
+                imported=0,
+                duplicates=0,
                 graph_status="pending" if self.graph_mode != "off" and stats.messages > 0 else "skipped",
                 created_at=datetime.now(UTC),
             )

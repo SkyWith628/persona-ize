@@ -25,6 +25,7 @@ from sqlalchemy import text
 
 from app.db.models import AdminAccessLogRow
 from app.db.session import SessionFactory
+from app.domain.conversation import import_job_kind
 
 # ---- 개요 ----
 
@@ -189,7 +190,7 @@ _USER_LIST = text(
 
 _JOB_LIST = text(
     """
-    SELECT id::text AS id, user_id, status, imported, episodes, error_code,
+    SELECT id::text AS id, user_id, status, imported, duplicates, episodes, error_code,
            graph_status, graph_episodes, graph_error, created_at
     FROM import_jobs
     ORDER BY created_at DESC, id
@@ -276,6 +277,7 @@ class JobLine:
     id: str
     user_id: str
     status: str
+    kind: str  # import | speaker_roles (`import_job_kind`)
     imported: int
     episodes: int
     error_code: str | None
@@ -418,6 +420,7 @@ class AdminRepo:
                 id=r.id,
                 user_id=r.user_id,
                 status=r.status,
+                kind=import_job_kind(int(r.imported), int(r.duplicates)),
                 imported=int(r.imported),
                 episodes=int(r.episodes),
                 error_code=r.error_code,
