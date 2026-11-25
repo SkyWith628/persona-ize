@@ -1,7 +1,8 @@
 # 저장소 전체(backend, evals, scripts, graph)에 같은 규칙을 적용한다.
 line-length = 110
 target-version = "py312"
-extend-exclude = [".venv", "evals/results", "graph/graphiti_p0/runs"]
+# .claude/skills는 바깥에서 가져온 스킬이라 우리 규칙으로 검사하지 않는다.
+extend-exclude = [".venv", "evals/results", "graph/graphiti_p0/runs", ".claude/skills"]
 
 [lint]
 select = ["E", "F", "I", "B", "UP", "N"]
