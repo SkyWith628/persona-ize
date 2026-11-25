@@ -24,10 +24,15 @@ LangGraph `StateGraph`로 짠 상태 그래프다. 단계는 상태에서 필요
 - `register_post_check`: 사실 검증을 통과한 출력의 반말/존댓말이 설정의 격식과 다르면 한 번 다시 쓴다.
   그래프 모양은 그대로다(validate → generate 길을 같이 쓴다). 통과한 1차는 상태에 보관해 두고, 2차를
   쓸 수 없으면(사실 검증 실패·거절·장애) fallback 단계가 원문 대신 1차를 경고와 함께 추천한다.
+
+취소(2026-11-25): `run`에 `meter`(`CallMeter`)를 주면 모델 호출을 그 장부에 적는다. 실행이 취소되면 상태는
+사라지지만 장부는 호출한 쪽에 남는다 — 끝난 호출의 토큰과, 아직 도는 호출(끊지 않고 넘긴다)을
+`RewriteService`가 넘겨받아 사용량에 기록한다. 장부 없이 부르면(평가 스크립트) 예전 그대로다.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
@@ -40,7 +45,7 @@ from langsmith import tracing_context
 from app.ai.intent import classify_intent
 from app.ai.preserve import extract_preserved_items
 from app.ai.prompt import PromptBundle, build_prompt, build_regenerate_suffix, fit_examples, today_kst
-from app.ai.providers.base import LLMProvider
+from app.ai.providers.base import GenerationResult, LLMProvider
 from app.ai.retrieval.base import Retriever
 from app.ai.validation import address_leaks, validate_output
 from app.core.errors import ModelRefusalError, ModelUnavailableError
@@ -97,6 +102,19 @@ _WARN_REGISTER_OFF = "결과의 말투(반말/존댓말)가 설정한 격식과 
 _WARN_ADDRESS_LEAK = "설정과 원문에 없는 호칭 {terms}이(가) 결과에 들어 있습니다. 보내기 전에 확인하세요."
 
 
+@dataclass
+class CallMeter:
+    """요청 하나의 모델 호출 장부. 워크플로 상태 밖에 둔다(모듈 머리말 "취소").
+
+    `usage`와 `call`은 한 호출을 겹쳐 담지 않는다: 호출이 끝나 `usage`에 더할 때 `call`을 비운다
+    (그 사이에 양보가 없다). 그래서 취소된 뒤 둘을 따로 기록해도 두 번 세지 않는다.
+    """
+
+    usage: dict[str, int] = field(default_factory=dict)  # 끝난 호출들의 합 (결과의 token_usage와 같은 꼴)
+    call: asyncio.Future[GenerationResult] | None = None  # 아직 장부에 적지 않은 호출 (도는 중이거나 막 끝남)
+    call_estimate: int = 0  # 그 호출의 입력 추정 토큰 — 응답 없이 끝나면 이 값을 쓴다
+
+
 class WorkflowState(TypedDict, total=False):
     """요청 하나의 상태. 실행마다 새로 만들어지고 어디에도 저장하지 않는다."""
 
@@ -105,6 +123,7 @@ class WorkflowState(TypedDict, total=False):
     contact: Contact
     persona: PersonaSettings | None  # 저장된 설정 그대로
     started: float  # perf_counter — latency_ms 계산용
+    meter: CallMeter | None  # 호출한 쪽의 호출 장부 (없으면 적지 않는다)
     # analyze
     intent: Intent
     preserved: list[PreservedItem]
@@ -214,13 +233,20 @@ class RewriteWorkflow:
         return g.compile(checkpointer=None, name="rewrite")
 
     async def run(
-        self, inp: RewriteInput, contact: Contact, persona: PersonaSettings | None
+        self,
+        inp: RewriteInput,
+        contact: Contact,
+        persona: PersonaSettings | None,
+        *,
+        meter: CallMeter | None = None,
     ) -> RewriteResult:
         started = time.perf_counter()
         if inp.condition not in self.retrievers:
             # auto는 RewriteService가 A~D로 바꿔서 넘긴다. 여기까지 오면 호출 쪽 실수다.
             raise ValueError(f"워크플로는 A~D 조건만 받습니다: {inp.condition}")
         state: WorkflowState = {"inp": inp, "contact": contact, "persona": persona, "started": started}
+        if meter is not None:
+            state["meter"] = meter
         with tracing_context(enabled=False):  # 환경변수로 추적이 켜져 있어도 상태를 내보내지 않는다
             final = await self._graph.ainvoke(state)
         return final["result"]
@@ -276,12 +302,14 @@ class RewriteWorkflow:
         user_prompt = state["user_prompt"]
         attempts = state["attempts"] + 1
         usage = dict(state["usage"])  # 상태의 값을 고치지 않고 새 값을 돌려준다 (키 순서는 유지)
+        meter = state.get("meter")
         try:
-            gen = await self.provider.generate(system=prompt.system, user=user_prompt)
+            gen = await self._call(meter, prompt.system, user_prompt)
         except ModelRefusalError as exc:
             # 거절은 장애가 아니다. 위반처럼 기록하고 재생성 1회를 시도한다 (11-08 E003).
             log.info("model refusal attempt=%d", attempts)
             self._count_unmeasured(usage, prompt.system, user_prompt)
+            self._book(meter, usage)
             report = ValidationReport(
                 passed=False, violations=[Violation(check="refusal", detail=exc.message)]
             )
@@ -303,6 +331,7 @@ class RewriteWorkflow:
             # 장애는 다시 부르지 않는다. 앞선 시도의 출력이 남아 있어도 추천하지 않는다.
             log.info("model unavailable attempt=%d: %s", attempts, exc.message)
             self._count_unmeasured(usage, prompt.system, user_prompt)
+            self._book(meter, usage)
             report = ValidationReport(passed=False, violations=[Violation(check="empty", detail=exc.message)])
             record = AttemptRecord(attempt=attempts, passed=False, violations=report.violations)
             return {
@@ -314,6 +343,7 @@ class RewriteWorkflow:
             }
         for k, v in gen.usage.items():
             usage[k] = usage.get(k, 0) + v
+        self._book(meter, usage)
         return {
             "attempts": attempts,
             "outcome": "output",
@@ -458,6 +488,25 @@ class RewriteWorkflow:
         return {"result": result}
 
     # ── 도우미 ────────────────────────────────────────────────────────────
+
+    async def _call(self, meter: CallMeter | None, system: str, user: str) -> GenerationResult:
+        """모델을 한 번 부른다. 장부가 있으면 호출을 따로 띄워 장부에 걸어 두고 기다린다.
+
+        shield: 이 실행이 취소돼도 이미 보낸 호출은 끊지 않는다(끊어도 보낸 만큼은 과금된다). 취소는
+        삼키지 않고 그대로 올라가며, 장부에 남은 호출은 호출한 쪽이 끝을 보고 토큰을 기록한다.
+        """
+        if meter is None:
+            return await self.provider.generate(system=system, user=user)
+        call = asyncio.ensure_future(self.provider.generate(system=system, user=user))
+        meter.call, meter.call_estimate = call, estimate_tokens(len(system) + len(user))
+        return await asyncio.shield(call)
+
+    @staticmethod
+    def _book(meter: CallMeter | None, usage: dict[str, int]) -> None:
+        """방금 끝난 호출까지의 합을 장부에 적고 걸어 둔 호출을 내린다 (await 없이 한 번에)."""
+        if meter is not None:
+            meter.usage = dict(usage)
+            meter.call = None
 
     @staticmethod
     def _count_unmeasured(usage: dict[str, int], system: str, user: str) -> None:
