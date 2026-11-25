@@ -1077,20 +1077,37 @@ export function mountImport(root, ctx) {
       return graph.polling || style.polling;
     };
 
+    // 안내 글 조각을 그린다 — 링크 자리는 상대를 알 때만 링크, 모르면 글자 그대로
+    const drawParts = (parts) =>
+      (parts || []).map((part) =>
+        typeof part === "string" ? part : c ? h("a", { href: buildHash("contact", { id: c.id }) }, part.text) : part.text,
+      );
+    let resultNote = null;
+    if (result.note?.items?.length) {
+      // 화자가 여럿이면 한 문단 대신 머리말 · 화자마다 한 줄 · 해법으로 나눠 그린다
+      resultNote = h(
+        "div",
+        { class: ["note", result.note.tone ? `note-${result.note.tone}` : "", "note-listed"] },
+        h("p", null, drawParts(result.note.parts)),
+        h(
+          "ul",
+          { class: "plain-list" },
+          result.note.items.map((item) => h("li", null, `${item.name} — ${item.detail}`)),
+          result.note.more ? h("li", { class: "note-more" }, result.note.more) : null,
+        ),
+        h("p", null, drawParts(result.note.tail)),
+      );
+    } else if (result.note) {
+      resultNote = note(drawParts(result.note.parts), result.note.tone);
+    }
+
     setChildren(
       body,
       h(
         "section",
         { class: "card section" },
         stepTitle(result.title),
-        result.note
-          ? note(
-              result.note.parts.map((part) =>
-                typeof part === "string" ? part : c ? h("a", { href: buildHash("contact", { id: c.id }) }, part.text) : part.text,
-              ),
-              result.note.tone,
-            )
-          : null,
+        resultNote,
         styleBox,
         graphBox,
         register?.box,

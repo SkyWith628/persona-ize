@@ -661,3 +661,96 @@ test("가져오기 결과: 화면 낭독기에 알릴 글은 안내를 링크 �
   assert.equal(resultNoteText(importResultView({ imported: 3 })), "");
   assert.equal(resultNoteText(null), "");
 });
+
+// ---------- 따르지 않은 화자 지정이 여럿이면: 머리말 · 목록 · 해법 ----------
+const ignoredN = (n) =>
+  Array.from({ length: n }, (_, i) => ({ name: `화자${i}`, requested_role: i % 2 ? "skip" : "contact", stored_role: "me", messages: 1000 + i }));
+const tailText = (view) => view.note.tail.map((part) => (typeof part === "string" ? part : part.text)).join("");
+const FIX_TAIL = "바꾸거나 빼려면 상대 화면의 과거 대화에서 '화자별로 고치기'를 써 주세요.";
+
+test("가져오기 결과: 따르지 않은 지정이 하나면 한 문단 그대로다(목록 없음)", () => {
+  for (const imported of [0, 5]) {
+    const note = importResultView({ imported, ignored_speaker_roles: IGNORED }).note;
+    assert.deepEqual(Object.keys(note).sort(), ["kind", "parts", "tone"]);
+  }
+  // 모양이 어긋난 줄을 빼고 하나가 남아도 한 문단이다
+  const mixed = [...IGNORED, { name: "", requested_role: "me", stored_role: "contact", messages: 1 }, { name: "x", requested_role: "?", stored_role: "me" }];
+  const view = importResultView({ imported: 5, ignored_speaker_roles: mixed });
+  assert.equal(view.note.items, undefined);
+  assert.equal(noteText(view), ignoredRolesLine({ ignored_speaker_roles: IGNORED }));
+});
+
+test("가져오기 결과: 따르지 않은 지정이 둘이면 머리말 · 화자마다 한 줄 · 해법으로 나눈다", () => {
+  const job = {
+    imported: 5,
+    ignored_speaker_roles: [
+      { name: "김민수", requested_role: "contact", stored_role: "me", messages: 6 },
+      { name: "박지현", requested_role: "skip", stored_role: "contact", messages: 1200 },
+    ],
+  };
+  const view = importResultView(job);
+  assert.equal(view.note.kind, "roles");
+  assert.equal(view.note.tone, "warn");
+  assert.deepEqual(view.note.parts, ["이미 가져온 메시지의 화자는 바뀌지 않았어요."]);
+  assert.deepEqual(view.note.items, [
+    { name: "김민수", detail: "'상대'로 골랐지만 '나'로 저장된 메시지 6개" },
+    { name: "박지현", detail: "'제외'로 골랐지만 '상대'로 저장된 메시지 1,200개" },
+  ]);
+  assert.equal(view.note.more, null);
+  assert.equal(tailText(view), FIX_TAIL);
+  // 해법은 하나, 링크도 하나(해법 줄에만)
+  assert.deepEqual(noteLinks(view), []);
+  assert.deepEqual(
+    view.note.tail.filter((part) => typeof part !== "string"),
+    [{ link: "contact", text: "상대 화면" }],
+  );
+  assert.doesNotMatch(`${noteText(view)}${tailText(view)}`, /지운 뒤|지우지/);
+});
+
+test("가져오기 결과: 다섯 명까지는 모두 적고, 넘으면 마지막에 '외 N건'을 둔다", () => {
+  const five = importResultView({ imported: 1, ignored_speaker_roles: ignoredN(5) }).note;
+  assert.deepEqual(
+    five.items.map((it) => it.name),
+    ["화자0", "화자1", "화자2", "화자3", "화자4"],
+  );
+  assert.equal(five.more, null);
+  const seven = importResultView({ imported: 1, ignored_speaker_roles: ignoredN(7) }).note;
+  assert.equal(seven.items.length, 5);
+  assert.equal(seven.more, "외 2건");
+  assert.equal(seven.items[4].detail, "'상대'로 골랐지만 '나'로 저장된 메시지 1,004개");
+  assert.equal(importResultView({ imported: 1, ignored_speaker_roles: ignoredN(6) }).note.more, "외 1건");
+});
+
+test("가져오기 결과: 새 메시지 0건이고 따르지 않은 지정이 여럿이면 건너뛴 사정은 머리말, 삭제 안 해도 된다는 말은 해법에 둔다", () => {
+  const view = importResultView({ imported: 0, ignored_speaker_roles: ignoredN(3) });
+  assert.equal(view.title, "새로 저장한 메시지가 없어요");
+  assert.equal(view.note.kind, "roles-only");
+  assert.deepEqual(view.note.parts, [
+    "이미 가져온 대화와 같은 내용이라 건너뛰었어요. 전에 저장한 메시지는 그대로 있고, 화자도 바뀌지 않았어요.",
+  ]);
+  assert.equal(view.note.items.length, 3);
+  assert.equal(tailText(view), `${FIX_TAIL} 대화방을 지우지 않아도 돼요.`);
+  assert.doesNotMatch(tailText(view), /지운 뒤 다시/);
+});
+
+test("가져오기 결과: 필드 없는 예전 응답은 목록 없이 예전 안내 그대로다", () => {
+  assert.equal(importResultView({ imported: 3 }).note, null);
+  const old = importResultView({ imported: 0 }).note;
+  assert.equal(old.kind, "skipped");
+  assert.equal(old.items, undefined);
+  assert.equal(old.tail, undefined);
+  assert.equal(importResultView({ imported: 0, ignored_speaker_roles: "x" }).note.kind, "skipped");
+});
+
+test("가져오기 결과: 목록으로 나눈 안내도 화면 낭독기에는 이어진 문장으로 알린다", () => {
+  const two = { imported: 5, ignored_speaker_roles: ignoredN(2) };
+  assert.equal(
+    resultNoteText(importResultView(two)),
+    "이미 가져온 메시지의 화자는 바뀌지 않았어요. 화자0('상대'로 골랐지만 '나'로 저장된 메시지 1,000개), 화자1('제외'로 골랐지만 '나'로 저장된 메시지 1,001개). " +
+      FIX_TAIL,
+  );
+  const seven = resultNoteText(importResultView({ imported: 0, ignored_speaker_roles: ignoredN(7) }));
+  assert.match(seven, /^이미 가져온 대화와 같은 내용이라 건너뛰었어요\. .*화자도 바뀌지 않았어요\. 화자0\(/);
+  assert.match(seven, /화자4\([^)]*\) 외 2건\. 바꾸거나 빼려면 상대 화면의 .*써 주세요\. 대화방을 지우지 않아도 돼요\.$/);
+  assert.doesNotMatch(seven, /화자5|—|undefined|\.\./);
+});
