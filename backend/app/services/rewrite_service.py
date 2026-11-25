@@ -11,10 +11,6 @@
   넘기지 못하게 (2026-11-11 검토). 서버 프로세스가 여럿이면 프로세스 사이의 경합은 남는다.
 - 모델 호출이 실패·시간 초과로 끝나도 보낸 프롬프트만큼의 추정 입력 토큰을 사용량에 더한다
   (`token_usage.estimated_input_tokens` — 워크플로가 채운다).
-- 취소(2026-11-25): 요청 태스크가 취소돼도(서버 종료의 강제 취소 등) 이미 쓴 토큰은 사용량에 남긴다.
-  끝난 호출의 토큰은 바로, 아직 도는 호출은 끊지 않고 뒤에서 끝을 본 뒤 기록한다(`_settle`). 그 요청은
-  이력에 남지 않는다(예약한 요청 수는 그대로) — 같은 키로 다시 보내면 새 요청으로 처리한다. 취소는
-  삼키지 않고 그대로 올린다. 뒤에 남은 일은 `shutdown`이 정해진 시간까지만 기다린다.
 - 말투 프로필(graph-redesign 5.2·5.3, 둘 다 기본은 꺼짐): 내가 이 상대에게 보낸 메시지에서 규칙으로
   계산한다(모델 호출 없음). 저장된 설정이 **없는** 요청(auto가 C·D를 고른 경우)에는 [관계 상태] 블록을
   프롬프트에 붙이고, 저장된 설정이 **있는** 요청에는 문장을 건드리지 않고 경고만 덧붙인다 — 명시적
@@ -33,8 +29,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from app.ai.providers.base import GenerationResult
-from app.ai.workflow import CallMeter, RewriteWorkflow
+from app.ai.workflow import RewriteWorkflow
 from app.core.config import Settings
 from app.core.errors import InvalidInputError, UsageLimitError, VersionConflictError
 from app.domain.contact import Contact
@@ -55,8 +50,6 @@ log = logging.getLogger(__name__)
 # 진행 중인 요청 하나가 쓸 토큰의 추정값. 끝난 요청의 실제 사용량으로 조금씩 맞춰 간다.
 DEFAULT_REQUEST_TOKENS = 2_000
 MIN_REQUEST_TOKENS, MAX_REQUEST_TOKENS = 500, 20_000
-SHUTDOWN_CANCEL_WAIT_SECONDS = 2.0  # 종료 때 끊은 뒷정리가 추정치를 기록하길 기다리는 시간
-SHUTDOWN_POLL_SECONDS = 0.05  # 종료 때 막 취소된 요청이 뒷정리를 넘기길 기다리며 다시 보는 간격
 
 
 def _input_hash(inp: RewriteInput) -> str:
@@ -181,8 +174,6 @@ class RewriteService:
         self._in_flight: dict[str, int] = {}
         self._in_flight_total = 0
         self._request_tokens = DEFAULT_REQUEST_TOKENS
-        # 요청 밖에서 도는 일(토큰 기록, 취소된 요청이 남긴 모델 호출 지켜보기). `shutdown`이 정리한다.
-        self._tasks: set[asyncio.Task] = set()
 
     def _validate(self, inp: RewriteInput, idempotency_key: str | None = None) -> None:
         """모델을 부르기 전에 걸러야 하는 것들 — 뒤늦게 저장에서 실패하면 비용만 쓰고 결과가 남지 않는다."""
@@ -350,106 +341,6 @@ class RewriteService:
             blended = (self._request_tokens * 4 + tokens) // 5
             self._request_tokens = min(max(blended, MIN_REQUEST_TOKENS), MAX_REQUEST_TOKENS)
 
-    def _track(self, coro, name: str) -> asyncio.Task:  # noqa: ANN001 - 코루틴
-        task = asyncio.create_task(coro, name=name)
-        self._tasks.add(task)
-        task.add_done_callback(self._untrack)
-        return task
-
-    def _untrack(self, task: asyncio.Task) -> None:
-        self._tasks.discard(task)
-        if not task.cancelled() and task.exception() is not None:
-            # 기다리는 요청이 없을 수 있다(취소된 뒤) — 여기서 종류만 남긴다
-            log.warning("usage record failed: %s", exception_kind(task.exception()))
-
-    async def _record(self, user_id: str, day: date, usage: dict[str, int]) -> int:
-        """토큰을 사용량에 더하고 더한 양을 돌려준다.
-
-        실패·시간 초과한 호출은 실제 토큰 수를 모른다 — 보낸 프롬프트만큼의 추정치를 입력에 더한다.
-        기록은 따로 띄워 shield로 기다린다: 기록 도중에 요청이 취소돼도 기록은 끝까지 가고, 취소는
-        그대로 올라간다.
-        """
-        input_tokens = usage.get("input_tokens", 0) + usage.get("estimated_input_tokens", 0)
-        output_tokens = usage.get("output_tokens", 0)
-        write = self._usage.add_tokens(user_id, day, input_tokens, output_tokens)
-        await asyncio.shield(self._track(write, "rewrite-usage-record"))
-        return input_tokens + output_tokens
-
-    def _hand_over(self, user_id: str, day: date, meter: CallMeter) -> bool:
-        """취소된 요청이 쓴 토큰의 기록을 뒤로 넘긴다. 넘길 것이 없으면 False.
-
-        넘기면 "진행 중" 집계는 뒷정리가 끝날 때 내린다 — 아직 기록되지 않은 토큰이 있는 동안은
-        한도 계산에 계속 잡혀 있어야 한다.
-        """
-        usage, call, estimate = dict(meter.usage), meter.call, meter.call_estimate
-        if call is None and not any(usage.values()):
-            return False
-        task = self._track(self._settle(user_id, day, usage, call, estimate), "rewrite-usage-settle")
-        # 코루틴 안의 finally가 아니라 콜백으로 내린다 — 시작도 하기 전에 끊긴 태스크는 본문이 돌지 않는다
-        task.add_done_callback(lambda _t: self._release(user_id))
-        return True
-
-    async def _settle(
-        self,
-        user_id: str,
-        day: date,
-        usage: dict[str, int],
-        call: asyncio.Future[GenerationResult] | None,
-        estimate: int,
-    ) -> None:
-        """취소된 요청의 뒷정리: 끝난 호출의 토큰을 기록하고, 돌던 호출은 끝을 본 뒤 기록한다.
-
-        돌던 호출이 응답 없이 끝나면(거절·장애, 서버 종료로 끊김) 다른 실패한 호출과 같이 입력 추정치만
-        더한다. 결과는 버린다 — 재생성도 저장도 하지 않으므로 취소된 뒤에 새로 나가는 비용은 없다.
-        """
-        if any(usage.values()):
-            try:
-                await self._record(user_id, day, usage)
-            except asyncio.CancelledError:
-                # 종료 시한이 이 기록 도중에 왔다. 기록은 스스로 끝까지 간다 — 돌던 호출만 끊고 아래로 간다
-                if call is not None:
-                    call.cancel()
-            except Exception:  # noqa: BLE001, S110 - 종류는 `_untrack`이 남겼다. 돌던 호출은 마저 본다
-                pass
-        if call is None:
-            return
-        try:
-            last = dict((await call).usage)
-        except asyncio.CancelledError:
-            # 종료 시한에 걸려 이 뒷정리가 끊겼다(기다리던 호출도 함께 끊긴다). 추정치는 남기고 끝낸다 —
-            # 이 태스크는 서비스가 직접 띄운 것이라 취소를 더 올릴 곳이 없다.
-            last = {"estimated_input_tokens": estimate}
-        except Exception as exc:  # noqa: BLE001 - 응답 없이 끝난 호출: 종류만 남기고 추정치를 쓴다
-            log.info("cancelled request's model call ended without usage: %s", exception_kind(exc))
-            last = {"estimated_input_tokens": estimate}
-        await self._record(user_id, day, last)
-
-    async def shutdown(self, grace: float) -> int:
-        """서버 종료: 취소된 요청이 남긴 뒷정리를 `grace`초까지만 기다리고, 남으면 끊는다. 끊은 수.
-
-        끊긴 뒷정리는 지켜보던 모델 호출도 끊고 입력 추정치를 기록한 뒤 끝난다(`_settle`). 방금 취소된
-        요청은 아직 뒷정리를 넘기지 못했을 수 있어, 진행 중인 요청이 남아 있는 동안에도 기다린다.
-        """
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + max(grace, 0.0)
-        while True:
-            running = set(self._tasks)
-            left = deadline - loop.time()
-            if left <= 0 or not (running or self._in_flight_total):
-                break
-            if running:
-                await asyncio.wait(running, timeout=left, return_when=asyncio.FIRST_COMPLETED)
-                await asyncio.sleep(0)  # 끝난 태스크의 정리 콜백이 돌게 양보한다
-            else:
-                await asyncio.sleep(min(SHUTDOWN_POLL_SECONDS, left))
-        running = set(self._tasks)
-        for task in running:
-            task.cancel()
-        if running:
-            await asyncio.wait(running, timeout=SHUTDOWN_CANCEL_WAIT_SECONDS)
-            log.warning("shutdown: cut %d rewrite usage task(s) after %.0fs", len(running), grace)
-        return len(running)
-
     async def rewrite(self, inp: RewriteInput, idempotency_key: str | None) -> RewriteRecord:
         self._validate(inp, idempotency_key)
         if not idempotency_key:
@@ -487,8 +378,6 @@ class RewriteService:
         # 사용량: 모델을 부르기 전에 한도를 확인하고 요청 수를 예약한다 (진행 중 요청까지 센다).
         day = usage_day(offset_hours=self._settings.usage_day_offset_hours)
         await self._admit(inp.user_id, day)
-        meter = CallMeter()  # 모델 호출 장부 — 취소되면 여기 남은 것으로 사용량을 맞춘다
-        recorded = handed_over = False
         try:
             # 말투 프로필은 필요한 요청에만 계산한다. 설정이 없으면(auto가 C·D를 고른 경우) 블록, 설정이
             # 있으면 경고 — 한 요청에 둘이 함께 나가지 않는다. A는 상대 정보를 쓰지 않는 기준선이라 뺀다.
@@ -506,22 +395,21 @@ class RewriteService:
             run_input = inp.model_copy(
                 update={"condition": condition, "register_block": block, "voice_block": voice}
             )
-            result = await self._workflow.run(run_input, contact, pv.settings if pv else None, meter=meter)
+            result = await self._workflow.run(run_input, contact, pv.settings if pv else None)
             if want_warnings and profile is not None and pv is not None:
                 extra = [w for w in self._persona_warnings(profile, pv.settings) if w not in result.warnings]
                 if extra:
                     # 문장(result_text)과 검증 결과는 그대로 두고 경고만 덧붙인다.
                     result = result.model_copy(update={"warnings": [*result.warnings, *extra]})
-            recorded = True  # 여기서부터는 기록이 스스로 끝까지 간다 (취소돼도 다시 넘기지 않는다)
-            self._learn(await self._record(inp.user_id, day, result.token_usage))
-        except asyncio.CancelledError:
-            # 요청 태스크가 취소됐다. 이미 쓴 토큰의 기록을 뒤로 넘기고 취소는 그대로 올린다.
-            if not recorded:
-                handed_over = self._hand_over(inp.user_id, day, meter)
-            raise
+            # 실패·시간 초과한 호출은 실제 토큰 수를 모른다 — 보낸 프롬프트만큼의 추정치를 입력에 더한다.
+            input_tokens = result.token_usage.get("input_tokens", 0) + result.token_usage.get(
+                "estimated_input_tokens", 0
+            )
+            output_tokens = result.token_usage.get("output_tokens", 0)
+            await self._usage.add_tokens(inp.user_id, day, input_tokens, output_tokens)
+            self._learn(input_tokens + output_tokens)
         finally:
-            if not handed_over:
-                self._release(inp.user_id)
+            self._release(inp.user_id)
         try:
             return await self._rewrites.save(
                 user_id=inp.user_id,

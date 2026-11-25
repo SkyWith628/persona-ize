@@ -314,10 +314,10 @@ class Env:
         run = workflow.run
 
         async def recording_run(
-            inp: RewriteInput, contact: Contact, persona: PersonaSettings | None, **kwargs: object
+            inp: RewriteInput, contact: Contact, persona: PersonaSettings | None
         ) -> RewriteResult:
             self.inputs.append(inp)
-            return await run(inp, contact, persona, **kwargs)  # 서비스가 넘기는 호출 장부(meter)
+            return await run(inp, contact, persona)
 
         workflow.run = recording_run  # type: ignore[method-assign]
         return RewriteService(
