@@ -7,6 +7,8 @@
 |---|---|
 | [characters.csv](characters.csv) | 등장인물 표 (가이드 4단계). `relation`(팀장/동기/…) → `relationship_type`·호칭. 합성 대화의 `contact`와 이름이 같아야 한다 |
 | [eval_cases.csv](eval_cases.csv) | 평가 사례. 열: `case_id, relation, situation, original_text, preserve_items, must_not_change, expected_notes, needs_graph, relevant_msg_ids, as_of, split`. 1주차 20 → 2주차 60 → 3주차 120 (관계 4종 × 상황 5종 × 6) |
+| [eval_cases.draft.csv](eval_cases.draft.csv) | **검토 전 초안**(E021~). 평가 담당이 읽고 고쳐 `eval_cases.csv`로 옮긴다. 평가 실행·CI는 읽지 않는다. 검사는 `python scripts/validate_data_files.py --cases evals/eval_cases.draft.csv` |
+| `coverage.py` | 관계 × 상황 칸별 사례 수와 목표(`--per-cell`, 기본 6) 대비 모자란 수, split·조건 유형 분포를 마크다운으로. `--template`은 모자란 칸의 빈 행 CSV(`eval_cases.todo.csv`, 커밋하지 않음). 모델 호출 없음. 쓰는 법은 가이드 10절 |
 | [preserve_rules.md](preserve_rules.md) | 보존 항목 분류표와 검증 규칙 — `backend/app/ai/preserve.py`의 근거 |
 | [style_rubric.md](style_rubric.md) | 스타일 5점 루브릭 (블라인드 평가·LLM judge 공용) |
 | `run_eval.py` | 사례 × 조건(A/B/C/D)을 백엔드 워크플로로 실행해 `results/`에 CSV 저장 |

@@ -6,10 +6,14 @@
                          must_not_change ⊆ preserve_items, relevant_msg_ids가 실제 메시지인지, as_of 날짜
 - graph/alias_cases.csv, graph/graph_queries.csv : 필수 열, 메시지 id 존재
 - data/synthetic/*.json : 스파이크의 데이터셋 규칙 (speaker, sent_at 시간대, id 중복)
+
+`--cases 파일`을 주면 그 파일을 사례 파일로 검사한다(검토 전 초안 `evals/eval_cases.draft.csv` 등).
+이때 사례 번호가 `evals/eval_cases.csv`와 겹치는지도 본다. 인자가 없으면 예전과 똑같이 돈다.
 """
 
 from __future__ import annotations
 
+import argparse
 import csv
 import re
 import sys
@@ -76,7 +80,10 @@ REQUIRED: dict[Path, set[str]] = {
 
 
 def rel(path: Path) -> str:
-    return str(path.relative_to(ROOT)).replace("\\", "/")
+    try:
+        return str(path.resolve().relative_to(ROOT)).replace("\\", "/")
+    except ValueError:  # 저장소 밖의 파일 (--cases)
+        return str(path)
 
 
 def read_rows(path: Path, required: set[str]) -> tuple[list[dict[str, str]], list[str]]:
@@ -145,9 +152,10 @@ def check_characters(rows: list[dict[str, str]]) -> tuple[set[str], list[str]]:
     return {r["relation"] for r in rows if r["relation"]}, errors
 
 
-def check_eval_cases(rows: list[dict[str, str]], relations: set[str], refs: set[str]) -> list[str]:
+def check_eval_cases(
+    rows: list[dict[str, str]], relations: set[str], refs: set[str], name: str = EVAL_CASES.name
+) -> list[str]:
     errors: list[str] = []
-    name = EVAL_CASES.name
     for n, row in enumerate(rows, start=2):
         if not row["original_text"]:
             errors.append(f"{name}:{n}: original_text 비어 있음")
@@ -198,7 +206,27 @@ def check_json(path: Path) -> list[str]:
     return [] if episodes else [f"{rel(path)}: 메시지 없음"]
 
 
-def main() -> int:
+def check_case_id_overlap(rows: list[dict[str, str]], name: str) -> list[str]:
+    """다른 이름의 사례 파일(초안)이 `eval_cases.csv`의 번호를 다시 쓰지 않았는지."""
+    confirmed, _ = read_rows(EVAL_CASES, REQUIRED[EVAL_CASES])
+    taken = {row["case_id"] for row in confirmed}
+    return [
+        f"{name}:{n}: case_id {row['case_id']} 가 {EVAL_CASES.name} 에 이미 있음"
+        for n, row in enumerate(rows, start=2)
+        if row["case_id"] and row["case_id"] in taken
+    ]
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="접점 파일(CSV/JSON) 형식 검사")
+    parser.add_argument(
+        "--cases",
+        type=Path,
+        default=EVAL_CASES,
+        help="사례 파일 (기본 evals/eval_cases.csv). 초안 파일을 같은 규칙으로 검사할 때 준다",
+    )
+    cases_path: Path = parser.parse_args(argv).cases
+
     errors: list[str] = []
     for path in sorted(SYNTHETIC_DIR.glob("*.json")):
         errors += check_json(path)
@@ -209,10 +237,12 @@ def main() -> int:
     relations, errs = check_characters(characters)
     errors += errs
 
-    cases, errs = read_rows(EVAL_CASES, REQUIRED[EVAL_CASES])
+    cases, errs = read_rows(cases_path, REQUIRED[EVAL_CASES])
     errors += errs
     if cases:
-        errors += check_eval_cases(cases, relations, refs)
+        errors += check_eval_cases(cases, relations, refs, cases_path.name)
+        if cases_path.resolve() != EVAL_CASES.resolve():
+            errors += check_case_id_overlap(cases, cases_path.name)
 
     _, errs = read_rows(ALIAS_CASES, REQUIRED[ALIAS_CASES])
     errors += errs
