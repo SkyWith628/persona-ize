@@ -1,7 +1,7 @@
 # evals/ — 평가셋·루브릭·비교 실험
 
 담당: 평가·품질 팀원 (정답표·루브릭), 팀장 (실행 하니스).
-**사례를 쓰는 법(열 설명·예시·흔한 실수)은 [docs/guides/dataset-guide.md](../docs/dataset-guide.md)** — 열 이름은 그 문서가 기준이고 코드가 그 열을 읽는다.
+**사례를 쓰는 법(열 설명·예시·흔한 실수)은 [docs/guides/dataset-guide.md](../docs/guides/dataset-guide.md)** — 열 이름은 그 문서가 기준이고 코드가 그 열을 읽는다.
 
 | 파일 | 내용 |
 |---|---|

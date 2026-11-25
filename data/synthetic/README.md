@@ -32,7 +32,7 @@
 - `contact`는 [evals/characters.csv](../../evals/characters.csv)의 이름과 같아야 한다. 호칭("지현 팀장님", "팀장님")은 본문에서 자유롭게 섞어도 되고, 오히려 섞는 것이 그래프 병합 시험 재료가 된다.
 - `relationship_type`은 `backend/app/domain/persona.py`의 값 중 하나 (superior/colleague/subordinate/friend/family/partner/acquaintance). 비우면 `characters.csv`의 값을 쓴다.
 
-비전공자용 작성 안내(등장인물 표, 사건을 여러 방에 나누는 법): [docs/guides/dataset-guide.md](../../docs/dataset-guide.md).
+비전공자용 작성 안내(등장인물 표, 사건을 여러 방에 나누는 법): [docs/guides/dataset-guide.md](../../docs/guides/dataset-guide.md).
 검증: `python scripts/validate_data_files.py` (CI에서도 돈다).
 적재: `python scripts/import_synthetic.py --user demo` — 상대·대화방·메시지를 DB에 넣고 문체 예시 묶음을 임베딩한다 (여러 번 돌려도 중복 없음). API로 올릴 때는 `POST /v1/conversations/{id}/imports`에 같은 `messages` 배열과, 이름을 쓴 경우 `speaker_map`({"김민수": "me"})을 함께 보낸다.
 
