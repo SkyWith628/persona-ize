@@ -90,7 +90,12 @@ class AppState:
 
     async def close(self, waiting: Iterable[asyncio.Task] = ()) -> None:
         """뒤에서 도는 일을 `shutdown_grace_seconds`까지만 기다리고 닫는다. `waiting`은 함께 기다릴 태스크."""
-        await self.import_service.shutdown(self.settings.shutdown_grace_seconds, waiting)
+        # 두 정리를 함께 돌린다 — 기다리는 시간이 합쳐지지 않게 (전체가 grace 안팎에서 끝난다)
+        grace = self.settings.shutdown_grace_seconds
+        await asyncio.gather(
+            self.import_service.shutdown(grace, waiting),
+            self.rewrite_service.shutdown(grace),  # 취소된 첨삭 요청이 남긴 토큰 기록
+        )
         if self.graph_store is not None:
             await self.graph_store.close()
         if self.engine is not None:
