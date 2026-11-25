@@ -7,7 +7,7 @@
 
 사용 예 (저장소 루트):
     .venv/Scripts/python.exe scripts/prepare_demo.py --graph
-화면에서 demo / <비밀번호> 로 로그인하면 바로 시연할 수 있다. 대본: docs/demo-script.md
+화면에서 demo / <비밀번호> 로 로그인하면 바로 시연할 수 있다. 대본: docs/guides/demo-script.md
 """
 
 from __future__ import annotations

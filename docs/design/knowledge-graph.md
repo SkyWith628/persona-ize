@@ -1,7 +1,7 @@
 # 지식그래프 구조 (2026-11-19 기준)
 
 코드에서 읽어 정리한 현재 구조다. 정본은 `backend/app/graph/`이고, 이 문서와 코드가 다르면 코드가 맞다.
-스키마의 배경과 스파이크 기록은 `graph/graph_schema.md`·`graph/graph-spike-report.md`, 재설계 논의는 `docs/graph-redesign-2026-11-16.md`.
+스키마의 배경과 스파이크 기록은 `graph/graph_schema.md`·`graph/graph-spike-report.md`, 재설계 논의는 `docs/design/graph-redesign-2026-11-16.md`.
 
 ## 1. 한눈에
 
@@ -70,7 +70,7 @@ flowchart LR
 - 모든 사실은 `episodes`로 출처 메시지를 가진다. 삭제와 `as_of` 필터가 이것에 기댄다.
 - 개체 요약(`summary`)은 앱이 읽지 않는다. 검색은 사실 엣지를 쓴다.
 
-확인용 Cypher(읽기 전용)는 `docs/api.md` 맨 아래.
+확인용 Cypher(읽기 전용)는 `docs/guides/api.md` 맨 아래.
 
 ## 4. 만드는 과정
 
@@ -204,10 +204,10 @@ PostgreSQL 쪽 상태:
 
 코드와 맞춰 보며 찾은 것이다. 고치지는 않았다.
 
-- `graph/graph_schema.md`: 제목이 "초안 v0"이고 코드 링크가 동결된 스파이크(`graphiti_p0/p0/schema.py`)를 가리킨다. `docs/roles/graph.md`는 이 파일을 "v1 — 11/10 확정"이라고 적는다.
+- `graph/graph_schema.md`: 제목이 "초안 v0"이고 코드 링크가 동결된 스파이크(`graphiti_p0/p0/schema.py`)를 가리킨다. `docs/project/roles/graph.md`는 이 파일을 "v1 — 11/10 확정"이라고 적는다.
 - `graph/graph_schema.md`의 격리 규칙은 `group_id = "user:{user_id}"`인데, 코드는 접두 없이 `user_id`를 쓴다.
 - 루트 `CLAUDE.md`는 `retriever.py`를 v2로 설명한다. 코드는 v3(관계 상태 슬롯)이다.
-- `docs/graph-redesign-2026-11-16.md` 머리말은 "제안 (채택 전), 아직 구현하지 않았다"인데, 말투 프로필과 계기 조회는 구현돼 `REGISTER_SUGGESTIONS=true`로 켜져 있다.
+- `docs/design/graph-redesign-2026-11-16.md` 머리말은 "제안 (채택 전), 아직 구현하지 않았다"인데, 말투 프로필과 계기 조회는 구현돼 `REGISTER_SUGGESTIONS=true`로 켜져 있다.
 - `graph/graph_schema.md`의 "검토할 질문" 네 개(관계 유형 확장, Event 날짜 속성, 호칭 연결, 그룹 대화방)는 체크되지 않은 채 남아 있다.
 
 ## 10. 실제 데이터 대조 (2026-11-17, 로컬 Neo4j)

@@ -1,6 +1,6 @@
 # 그래프 스파이크 점검 보고 (Graphiti P0)
 
-D 경로(지식그래프) 사전 검증. 판정 기준과 실행법은 [graphiti_p0/README.md](graphiti_p0/README.md), 판정은 `docs/decisions.md`에 기록한다.
+D 경로(지식그래프) 사전 검증. 판정 기준과 실행법은 [graphiti_p0/README.md](graphiti_p0/README.md), 판정은 `docs/project/decisions.md`에 기록한다.
 
 공통 환경: Neo4j Aura Free(`5.27-aura`), 추출 LLM `claude-haiku-4-5`(graphiti 0.31.2), 임베딩 로컬 `intfloat/multilingual-e5-small` 384차원, 데이터 `data/synthetic/sample_conversations.json` 36개 에피소드(대화방 4, 인물 5). 실행 기록은 `graphiti_p0/runs/`(git 제외). 모두 2026-11-08 하루에 돌렸다.
 
@@ -66,7 +66,7 @@ D 경로(지식그래프) 사전 검증. 판정 기준과 실행법은 [graphiti
 - 시각은 UTC로 저장(graphiti 프롬프트 전제), `inspect_graph.py`가 KST로 표시.
 - 소음: graphiti가 인덱스 생성을 두 번 병렬로 시도해 Aura가 `EquivalentSchemaRuleAlreadyExists`를 20여 줄 찍는다. `participant_role` Literal 위반('참석자')은 graphiti가 재시도로 처리.
 
-## 판정 제안 (팀 결정은 `docs/decisions.md`)
+## 판정 제안 (팀 결정은 `docs/project/decisions.md`)
 
 - 병합(5/5)·bi-temporal 무효화(설계 장면 포함)·커스텀 속성(44/49)·날짜(24/25)·한국어 하이브리드 검색이 **기전으로 전부 동작**한다. 비용·시간(에피소드당 ~12초, haiku)은 문제 없다. **D 인프라 선택(Graphiti + Aura/로컬 Neo4j + haiku 추출)은 유지.**
 - 지시문 보강은 3차에서 구조 품질을 크게 올렸고 4차에서 남은 구조 문제를 닫았다. 날짜·말투·관계 유형의 일관성은 **지시문이 아니라 코드(해석기·후처리·등록값)로 푼다.** 더 이상의 지시문 반복은 비용 대비 효과가 낮다.

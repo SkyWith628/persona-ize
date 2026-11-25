@@ -6,31 +6,31 @@
 
 | 문서 | 내용 |
 |---|---|
-| [project-design.md](project-design.md) | 팀 설계 원본. 기준 문서 |
-| [design.md](design.md) | 전체 흐름과 그래프 실험(D) 보완 |
-| [graph-redesign-2026-11-16.md](graph-redesign-2026-11-16.md) | 지식 그래프 재설계와 말투 프로필 |
-| [knowledge-graph.md](knowledge-graph.md) | 지식 그래프 구조와 쓰는 법 |
-| [ml-design-2026-11-24.md](ml-design-2026-11-24.md) | 학습 모델 도입 제안 (그림 원본: [ml-overview.drawio](ml-overview.drawio)) |
-| [literature-review.md](literature-review.md) | 참고한 논문 정리 |
+| [project-design.md](design/project-design.md) | 팀 설계 원본. 기준 문서 |
+| [design.md](design/design.md) | 전체 흐름과 그래프 실험(D) 보완 |
+| [graph-redesign-2026-11-16.md](design/graph-redesign-2026-11-16.md) | 지식 그래프 재설계와 말투 프로필 |
+| [knowledge-graph.md](design/knowledge-graph.md) | 지식 그래프 구조와 쓰는 법 |
+| [ml-design-2026-11-24.md](design/ml-design-2026-11-24.md) | 학습 모델 도입 제안 (그림 원본: [ml-overview.drawio](design/ml-overview.drawio)) |
+| [literature-review.md](design/literature-review.md) | 참고한 논문 정리 |
 
 ## 운영과 진행
 
 | 문서 | 내용 |
 |---|---|
-| [decisions.md](decisions.md) | 결정 기록 |
-| [backlog.md](backlog.md) | 남은 일 |
-| [deploy.md](deploy.md) | 배포와 운영 |
-| [api.md](api.md) | API 명세 |
-| [dataset-guide.md](dataset-guide.md) | 평가셋과 합성 데이터 형식 |
-| [demo-script.md](demo-script.md) | 시연 순서 |
-| [iphone-mobile.md](iphone-mobile.md) | 아이폰 화면 설계 |
+| [decisions.md](project/decisions.md) | 결정 기록 |
+| [backlog.md](project/backlog.md) | 남은 일 |
+| [deploy.md](guides/deploy.md) | 배포와 운영 |
+| [api.md](guides/api.md) | API 명세 |
+| [dataset-guide.md](guides/dataset-guide.md) | 평가셋과 합성 데이터 형식 |
+| [demo-script.md](guides/demo-script.md) | 시연 순서 |
+| [iphone-mobile.md](design/iphone-mobile.md) | 아이폰 화면 설계 |
 
 ## 팀
 
 | 문서 | 내용 |
 |---|---|
-| [team-roles-and-schedule.md](team-roles-and-schedule.md) | 역할과 일정 |
-| [roles/](roles/) | 담당별 안내 (평가, 그래프, 시나리오) |
+| [team-roles-and-schedule.md](project/team-roles-and-schedule.md) | 역할과 일정 |
+| [roles/](project/roles/) | 담당별 안내 (평가, 그래프, 시나리오) |
 
 ## 그림
 

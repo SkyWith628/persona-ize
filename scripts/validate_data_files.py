@@ -1,6 +1,6 @@
 """비전공자가 편집하는 접점 파일(CSV/JSON)의 형식을 검사한다. CI와 `make test` 전에 돈다.
 
-검사 대상 (열 정의는 docs/dataset-guide.md)
+검사 대상 (열 정의는 docs/guides/dataset-guide.md)
 - evals/characters.csv : 등장인물 표. relation 유일, relationship_type 값
 - evals/eval_cases.csv : 필수 열, relation이 characters에 있는지, needs_graph/split 값,
                          must_not_change ⊆ preserve_items, relevant_msg_ids가 실제 메시지인지, as_of 날짜
@@ -88,7 +88,7 @@ def read_rows(path: Path, required: set[str]) -> tuple[list[dict[str, str]], lis
         cols = set(reader.fieldnames or [])
         missing = required - cols
         if missing:
-            return [], [f"{rel(path)}: 열 누락 {sorted(missing)} (docs/dataset-guide.md 참고)"]
+            return [], [f"{rel(path)}: 열 누락 {sorted(missing)} (docs/guides/dataset-guide.md 참고)"]
         rows = [{k: (v or "").strip() for k, v in row.items()} for row in reader]
     errors: list[str] = []
     id_col = next((c for c in ("case_id", "query_id", "relation") if c in cols), None)

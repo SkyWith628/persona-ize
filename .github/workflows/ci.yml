@@ -56,7 +56,7 @@ jobs:
       - name: Validate CSV/JSON 접점 파일
         run: python scripts/validate_data_files.py
 
-  # 운영 배포 구성(docs/deploy.md)이 깨지지 않았는지 본다: 설정 파일 검증 → 운영 이미지 빌드 → 이미지 자체 점검
+  # 운영 배포 구성(docs/guides/deploy.md)이 깨지지 않았는지 본다: 설정 파일 검증 → 운영 이미지 빌드 → 이미지 자체 점검
   # → 러너 안에 운영 스택을 띄워 스모크 테스트(가짜 모델, 실제 Claude 호출 없음).
   # 같은 명령을 Windows + Docker Desktop에서 손으로 검증했고(2026-11-11), GitHub 러너에서는 main 첫 푸시에서
   # 고친 것 없이 통과했다(5분 14초: 이미지 빌드 3분 44초, 스택 기동 48초, 스모크 10초 — 빌드 캐시 없이).

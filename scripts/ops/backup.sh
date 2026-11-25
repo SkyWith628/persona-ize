@@ -3,7 +3,7 @@
 #   scripts/ops/backup.sh           # pg_dump 커스텀 포맷 → <BACKUP_DIR>/pz-<DB>-<UTC 시각>.dump, 보존 정리
 #   scripts/ops/backup.sh --list    # 지금 있는 백업 목록
 # 보존 일수는 .env.production의 BACKUP_RETENTION_DAYS(기본 14). 파일에는 대화 원문이 들어 있다 —
-# 서버 밖으로 옮길 때는 암호화한다(docs/deploy.md "백업·복원"). Neo4j 그래프는 scripts/ops/neo4j-dump.sh.
+# 서버 밖으로 옮길 때는 암호화한다(docs/guides/deploy.md "백업·복원"). Neo4j 그래프는 scripts/ops/neo4j-dump.sh.
 . "$(dirname "$0")/_lib.sh"
 require_env_file
 

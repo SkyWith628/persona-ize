@@ -1,9 +1,9 @@
 # Persona_ize 설계 보완 v3 — 그래프 실험(D) 중심
 
-> 구조 그림: [한글](images/architecture-stack-ko.png) · [영문](images/architecture-stack-en.png) (2026-11-25, `main` 기준. 어두운 배경은 파일 이름에 `-dark`, 원본은 같은 폴더의 `architecture-stack-*.html`)
-> 코드 지도: [floorplan/persona-ize-map.html](floorplan/persona-ize-map.html) (받아서 브라우저로 연다. 파일·요청마다 설명이 붙어 있다. 읽는 법은 [floorplan/README.md](floorplan/README.md))
-> 예전 설계도: [archive/architecture_v2.drawio](archive/architecture_v2.drawio)
-> **기준 문서는 팀 설계다.** [project-design.md](projects/persona-ize/docs/project-design.md) · [literature-review.md](projects/persona-ize/docs/literature-review.md)
+> 구조 그림: [한글](../images/architecture-stack-ko.png) · [영문](../images/architecture-stack-en.png) (2026-11-25, `main` 기준. 어두운 배경은 파일 이름에 `-dark`, 원본은 같은 폴더의 `architecture-stack-*.html`)
+> 코드 지도: [floorplan/persona-ize-map.html](../floorplan/persona-ize-map.html) (받아서 브라우저로 연다. 파일·요청마다 설명이 붙어 있다. 읽는 법은 [floorplan/README.md](../floorplan/README.md))
+> 예전 설계도: [archive/architecture_v2.drawio](../archive/architecture_v2.drawio)
+> **기준 문서는 팀 설계다.** [project-design.md](project-design.md) · [literature-review.md](literature-review.md)
 > 이 문서는 그 위에 (1) 전체 흐름을 한 장으로 정리하고 (2) 후속 실험 D(그래프 검색)를 논문 근거로 구체화한다. 충돌하면 팀 문서를 따른다.
 
 ---
@@ -98,7 +98,7 @@ v2에서 유지하는 것: Graphiti(Zep) 기반 시간 지식 그래프 설계, 
 
 **C 경로 (기본)**: 팀 설계 §5.1 그대로. 2~6턴 묶음, 본인 발화만 문체 예시, 임베딩 모델·버전 기록.
 
-**D 경로 (실험)**: 같은 비식별화 결과를 Graphiti에 넣는다. 구현과 검증은 [graphiti-p0 스파이크](projects/persona-ize/spikes/graphiti-p0/README.md)에서 시작했다.
+**D 경로 (실험)**: 같은 비식별화 결과를 Graphiti에 넣는다. 구현과 검증은 [graphiti-p0 스파이크](../../graph/graphiti_p0/README.md)에서 시작했다.
 
 | Graphiti 단계 | 동작 | 이 서비스에서의 의미 |
 |---|---|---|
@@ -107,7 +107,7 @@ v2에서 유지하는 것: Graphiti(Zep) 기반 시간 지식 그래프 설계, 
 | 사실·시간 추출 | 엣지 + `valid_at` | "10/5 일정 충돌", "11/5까지 자료 약속" |
 | 모순 무효화 | 옛 엣지에 `invalid_at` | 동기 → 파트장, 반말 → 존댓말 변화 이력 |
 
-커스텀 타입은 [p0/schema.py](projects/persona-ize/spikes/graphiti-p0/p0/schema.py)에 있다: `Person(role)`, `Event(event_type, status, importance)`, `Relationship(relation_type, speech_style, address_term, closeness)`, `Involved(participant_role, feeling)`.
+커스텀 타입은 [p0/schema.py](../../graph/graphiti_p0/p0/schema.py)에 있다: `Person(role)`, `Event(event_type, status, importance)`, `Relationship(relation_type, speech_style, address_term, closeness)`, `Involved(participant_role, feeling)`.
 
 **격리 규칙 (팀 설계 §5.4 반영)**
 - `group_id = "user:{user_id}"` — 사용자 단위로 그래프를 분리한다. 다른 사용자 그래프는 검색하지 않는다.

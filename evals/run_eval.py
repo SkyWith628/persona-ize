@@ -4,7 +4,7 @@
     python evals/run_eval.py                                  # fake 프로바이더, A/B, dev+test
     python evals/run_eval.py --split dev --conditions A,B,C --repeat 3 --provider anthropic
 
-입력 열은 docs/dataset-guide.md 기준 (case_id, relation, situation, original_text, ..., as_of, split).
+입력 열은 docs/guides/dataset-guide.md 기준 (case_id, relation, situation, original_text, ..., as_of, split).
 relation → 상대 정보는 evals/characters.csv 에서 찾는다.
 
 C/D 조건은 과거 대화가 필요하다. `--dataset`(기본 data/synthetic/sample_conversations.json)을 `--user`로
@@ -19,7 +19,7 @@ C/D 조건은 과거 대화가 필요하다. `--dataset`(기본 data/synthetic/s
 - `context_hit`·`warning_hit`: 사례에 **선택 열** `expected_context`(`;`로 나눈 핵심어, 예: `파트장;존댓말`)가
   있으면 그 핵심어가 사실 맥락 / 경고 문장에 나온 비율. 열이 없거나 비어 있으면 빈칸.
 
-설정을 바꿔 보는 실험 (2026-11-16, docs/graph-redesign-2026-11-16.md 6.2) — 새 조건 없이 설정만 바꾼다
+설정을 바꿔 보는 실험 (2026-11-16, docs/design/graph-redesign-2026-11-16.md 6.2) — 새 조건 없이 설정만 바꾼다
 - `--persona-override FILE`: 사람이 쓴 정답 설정을 사례의 설정에 덮어쓴다(오라클 = 상한). CSV 열은 `relation`
   또는 `contact`, `formality`, `address_term`(`-`는 호칭 없음), 선택 `as_of`·`friendliness`·`directness`·
   `length`·`emoji`·`notes`. `formality`가 비고 `speech_level`(반말/해요체/합쇼체/존댓말)이 있으면 격식으로
@@ -33,7 +33,7 @@ C/D 조건은 과거 대화가 필요하다. `--dataset`(기본 data/synthetic/s
   `suggestion_applied`(빈칸 = 안 씀 / `none` = 적용할 것이 없었음 / `formality=4;address_term=…` /
   정답 설정이면 `override:…`).
 
-실패 신호 열 (2026-11-18, docs/design.md "실패 유형 점검") — MAST 유형 번호를 열 이름에 붙였다. 숫자와
+실패 신호 열 (2026-11-18, docs/design/design.md "실패 유형 점검") — MAST 유형 번호를 열 이름에 붙였다. 숫자와
 참/거짓뿐이고 문장은 넣지 않는다. 모두 참고 신호다(실패 판정이 아니다)
 - `fm11_first_checks`: 1차 시도가 걸린 검증 종류(`fact_added;preserve_missing`). 통과했으면 빈칸.
 - `fm13_attempts`: 생성 시도 횟수. `fm23_length_ratio`: 결과 길이 ÷ 초안 길이.
@@ -311,7 +311,7 @@ def parse_ids(raw: str) -> set[str]:
 def failure_signals(
     result: RewriteResult, draft: str, fitted: list[RetrievedExample], condition: str
 ) -> dict[str, object]:
-    """결과 한 건의 실패 신호 (MAST 유형 번호, docs/design.md "실패 유형 점검"). 문장은 넣지 않는다.
+    """결과 한 건의 실패 신호 (MAST 유형 번호, docs/design/design.md "실패 유형 점검"). 문장은 넣지 않는다.
 
     `fitted`는 프롬프트에 실제로 들어간 예시(`fit_examples`를 거친 목록)다. `fm25`의 `evidence_ids`는
     모델이 스스로 적는 값이라 참고 신호일 뿐이다 — 비었다고 예시를 안 쓴 것은 아니다. `fm32`는 워크플로의

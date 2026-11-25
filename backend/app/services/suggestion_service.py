@@ -1,4 +1,6 @@
-"""상대별 말투 설정 제안 (`GET /v1/contacts/{id}/persona/suggestion`, docs/graph-redesign-2026-11-16.md 5.1).
+"""상대별 말투 설정 제안 (`GET /v1/contacts/{id}/persona/suggestion`).
+
+설계: docs/design/graph-redesign-2026-11-16.md 5.1.
 
 근거를 내는 곳이 셋이고, `sources`로 고른다 (평가가 출처별 정확도를 따로 재려고 나눠 부른다).
 - `messages`: 내 메시지 전체를 한 덩어리로 본 겉모습 추정 (`ai.style_suggest`). 변화 시점을 모른다.

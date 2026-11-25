@@ -9,7 +9,7 @@
 #
 # <덤프 파일>은 백업 폴더(BACKUP_DIR, 기본 ./backups) 안의 파일 이름 또는 그 경로. 목록: scripts/ops/backup.sh --list
 # 실제 복원 뒤 백엔드가 시작하면서 `alembic upgrade head`를 돌리므로, 옛 스키마의 덤프도 최신 스키마로 올라온다.
-# 그래프(Neo4j)는 여기서 다루지 않는다: 덤프 시점 이후에 수집된 그래프와 어긋나면 docs/deploy.md "복원 뒤 그래프" 참고.
+# 그래프(Neo4j)는 여기서 다루지 않는다: 덤프 시점 이후에 수집된 그래프와 어긋나면 docs/guides/deploy.md "복원 뒤 그래프" 참고.
 . "$(dirname "$0")/_lib.sh"
 require_env_file
 

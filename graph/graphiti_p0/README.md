@@ -2,7 +2,7 @@
 
 **목적**: 한국어 메신저 대화에서 Graphiti(Zep 논문 구현체)가 인물·관계·사건을 제대로 뽑는지 **소규모 합성 데이터로** 확인한다.
 본 앱(`backend/`)과 분리된 실험이며, [project-design.md](../../docs/project-design.md) §5.4 / [design.md](../../docs/design.md) §4-②의 사전 검증이다.
-결과로 **D를 계획대로 진행할지, 질의 유형을 축소할지**를 판정한다 (`docs/decisions.md`).
+결과로 **D를 계획대로 진행할지, 질의 유형을 축소할지**를 판정한다 (`docs/project/decisions.md`).
 
 > 합성 데이터(`data/synthetic/`)만 사용한다. 실제 대화는 넣지 않는다.
 
