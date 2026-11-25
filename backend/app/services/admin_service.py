@@ -321,6 +321,9 @@ class JobOut(BaseModel):
     status: str
     kind: str = Field(description="import(가져오기) | speaker_roles(화자 역할 고치기 — 넣은 메시지 없음)")
     imported: int
+    duplicates: int = Field(
+        description="이미 있어 넣지 않은 메시지 수. imported=0이고 이 값이 1 이상이면 전부 중복"
+    )
     episodes: int
     error_code: str | None
     graph_status: str
@@ -556,6 +559,7 @@ class AdminService:
                 status=safe_code(r.status),
                 kind=safe_code(r.kind),
                 imported=r.imported,
+                duplicates=r.duplicates,
                 episodes=r.episodes,
                 error_code=safe_code(r.error_code) if r.error_code else None,
                 graph_status=safe_code(r.graph_status),

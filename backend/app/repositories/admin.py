@@ -279,6 +279,7 @@ class JobLine:
     status: str
     kind: str  # import | speaker_roles (`import_job_kind`)
     imported: int
+    duplicates: int  # 이미 있어 넣지 않은 메시지 수 (전부 중복인 다시 올리기는 imported=0)
     episodes: int
     error_code: str | None
     graph_status: str
@@ -422,6 +423,7 @@ class AdminRepo:
                 status=r.status,
                 kind=import_job_kind(int(r.imported), int(r.duplicates)),
                 imported=int(r.imported),
+                duplicates=int(r.duplicates),
                 episodes=int(r.episodes),
                 error_code=r.error_code,
                 graph_status=r.graph_status,

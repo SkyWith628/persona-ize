@@ -147,13 +147,14 @@ test("보류 표: 수집이 꺼져 있거나 처리기가 없으면 버튼이 �
   assert.equal(odd.buttons.length, 0);
 });
 
-test("작업 표: 역할 고치기는 종류로 가르고 메시지 수를 적지 않는다 (다시 올린 0건은 가져오기)", () => {
+test("작업 표: 역할 고치기는 종류로 가르고 메시지 수를 적지 않는다 (전부 중복인 다시 올리기는 중복 건수로 가른다)", () => {
   const job = (over) => ({
     id: "j",
     user_id: "u_8f2…a1",
     status: "completed",
     kind: "import",
     imported: 3,
+    duplicates: 0,
     episodes: 2,
     error_code: null,
     graph_status: "skipped",
@@ -163,14 +164,25 @@ test("작업 표: 역할 고치기는 종류로 가르고 메시지 수를 적�
     ...over,
   });
   const root = new FakeNode("div");
-  renderJobs(root, [job({}), job({ kind: "speaker_roles", imported: 0 }), job({ imported: 0 })]);
+  renderJobs(root, [
+    job({}),
+    job({ kind: "speaker_roles", imported: 0 }),
+    job({ imported: 0, duplicates: 12 }),
+    job({ imported: 8, duplicates: 4 }),
+    job({ imported: 0 }),
+  ]);
   const rows = root.all().filter((n) => n.tagName === "tr");
   const cells = (row) => row.children.map((td) => td.text());
   const [, , kind, , messages] = cells(rows[0]);
   assert.deepEqual([kind, messages], ["종류", "메시지"]);
   assert.deepEqual([cells(rows[1])[2], cells(rows[1])[4]], ["가져오기", "3건"]);
   assert.deepEqual([cells(rows[2])[2], cells(rows[2])[4]], ["역할 고치기", "–"]);
-  assert.deepEqual([cells(rows[3])[2], cells(rows[3])[4]], ["가져오기", "0건"]);
+  assert.deepEqual([cells(rows[3])[2], cells(rows[3])[4]], ["가져오기", "0건 (중복 12건)"]);
+  assert.deepEqual([cells(rows[4])[2], cells(rows[4])[4]], ["가져오기", "8건 (중복 4건)"]);
+  assert.deepEqual([cells(rows[5])[2], cells(rows[5])[4]], ["가져오기", "0건"]);
+  // 숫자 칸(오른쪽 정렬)이고 안내 문구가 "중복"을 풀어 준다
+  assert.ok(rows[3].children[4].className.includes("num"));
+  assert.ok(root.text().includes("이미 있어 넣지 않은 건수"));
 });
 
 // ---------- 브라우저에서만 드러난 흠 (2026-11-25, 폭 390·768px) ----------

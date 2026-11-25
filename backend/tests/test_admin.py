@@ -51,7 +51,8 @@ PASSWORD = "long-enough-pw"
 # 목록 응답의 필드 (계약 §4.6 + 작업의 error_code). 이 밖의 열이 섞여 나오면 실패한다.
 USER_FIELDS = "user_id username created_at consent_version contacts messages rewrites last_rewrite_at".split()
 JOB_FIELDS = (
-    "id user_id status kind imported episodes error_code graph_status graph_episodes graph_error created_at"
+    "id user_id status kind imported duplicates episodes error_code "
+    "graph_status graph_episodes graph_error created_at"
 ).split()
 FEEDBACK_FIELDS = "user_id relationship_type channel condition reason_code created_at".split()
 ACCESS_FIELDS = "admin_username action detail created_at".split()
@@ -752,6 +753,10 @@ def test_overview_moves_with_new_activity_and_lists_hide_private_text(env: Admin
             made["reupload"] = await _add_job(
                 conn, user["user_id"], conv_id, now, graph_status="skipped", imported=0, duplicates=3
             )
+            # 이어서 가져오기: 새 메시지와 이미 있던 메시지가 섞였다
+            made["partial"] = await _add_job(
+                conn, user["user_id"], conv_id, now, graph_status="skipped", imported=8, duplicates=4
+            )
         finally:
             await conn.close()
 
@@ -867,7 +872,11 @@ def test_overview_moves_with_new_activity_and_lists_hide_private_text(env: Admin
         0,
         "pending",
     )
-    assert (reupload["kind"], reupload["imported"]) == ("import", 0)
+    assert (reupload["kind"], reupload["imported"], reupload["duplicates"]) == ("import", 0, 3)
+    # 중복 건수(숫자)가 함께 나가야 화면이 전부 중복인 다시 올리기를 빈 가져오기와 가른다
+    partial = by_id[str(made["partial"])]
+    assert (partial["kind"], partial["imported"], partial["duplicates"]) == ("import", 8, 4)
+    assert (role_fix["duplicates"], imported["duplicates"], failed["duplicates"]) == (0, 0, 0)
     created = [datetime.fromisoformat(j["created_at"]) for j in jobs.json()]
     assert created == sorted(created, reverse=True)  # 최근 것이 먼저
 

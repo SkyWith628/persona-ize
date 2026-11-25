@@ -137,6 +137,18 @@ export const JOB_STATUS_LABEL = { processing: "처리 중", completed: "완료",
 // 작업 종류. 화자 역할 고치기는 메시지를 넣지 않고 묶음만 다시 만든다 — 가져오기로 세지 않는다.
 export const JOB_KIND_LABEL = { import: "가져오기", speaker_roles: "역할 고치기" };
 
+/**
+ * 작업 표의 메시지 칸. 역할 고치기는 가져온 메시지가 없어 "–"로 적는다(0건이면 빈 가져오기처럼 읽힌다).
+ * 가져오기는 새로 넣은 건수를 적고, 이미 있어 넣지 않은 메시지가 있으면 괄호로 덧붙인다 —
+ * 전부 중복인 다시 올리기("0건 (중복 12건)")가 빈 가져오기와 갈린다.
+ */
+export function jobMessages(job) {
+  if (job.kind === "speaker_roles") return "–";
+  const imported = `${num(job.imported)}건`;
+  const duplicates = Number(job.duplicates) || 0;
+  return duplicates > 0 ? `${imported} (중복 ${num(duplicates)}건)` : imported;
+}
+
 export const GRAPH_STATUS_LABEL = {
   skipped: "안 함",
   pending: "대기",
