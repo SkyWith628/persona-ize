@@ -20,6 +20,7 @@ from app.domain.conversation import (
     EpisodeDraft,
     EpisodeHit,
     GraphStatus,
+    HeldGraphGroup,
     ImportJob,
     Message,
     NewMessage,
@@ -546,11 +547,15 @@ class InMemoryConversationRepo:
                 for m in msgs
             ]
 
-    async def release_held_graph(self, user_id: str | None = None) -> dict[str, int]:
+    async def release_held_graph(
+        self, user_id: str | None = None, conversation_id: UUID | None = None
+    ) -> dict[str, int]:
         released: dict[str, int] = {}
         for conv_id, msgs in self._messages.items():
             conv = self._conversations.get(conv_id)
             if conv is None or (user_id is not None and conv.user_id != user_id):
+                continue
+            if conversation_id is not None and conv_id != conversation_id:
                 continue
             held = {m.id for m in msgs if m.graph_ingested_at is None and m.graph_held_at is not None}
             if not held:
@@ -559,6 +564,28 @@ class InMemoryConversationRepo:
             self._messages[conv_id] = [m.model_copy(update=cleared) if m.id in held else m for m in msgs]
             released[conv.user_id] = released.get(conv.user_id, 0) + len(held)
         return released
+
+    async def held_graph_groups(self, limit: int) -> list[HeldGraphGroup]:
+        groups: list[HeldGraphGroup] = []
+        for conv_id, msgs in self._messages.items():
+            conv = self._conversations.get(conv_id)
+            held = [m for m in msgs if m.graph_ingested_at is None and m.graph_held_at is not None]
+            if conv is None or not held:
+                continue
+            times = [m.graph_held_at for m in held if m.graph_held_at is not None]
+            groups.append(
+                HeldGraphGroup(
+                    user_id=conv.user_id,
+                    conversation_id=conv_id,
+                    messages=len(held),
+                    attempts=max(m.graph_attempts for m in held),
+                    oldest_held_at=min(times),
+                    latest_held_at=max(times),
+                )
+            )
+        groups.sort(key=lambda g: str(g.conversation_id))
+        groups.sort(key=lambda g: g.latest_held_at, reverse=True)
+        return groups[:limit]
 
     async def close_stale_graph_jobs(self, user_id: str) -> int:
         n = 0

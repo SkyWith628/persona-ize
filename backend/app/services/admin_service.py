@@ -17,6 +17,7 @@ import re
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta, timezone
 from typing import TYPE_CHECKING, Any
+from uuid import UUID
 
 from pydantic import BaseModel, Field
 
@@ -25,6 +26,7 @@ from app.core.errors import DomainError, InvalidInputError
 
 if TYPE_CHECKING:
     from app.repositories.admin import AdminRepo, OverviewRaw
+    from app.repositories.base import ConversationRepo
 
 ALLOWED_DAYS = (1, 7, 30)
 CONDITIONS = ("A", "B", "C", "D")
@@ -263,7 +265,7 @@ class GraphSummary(BaseModel):
     ingested_messages: int = Field(description="기간 안에 그래프에 넣은 메시지 수")
     pending_messages: int = Field(description="지금 그래프에 들어가지 않은 메시지 수 (보류된 것은 빼고)")
     held_messages: int = Field(
-        0, description="거듭 실패해 보류된 메시지 수 — `POST /v1/admin/graph/retry-held`"
+        0, description="거듭 실패해 보류된 메시지 수 — 목록 `GET /v1/admin/graph/held`, 풀기 `.../retry-held`"
     )
     jobs: GraphJobs
     estimated_cost_usd: float | None
@@ -333,6 +335,26 @@ class RejectedFeedbackOut(BaseModel):
     condition: str
     reason_code: str | None
     created_at: datetime
+
+
+class HeldGroupOut(BaseModel):
+    """보류된 메시지를 대화방별로 묶은 한 줄. 본문·화자 이름·방 제목은 없다."""
+
+    user_id: str = Field(description="줄인 사용자 id (`u_8f2…a1`) — 다시 시도의 범위로는 쓸 수 없다")
+    conversation_id: UUID = Field(description="대화방 id — `retry-held`의 `conversation_id`로 그대로 쓴다")
+    messages: int = Field(description="이 대화방에서 보류된 메시지 수")
+    attempts: int = Field(description="그 메시지들의 실패 횟수 중 가장 큰 값")
+    oldest_held_at: datetime
+    latest_held_at: datetime
+
+
+class RetryHeldIn(BaseModel):
+    """다시 시도할 범위. 둘 다 비우면(또는 본문이 없으면) 모든 사용자의 보류를 푼다."""
+
+    user_id: str | None = Field(
+        None, min_length=1, max_length=128, description="사용자 id 전체 (회원관리 `/members`의 `user_id`)"
+    )
+    conversation_id: UUID | None = Field(None, description="보류 목록(`/graph/held`)의 `conversation_id`")
 
 
 class RetryHeldOut(BaseModel):
@@ -471,12 +493,18 @@ async def _probe(coro: Any) -> str:
 
 class AdminService:
     def __init__(
-        self, settings: Settings, repo: AdminRepo, graph_store: Any = None, graph_ingest: Any = None
+        self,
+        settings: Settings,
+        repo: AdminRepo,
+        graph_store: Any = None,
+        graph_ingest: Any = None,
+        conversations: ConversationRepo | None = None,
     ) -> None:
         self._settings = settings
         self._repo = repo
         self._graph_store = graph_store
         self._graph_ingest = graph_ingest  # GraphIngestService | None — 보류 다시 시도에만 쓴다
+        self._conversations = conversations  # 보류 목록에만 쓴다 (그래프가 꺼진 서버에서도 읽는다)
 
     async def overview(self, admin: AdminIdentity, days: int, now: datetime | None = None) -> OverviewOut:
         offset = self._settings.usage_day_offset_hours
@@ -559,17 +587,47 @@ class AdminService:
             for r in await self._repo.list_access_log(limit)
         ]
 
-    async def retry_held(self, admin: AdminIdentity) -> RetryHeldOut:
+    async def held(self, admin: AdminIdentity, limit: int) -> list[HeldGroupOut]:
+        """보류된 그래프 메시지를 사용자·대화방별로 묶은 목록 (최근에 보류된 방부터).
+
+        저장소가 건수·횟수·시각만 읽는다. 사용자 id는 줄이고, 다시 시도에 쓸 식별자로는 대화방 id를 준다.
+        """
+        await self._log(admin, "graph_held", f"limit={limit}")
+        if self._conversations is None:
+            return []
+        return [
+            HeldGroupOut(
+                user_id=short_user_id(g.user_id),
+                conversation_id=g.conversation_id,
+                messages=g.messages,
+                attempts=g.attempts,
+                oldest_held_at=g.oldest_held_at,
+                latest_held_at=g.latest_held_at,
+            )
+            for g in await self._conversations.held_graph_groups(limit)
+        ]
+
+    async def retry_held(
+        self, admin: AdminIdentity, user_id: str | None = None, conversation_id: UUID | None = None
+    ) -> RetryHeldOut:
         """보류된 그래프 메시지를 풀고, 그 사용자들의 수집을 백그라운드로 이어받게 한다.
+
+        `user_id`·`conversation_id`를 주면 그 범위의 보류만 푼다(없으면 전체). 접근 기록에는 범위를
+        남기되 사용자 id는 줄여 적는다. 수집은 풀린 사용자의 미수집 전체를 잇는다(보류는 고른 것만 풀린다).
 
         그래프는 지우지 않는다(`scripts/graph_reset.py`와 다른 점). 수집은 API 경로라 상한을 따른다 —
         예산이 없는 사용자의 메시지는 미수집으로 남아 예산이 생기면 주기 이어받기가 넣는다.
         요청은 기다리지 않는다(메시지당 모델 호출 10~15초). 결과는 접근 기록에 한 줄 더 남긴다.
         """
-        await self._log(admin, "graph_retry_held", "")
+        scope = []
+        if user_id is not None:
+            scope.append(f"user={short_user_id(user_id)}")
+        if conversation_id is not None:
+            scope.append(f"conversation={conversation_id}")
+        await self._log(admin, "graph_retry_held", " ".join(scope))
         if self._graph_ingest is None:
             raise GraphDisabledError("사건 정리(그래프)가 꺼진 서버라 다시 시도할 수 없습니다.")
-        released = await self._graph_ingest.release_held()
+        released = await self._graph_ingest.release_held(user_id, conversation_id)
         started = self._graph_ingest.start_resume(released)
         out = RetryHeldOut(released=sum(released.values()), users=len(released), started=started)
         await self._log(admin, "graph_retry_held_done", f"released={out.released} users={out.users}")

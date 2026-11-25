@@ -327,6 +327,105 @@ async def test_a_released_message_that_still_fails_is_held_again() -> None:
     assert m01.graph_attempts == 3 and m01.graph_held_at is not None
 
 
+# ---------- 보류 목록과 범위를 고른 풀기 (관리자 화면의 보류 표, 2026-11-25) ----------
+
+
+async def _check_held_groups_and_scoped_release(contacts, conversations, svc) -> None:  # noqa: ANN001
+    """두 저장소(인메모리·PostgreSQL)가 같은 규칙을 따르는지 보는 시나리오.
+
+    DB를 다른 테스트와 함께 쓸 수 있어 목록은 이 시나리오의 사용자 것만 골라 본다.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    a, b = f"held-a-{uuid.uuid4().hex[:8]}", f"held-b-{uuid.uuid4().hex[:8]}"
+    convs = {}
+    for owner, key, payload in ((a, "c1", MESSAGES_C1), (a, "c2", MESSAGES_C2), (b, "c1", MESSAGES_C1)):
+        contact = await contacts.create(owner, f"박지현 {key}", "superior")
+        conv = await svc.create_conversation(owner, contact.id, "방", "json", key, me_name="김민수")
+        await svc.import_messages(owner, conv.id, ImportPayload(messages=payload))
+        convs[owner, key] = conv
+
+    async def rows(owner: str, key: str):  # noqa: ANN202
+        return await conversations.list_messages(owner, convs[owner, key].id)
+
+    async def fail(owner: str, message, times: int, hold_at: datetime | None) -> None:  # noqa: ANN001
+        for i in range(times):
+            last = i == times - 1
+            await conversations.record_graph_failure(
+                owner, message.id, hold_at is not None and last, hold_at or message.sent_at
+            )
+
+    t0 = datetime(2026, 11, 20, 3, 0, tzinfo=UTC)
+    a1, a2, b1 = await rows(a, "c1"), await rows(a, "c2"), await rows(b, "c1")
+    await fail(a, a1[0], 2, t0)
+    await fail(a, a1[1], 3, t0 + timedelta(minutes=5))
+    await fail(a, a2[0], 3, t0 + timedelta(hours=1))
+    await fail(b, b1[0], 1, None)  # 세기만 했다 — 보류가 아니다
+    await fail(b, b1[1], 3, t0 + timedelta(hours=2))
+
+    async def mine(limit: int = 10_000):  # noqa: ANN202
+        return [g for g in await conversations.held_graph_groups(limit) if g.user_id in (a, b)]
+
+    groups = await mine()
+    # 최근에 보류된 방부터, 사용자·대화방별 한 줄
+    assert [(g.user_id, g.conversation_id) for g in groups] == [
+        (b, convs[b, "c1"].id),
+        (a, convs[a, "c2"].id),
+        (a, convs[a, "c1"].id),
+    ]
+    assert [(g.messages, g.attempts) for g in groups] == [(1, 3), (1, 3), (2, 3)]
+    assert (groups[2].oldest_held_at, groups[2].latest_held_at) == (t0, t0 + timedelta(minutes=5))
+    assert len(await conversations.held_graph_groups(1)) == 1
+
+    # 사용자와 대화방이 어긋나면 아무것도 풀지 않는다
+    assert await conversations.release_held_graph(b, convs[a, "c1"].id) == {}
+    assert await conversations.release_held_graph(conversation_id=uuid.uuid4()) == {}
+    assert len(await mine()) == 3
+
+    # 대화방 하나만 — 같은 사용자의 다른 방은 그대로다
+    assert await conversations.release_held_graph(conversation_id=convs[a, "c1"].id) == {a: 2}
+    assert [(m.graph_attempts, m.graph_held_at) for m in await rows(a, "c1")] == [(0, None), (0, None)]
+    assert (await rows(a, "c2"))[0].graph_held_at is not None
+    assert [g.conversation_id for g in await mine()] == [convs[b, "c1"].id, convs[a, "c2"].id]
+
+    # 사용자 + 대화방, 그리고 사용자만
+    assert await conversations.release_held_graph(b, convs[b, "c1"].id) == {b: 1}
+    assert [(m.graph_attempts, m.graph_held_at) for m in await rows(b, "c1")] == [(1, None), (0, None)]
+    assert await conversations.release_held_graph(a) == {a: 1}
+    assert await mine() == []
+
+
+async def test_held_groups_and_scoped_release_in_memory() -> None:
+    contacts, conversations, _, _, svc, *_ = await _setup()
+    await _check_held_groups_and_scoped_release(contacts, conversations, svc)
+    # 이 시나리오 말고는 보류가 없다 — 목록이 빈다
+    assert await conversations.held_graph_groups(50) == []
+
+
+async def test_release_held_passes_the_scope_to_the_repository() -> None:
+    conversations, _, ingest, _, c1 = await _imported()
+    rows = await conversations.list_messages("u", c1.id)
+    await conversations.record_graph_failure("u", rows[0].id, True, rows[0].sent_at)
+
+    assert await ingest.release_held("someone-else") == {}
+    assert await ingest.release_held(conversation_id=uuid.uuid4()) == {}
+    assert await ingest.release_held("u", c1.id) == {"u": 1}
+
+
+async def test_held_groups_and_scoped_release_on_postgres(pg_url: str) -> None:
+    from app.db.session import create_engine, create_session_factory
+    from app.repositories.postgres import PostgresContactRepo, PostgresConversationRepo
+
+    engine = create_engine(pg_url)
+    sessions = create_session_factory(engine)
+    try:
+        contacts, conversations = PostgresContactRepo(sessions), PostgresConversationRepo(sessions)
+        svc = ImportService(contacts, conversations, FakeEmbedder(dim=384))
+        await _check_held_groups_and_scoped_release(contacts, conversations, svc)
+    finally:
+        await engine.dispose()
+
+
 async def test_release_held_on_postgres(pg_url: str) -> None:
     from app.db.session import create_engine, create_session_factory
     from app.repositories.postgres import PostgresContactRepo, PostgresConversationRepo

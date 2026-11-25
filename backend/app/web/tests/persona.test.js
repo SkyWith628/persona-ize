@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import {
   DEFAULT_SETTINGS,
+  LIMITS,
   SCALES,
   addPhrases,
   applySignals,
@@ -145,6 +146,14 @@ test("표현 칩 입력: 쉼표로 여러 개, 중복·한도·길이 검사", (
   assert.deepEqual(long.list, []);
   assert.match(long.error, /40자까지/);
   assert.deepEqual(addPhrases([], "  ", 20), { list: [], error: null });
+  // 서버 상한(MAX_PHRASE_CHARS)과 같은 경계: 딱 40자는 받고, 공백은 뺀 뒤에 센다
+  assert.equal(LIMITS.phrase, 40);
+  assert.deepEqual(addPhrases([], ` ${"가".repeat(40)} `, 20), { list: ["가".repeat(40)], error: null });
+  // 이모지는 한 글자로 센다(서버와 같다)
+  assert.deepEqual(addPhrases([], "😆".repeat(40), 20), { list: ["😆".repeat(40)], error: null });
+  assert.match(addPhrases([], "😆".repeat(41), 20).error, /40자까지/);
+  // 긴 것 하나가 섞여도 나머지는 들어간다
+  assert.deepEqual(addPhrases([], `넵, ${"가".repeat(41)}, ㅠ`, 20).list, ["넵", "ㅠ"]);
 });
 
 test("제안: 표본이 적으면 보여 주지 않는다", () => {

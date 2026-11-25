@@ -13,6 +13,7 @@ import {
   encodingLabel,
   existingSpeakerNotes,
   graphPhaseView,
+  ignoredRolesLine,
   isGroupRoom,
   keepRecentFor,
   keptMessages,
@@ -1023,6 +1024,7 @@ export function mountImport(root, ctx) {
   function mountProgress(job) {
     const c = contact();
     const nothingNew = (job.imported ?? 0) === 0;
+    const ignoredRoles = ignoredRolesLine(job);
     const styleBox = h("div", { class: "phase" });
     const graphBox = h("div", { class: "phase" });
     // 새로 저장한 메시지가 있을 때만 말투를 제안한다
@@ -1084,6 +1086,8 @@ export function mountImport(root, ctx) {
               "에서 그 대화방을 지운 뒤 다시 가져와 주세요.",
             ])
           : null,
+        // 서버가 따르지 않은 화자 지정(이미 저장된 메시지는 역할이 바뀌지 않는다) — 응답에만 온다
+        ignoredRoles ? note(ignoredRoles, "warn") : null,
         styleBox,
         graphBox,
         register?.box,

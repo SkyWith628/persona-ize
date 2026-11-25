@@ -44,7 +44,7 @@ def _persona(row: PersonaVersionRow) -> PersonaVersion:
         user_id=row.user_id,
         contact_id=row.contact_id,
         version=row.version,
-        settings=PersonaSettings.model_validate(row.settings),
+        settings=PersonaSettings.from_stored(row.settings),
         created_at=row.created_at,
     )
 

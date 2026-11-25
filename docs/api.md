@@ -63,7 +63,7 @@ curl -s -c cookie.txt -X POST localhost:8000/v1/auth/register -H "Content-Type: 
 | `GET /v1/persona-defaults` | 관계 유형별 기본 페르소나 7종 |
 | `DELETE /v1/contacts/{id}` | **상대 삭제**. 그 상대의 대화방·메시지·묶음·그래프 에피소드·페르소나·첨삭 이력을 모두 지운다 (그래프 삭제가 실패해도 DB는 지우고 사유를 돌려준다) |
 
-settings: `formality·friendliness·directness`(1~5), `length`(shorter/same/longer), `emoji`(none/rare/often), `address_term`, `preferred_phrases[]`, `forbidden_phrases[]`, `notes`.
+settings: `formality·friendliness·directness`(1~5), `length`(shorter/same/longer), `emoji`(none/rare/often), `address_term`(30자), `preferred_phrases[]`(20개)·`forbidden_phrases[]`(50개, 표현 하나는 앞뒤 공백을 빼고 40자까지 — 넘으면 422), `notes`(500자).
 
 ## 과거 대화 가져오기 (문체 검색 C·그래프 D의 재료)
 
@@ -71,7 +71,7 @@ settings: `formality·friendliness·directness`(1~5), `length`(shorter/same/long
 |---|---|
 | `POST /v1/imports/parse` `{format?, text, tz_offset_minutes?, chat_id?}` | **미리보기**(저장 없음). format: `auto`(기본)·`kakao`·`telegram`·`plain`·`json`. 응답: `{format, variant, title_hint, messages_total, max_messages, date_from, date_to, speakers: [{name, count, suggested_role}], sample(앞 20건), skipped_lines, system_lines, masked_pii, problems[], chats}` |
 | `POST /v1/conversations` `{contact_id, title?, source_key?, me_name?}` | 대화방. `me_name`은 그래프 수집에 쓰는 내 이름(`회원님`·`나`·`me` 같은 자리표시 이름은 저장하지 않는다) |
-| `POST /v1/conversations/{id}/imports/raw` `{format?, text, speaker_map, tz_offset_minutes?, chat_id?, keep_recent?}` | **원문 가져오기**. `speaker_map`: `{"<이름>": "me"|"contact"|"skip"}` — 지도에 없는 화자가 있으면 422(이름 나열), `skip`은 그 화자 메시지를 버린다(단체방). `keep_recent`는 최근 N건만. 응답 202 + 작업 |
+| `POST /v1/conversations/{id}/imports/raw` `{format?, text, speaker_map, tz_offset_minutes?, chat_id?, keep_recent?}` | **원문 가져오기**. `speaker_map`: `{"<이름>": "me"|"contact"|"skip"}` — 지도에 없는 화자가 있으면 422(이름 나열), `skip`은 그 화자 메시지를 버린다(단체방). `keep_recent`는 최근 N건만. 응답 202 + 작업. 이미 저장된 메시지는 화자를 달리 지정해도(`skip` 포함) 그대로이고, 그 지정은 이 응답의 `ignored_speaker_roles`(`[{name, requested_role, stored_role, messages}]`, 없으면 `[]`)로 알린다 — 저장하지 않아 `GET /v1/imports/{id}`에서는 늘 `[]`. 고치려면 `PUT …/speaker-roles`의 `speakers` |
 | `POST /v1/conversations/{id}/imports` `{messages[], speaker_map?}` | JSON 메시지 가져오기(기존). 메시지: `{"id":"m01","speaker":"김민수","sent_at":"2026-10-05T09:31:00+09:00","text":"..."}` |
 | `GET /v1/imports/{job_id}` | 작업 상태. `status`: `processing`(메시지는 저장됐고 말투 묶음·임베딩을 뒤에서 만드는 중) → `completed` / `failed`(`error_code: reindex_failed`, 같은 내용을 다시 올리면 같은 작업으로 다시 시도). 두 가져오기 요청은 묶음 생성을 `IMPORT_INDEX_WAIT_SECONDS`(기본 2초)만 기다린다 — 그 안에 끝나면 응답이 이미 `completed`, 아니면 `processing`이라 이 주소(또는 대화방 `stats`의 `latest_job`)를 다시 읽는다. `processing` 동안 C/D 첨삭은 예전 묶음(첫 가져오기면 없음)으로 돌고, 그래프 수집(`graph_status: pending`)은 묶음이 끝난 뒤 시작한다. 서버가 도중에 재시작되면 다음 시작 때 이어서 끝낸다. **진행률**: `processing` 동안 `index_total`(이번에 만들 말투 묶음 전체 수)과 `index_done`(그중 벡터가 준비된 수 — 본문이 그대로라 다시 쓰는 묶음은 처음부터 센다)이 함께 나간다. 임베딩 64개가 끝날 때마다 오른다. 서버 메모리에만 있는 값이라 모르면 둘 다 `null`이다(끝난 작업, 묶음을 세기 전, 재시작 직후 이어받기 전) — 그때는 수치 없이 진행 중으로만 보여 준다 |
 | `GET /v1/conversations?contact_id=`, `GET /v1/conversations/{id}` | 목록·조회 |
@@ -133,7 +133,8 @@ settings: `formality·friendliness·directness`(1~5), `length`(shorter/same/long
 | `GET /v1/admin/jobs?limit=50` | 최근 가져오기 작업. `graph_error`는 오류 종류만 |
 | `GET /v1/admin/feedback?limit=50` | 최근 거절 피드백 (선택형 사유만) |
 | `GET /v1/admin/access-log?limit=50` | 관리자 접근 기록 |
-| `POST /v1/admin/graph/retry-held` | 본문 없음 → `{released, users, started}`. 거듭 실패해 보류된 메시지**만** 풀고(실패 횟수·보류 표시를 지운다 — 그래프와 이미 들어간 메시지는 그대로) 그 사용자들의 수집을 백그라운드로 다시 시작한다. 바로 응답하며 진행은 `overview`의 `graph.pending_messages`·`held_messages`로 본다. 메시지마다 모델 호출 비용이 들고 수집 상한을 따른다(예산이 없으면 미수집으로 남아 나중에 이어진다). 풀 것이 없으면 0건·`started=false`, 그래프가 꺼진 서버는 409 `graph_disabled`. 접근 기록에 `graph_retry_held`와 결과(`graph_retry_held_done`, `released=N users=M`)가 남는다 |
+| `GET /v1/admin/graph/held?limit=50` | 보류된 메시지를 사용자·대화방별로 묶은 목록(최근에 보류된 방부터): `[{user_id(줄인 id), conversation_id, messages, attempts(가장 큰 실패 횟수), oldest_held_at, latest_held_at}]`. 본문·화자 이름·방 제목은 없다. `conversation_id`를 `retry-held`의 범위로 쓴다 (2026-11-25) |
+| `POST /v1/admin/graph/retry-held` | 본문 없음(전체) 또는 `{"conversation_id": …, "user_id": …}`(둘 다 선택 — 그 범위만, 둘 다 주면 둘 다 맞는 것만. `user_id`는 회원관리의 사용자 id 전체) → `{released, users, started}`. 거듭 실패해 보류된 메시지**만** 풀고(실패 횟수·보류 표시를 지운다 — 그래프와 이미 들어간 메시지는 그대로) 그 사용자들의 수집을 백그라운드로 다시 시작한다. 바로 응답하며 진행은 `overview`의 `graph.pending_messages`·`held_messages`로 본다. 메시지마다 모델 호출 비용이 들고 수집 상한을 따른다(예산이 없으면 미수집으로 남아 나중에 이어진다). 풀 것이 없으면 0건·`started=false`, 그래프가 꺼진 서버는 409 `graph_disabled`. 접근 기록에 `graph_retry_held`(범위를 주면 `user=u_8f2…a1 conversation=<id>`)와 결과(`graph_retry_held_done`, `released=N users=M`)가 남는다 |
 
 회원관리 (2026-11-16) — 여기서만 사용자 id 전체와 이메일이 나간다:
 

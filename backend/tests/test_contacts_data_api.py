@@ -15,7 +15,13 @@ from fastapi.testclient import TestClient
 
 from app.ai.style_suggest import suggest_persona
 from app.core.config import Settings
-from app.domain.persona import DEFAULT_PERSONAS, PersonaSettings, RelationshipType, apply_adjust
+from app.domain.persona import (
+    DEFAULT_PERSONAS,
+    MAX_PHRASE_CHARS,
+    PersonaSettings,
+    RelationshipType,
+    apply_adjust,
+)
 from app.main import create_app
 from app.services.housekeeping import run_housekeeping
 
@@ -141,6 +147,83 @@ def test_persona_versions_newest_first(
     assert [(v["version"], v["settings"]["formality"]) for v in versions] == [(3, 3), (2, 4), (1, 5)]
     assert set(versions[0]) == {"contact_id", "version", "settings", "created_at"}
     assert client.get(f"{url}/versions", headers=user_b).status_code == 404
+
+
+def test_phrase_length_limit_on_settings() -> None:
+    assert MAX_PHRASE_CHARS == 40  # 화면(LIMITS.phrase)·프롬프트(PHRASE_MAX_CHARS)와 같은 값
+    exact, over = "가" * MAX_PHRASE_CHARS, "가" * (MAX_PHRASE_CHARS + 1)
+    for field in ("preferred_phrases", "forbidden_phrases"):
+        assert getattr(PersonaSettings(**{field: [exact]}), field) == [exact]
+        # 길이는 앞뒤 공백을 뺀 뒤에 센다
+        assert getattr(PersonaSettings(**{field: [f"  {exact}\n"]}), field) == [exact]
+        with pytest.raises(ValueError, match="40자까지") as err:
+            PersonaSettings(**{field: ["넵", over]})
+        assert over not in str(err.value.errors()[0]["msg"])  # 문구에 값을 넣지 않는다
+        # 가운데 공백은 글자로 센다
+        with pytest.raises(ValueError):
+            PersonaSettings(**{field: ["가" * 20 + " " + "가" * 20]})
+    # 이모지도 한 글자로 센다
+    assert PersonaSettings(preferred_phrases=["😆" * MAX_PHRASE_CHARS]).preferred_phrases
+    # 기본 페르소나 표와 거기서 만든 사본은 상한 안에 있다(다시 검증해도 통과)
+    for settings in DEFAULT_PERSONAS.values():
+        assert PersonaSettings.model_validate(settings.model_dump()) == settings
+
+
+def test_stored_long_phrases_are_clipped_on_read_not_rejected() -> None:
+    """상한이 생기기 전에 저장된 긴 표현: 읽기는 깨지지 않고 앞 40자만 남는다."""
+    exact, over = "가" * MAX_PHRASE_CHARS, "가" * 39 + " 나다라"
+    stored = {
+        "formality": 5,
+        "address_term": "팀장님",
+        "preferred_phrases": [exact, "나" * 300, "  넵 "],
+        "forbidden_phrases": [over, "ㅋㅋ", "가" * 39, "ㅋㅋ"],
+        "notes": "결론부터",
+    }
+    got = PersonaSettings.from_stored(stored)
+    assert got.preferred_phrases == [exact, "나" * MAX_PHRASE_CHARS, "넵"]
+    # 자른 끝의 공백은 떼고, 잘라서 같아진 것은 하나로 합친다
+    assert got.forbidden_phrases == ["가" * 39, "ㅋㅋ"]
+    assert (got.formality, got.address_term, got.notes) == (5, "팀장님", "결론부터")
+    assert stored["preferred_phrases"][1] == "나" * 300  # 받은 dict는 바꾸지 않는다
+    # 되살린 설정은 응답 검증(다시 검증)을 통과한다 — 읽기 경로가 500이 되지 않는다
+    assert PersonaSettings.model_validate(got.model_dump()) == got
+    # 상한 안의 값은 그대로다
+    plain = {"formality": 2, "forbidden_phrases": ["ㅋㅋ", "ㅠ"]}
+    assert PersonaSettings.from_stored(plain) == PersonaSettings.model_validate(plain)
+    # 그 밖의 잘못된 값은 예전처럼 검증 오류다(여기서 고치지 않는다)
+    with pytest.raises(ValueError):
+        PersonaSettings.from_stored({"formality": 9})
+
+
+def test_persona_phrase_over_limit_is_422_and_saves_nothing(
+    client: TestClient, user_a: dict[str, str]
+) -> None:
+    c = _new_contact(client, user_a, "박지현", "superior")
+    url = f"/v1/contacts/{c['id']}/persona"
+    exact, over = "가" * MAX_PHRASE_CHARS, "가" * (MAX_PHRASE_CHARS + 1)
+
+    for field in ("preferred_phrases", "forbidden_phrases"):
+        r = client.put(url, json={"settings": {field: ["넵", over]}, "expected_version": 0}, headers=user_a)
+        assert r.status_code == 422, r.text
+        body = r.json()
+        assert body["code"] == "invalid_input"
+        assert body["details"] == [
+            {"loc": f"body.settings.{field}", "msg": "표현 하나는 40자까지 넣을 수 있습니다"}
+        ]
+        assert over not in r.text  # 응답에 입력 값을 되돌려 주지 않는다
+    assert client.get(url, headers=user_a).status_code == 404  # 잘라서 저장하지 않았다
+
+    saved = client.put(
+        url,
+        json={
+            "settings": {"preferred_phrases": [f" {exact} "], "forbidden_phrases": [exact]},
+            "expected_version": 0,
+        },
+        headers=user_a,
+    )
+    assert saved.status_code == 200, saved.text
+    got = client.get(url, headers=user_a).json()["settings"]
+    assert got["preferred_phrases"] == [exact] and got["forbidden_phrases"] == [exact]
 
 
 def test_persona_suggestion_from_my_past_messages(

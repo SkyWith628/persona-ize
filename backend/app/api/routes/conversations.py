@@ -25,6 +25,7 @@ from app.api.schemas import (
     ConversationOut,
     ConversationStatsOut,
     DeletionOut,
+    IgnoredSpeakerRoleOut,
     ImportJobOut,
     ImportRawIn,
     MessageOut,
@@ -70,6 +71,7 @@ def _job_out(j: ImportJob, progress: tuple[int, int] | None = None) -> ImportJob
         created_at=j.created_at,
         index_done=done,
         index_total=total,
+        ignored_speaker_roles=[IgnoredSpeakerRoleOut(**ig.model_dump()) for ig in j.ignored_speaker_roles],
     )
 
 

@@ -19,6 +19,7 @@ import {
   duration,
   groupAccess,
   healthView,
+  heldGroupView,
   heldView,
   label,
   memberActions,
@@ -514,6 +515,52 @@ export function renderJobs(root, items) {
       items,
     ),
     hint("오류는 종류만 보여 줍니다. 자세한 내용은 서버 로그에서 확인하세요."),
+  );
+}
+
+/**
+ * 보류된 메시지 표(대화방별). `actions.onRetry(줄, 버튼)`을 주고 `actions.canRetry`가 참이면(수집이 켜진
+ * 서버) 줄마다 "다시 시도" 버튼을 낸다. 대화 내용·이름은 서버가 주지 않는다 — id와 수치만 그린다.
+ */
+export function renderHeld(root, items, actions = {}) {
+  if (!items.length) {
+    fill(root, empty("보류된 메시지가 없습니다."));
+    return;
+  }
+  const canRetry = Boolean(actions.canRetry) && typeof actions.onRetry === "function";
+  const columns = [
+    { title: "사용자", cell: (g) => idCell(g.user_id) },
+    { title: "대화방", cell: (g) => idCell(heldGroupView(g).conversation) },
+    { title: "보류", num: true, cell: (g) => `${num(heldGroupView(g).count)}건` },
+    { title: "실패 횟수", num: true, cell: (g) => heldGroupView(g).attempts },
+    { title: "처음 보류", cell: (g) => timeCell(g.oldest_held_at) },
+    { title: "최근 보류", cell: (g) => timeCell(g.latest_held_at) },
+  ];
+  if (canRetry) {
+    columns.push({
+      title: "작업",
+      cell: (g) => {
+        if (!heldGroupView(g, true).canRetry) return "–";
+        const button = el("button", {
+          type: "button",
+          class: "btn ghost",
+          "data-conversation": g.conversation_id,
+          "aria-label": `대화방 ${heldGroupView(g).conversation} 보류 다시 시도`,
+          text: "다시 시도",
+        });
+        button.addEventListener("click", () => actions.onRetry(g, button));
+        return button;
+      },
+    });
+  }
+  fill(
+    root,
+    table("보류된 메시지 (대화방별)", columns, items),
+    hint(
+      canRetry
+        ? "줄의 다시 시도는 그 대화방의 보류만 풉니다(전체는 ‘수집 작업 상태’의 다시 시도). 메시지 내용과 이름은 이 화면에 나오지 않습니다 — 어느 메시지인지는 서버 로그에서 확인하세요."
+        : "수집이 꺼져 있어 다시 시도할 수 없습니다. 메시지 내용과 이름은 이 화면에 나오지 않습니다.",
+    ),
   );
 }
 

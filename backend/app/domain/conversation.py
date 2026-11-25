@@ -157,6 +157,19 @@ class DeletionResult(BaseModel):
     graph_error: str | None = Field(None, description="그래프 삭제 실패 사유. DB 삭제는 그래도 진행한다")
 
 
+class IgnoredSpeakerRole(BaseModel):
+    """다시 올린 파일에서 따르지 않은 화자 지정 하나 (화자 이름 × 저장돼 있는 역할).
+
+    이미 저장된 메시지는 다시 올려도 역할이 바뀌지 않고 `skip`으로 지정해도 지워지지 않는다.
+    고치려면 `PUT /v1/conversations/{id}/speaker-roles`의 `speakers`.
+    """
+
+    name: str
+    requested_role: Literal["me", "contact", "skip"]
+    stored_role: SpeakerRole
+    messages: int = Field(description="이 지정을 따르지 않고 그대로 둔 저장된 메시지 수")
+
+
 class ImportJob(BaseModel):
     id: UUID
     user_id: str
@@ -174,6 +187,10 @@ class ImportJob(BaseModel):
         None, description="failed면 오류 문장, limited면 닿은 상한(user_cap / daily_cap)"
     )
     created_at: datetime
+    ignored_speaker_roles: list[IgnoredSpeakerRole] = Field(
+        default_factory=list,
+        description="원문 가져오기 응답에만 싣는다(저장하지 않는다): 저장된 역할과 달라 따르지 않은 지정",
+    )
 
 
 class SpeakerCount(BaseModel):
@@ -200,6 +217,17 @@ class SpeakerRoleChange(BaseModel):
     graph_removed: int = Field(0, description="그래프에서 지운 에피소드 수 (잘못된 역할로 들어간 것)")
     graph_requeued: int = Field(0, description="다시 수집 대상으로 돌린 메시지 수")
     job: ImportJob | None = Field(None, description="묶음을 다시 만드는 작업. 바뀐 것이 없으면 None")
+
+
+class HeldGraphGroup(BaseModel):
+    """그래프 수집이 보류된 메시지를 대화방별로 묶은 한 줄 (관리자 화면). 본문·이름·방 제목은 싣지 않는다."""
+
+    user_id: str
+    conversation_id: UUID
+    messages: int = Field(description="보류된 메시지 수")
+    attempts: int = Field(description="그 메시지들의 실패 횟수 중 가장 큰 값")
+    oldest_held_at: datetime
+    latest_held_at: datetime
 
 
 class ConversationStats(BaseModel):

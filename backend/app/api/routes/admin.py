@@ -8,6 +8,8 @@
 - 저장소가 PostgreSQL이 아니면(인메모리) 503 `admin_unavailable` — 집계 SQL을 돌릴 곳이 없다.
 - 통과한 호출은 전부 `admin_access_log`에 남는다(서비스가 자료를 읽거나 바꾸기 전에 기록한다). 회원관리의
   쓰기는 결과(`*_done`·`*_failed`)와 서버 규칙에 걸린 시도(`member_refused`)도 남긴다.
+- 보류된 그래프 메시지(2026-11-25): `GET /graph/held`가 대화방별 건수를 주고(사용자 id는 줄인다),
+  `POST /graph/retry-held`가 본문의 `conversation_id`·`user_id` 범위만 푼다(없으면 전체).
 - 쓰기(`POST /graph/retry-held`, 회원관리의 PATCH·POST·DELETE)는 쿠키 인증이면 `X-CSRF-Token`이 맞아야
   한다(403, 관리자 검사 뒤). 안전하지 않은 메서드 전부에 `require_admin`이 한 곳에서 건다.
 - 회원관리(`/members*`, 2026-11-16): 목록·승인·정지·권한·세션 폐기·삭제. 규칙은 `member_admin_service.py`,
@@ -35,9 +37,11 @@ from app.services.admin_service import (
     AdminIdentity,
     AdminService,
     AdminUnavailableError,
+    HeldGroupOut,
     JobOut,
     OverviewOut,
     RejectedFeedbackOut,
+    RetryHeldIn,
     RetryHeldOut,
     UsersPage,
     short_user_id,
@@ -120,7 +124,11 @@ async def require_admin(request: Request, state: State) -> AdminAccess:
     return AdminAccess(
         admin=AdminIdentity(user_id=str(user.id), username=user.username),
         service=AdminService(
-            state.settings, _admin_repo(request, state), state.graph_store, state.graph_ingest
+            state.settings,
+            _admin_repo(request, state),
+            state.graph_store,
+            state.graph_ingest,
+            state.conversations,
         ),
         members=state.member_admin,  # type: ignore[arg-type] - build_state가 항상 채운다
     )
@@ -158,14 +166,28 @@ async def list_access_log(access: Admin, limit: Limit = 50) -> list[AccessLogOut
     return await access.service.access_log(access.admin, limit)
 
 
-@router.post("/graph/retry-held", response_model=RetryHeldOut, summary="보류된 그래프 메시지 다시 시도")
-async def retry_held_graph(access: Admin) -> RetryHeldOut:
-    """거듭 실패해 보류된 메시지를 풀고 수집을 백그라운드로 다시 시작한다 (본문 없음, 바로 응답).
+@router.get(
+    "/graph/held", response_model=list[HeldGroupOut], summary="보류된 그래프 메시지 (사용자·대화방별)"
+)
+async def list_held_graph(access: Admin, limit: Limit = 50) -> list[HeldGroupOut]:
+    """거듭 실패해 보류된 메시지를 대화방별로 묶어 최근에 보류된 방부터 준다 (건수·실패 횟수·시각).
 
+    본문·화자 이름·방 제목은 없다. 사용자 id는 줄여서 주고, `conversation_id`를 `retry-held`의 범위로 쓴다.
+    """
+    return await access.service.held(access.admin, limit)
+
+
+@router.post("/graph/retry-held", response_model=RetryHeldOut, summary="보류된 그래프 메시지 다시 시도")
+async def retry_held_graph(access: Admin, body: RetryHeldIn | None = None) -> RetryHeldOut:
+    """거듭 실패해 보류된 메시지를 풀고 수집을 백그라운드로 다시 시작한다 (바로 응답).
+
+    본문이 없거나 비면 모든 사용자의 보류를 푼다. `{"conversation_id": …}`(보류 목록의 값)나
+    `{"user_id": …}`(회원관리의 사용자 id 전체)를 주면 그 범위만 — 둘 다 주면 둘 다 맞는 것만 푼다.
     그래프는 지우지 않는다. 메시지마다 모델 호출 비용이 들고, 수집 상한(`GRAPH_INGEST_*_CAP`)을 따른다.
     그래프가 꺼진 서버는 409 `graph_disabled`.
     """
-    return await access.service.retry_held(access.admin)
+    scope = body or RetryHeldIn()
+    return await access.service.retry_held(access.admin, scope.user_id, scope.conversation_id)
 
 
 # ---------- 회원관리 (2026-11-16) ----------

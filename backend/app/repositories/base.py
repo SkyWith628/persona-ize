@@ -18,6 +18,7 @@ from app.domain.conversation import (
     EpisodeDraft,
     EpisodeHit,
     GraphStatus,
+    HeldGraphGroup,
     ImportJob,
     Message,
     NewMessage,
@@ -256,11 +257,21 @@ class ConversationRepo(Protocol):
         """이 메시지를 그래프에 넣다 실패했다 — 횟수를 1 올리고, `hold`면 더 시도하지 않게 보류한다."""
         ...
 
-    async def release_held_graph(self, user_id: str | None = None) -> dict[str, int]:
+    async def release_held_graph(
+        self, user_id: str | None = None, conversation_id: UUID | None = None
+    ) -> dict[str, int]:
         """보류된 메시지만 실패 횟수와 보류 표시를 지워 다시 수집 대상으로 만든다. {사용자 id: 푼 건수}.
 
         이미 그래프에 들어간 메시지와 아직 보류되지 않은 메시지는 건드리지 않는다 — 그래프를 지우는
-        `reset_graph_ingested`와 다르다. `user_id`를 주면 그 사용자 것만.
+        `reset_graph_ingested`와 다르다. `user_id`를 주면 그 사용자 것만, `conversation_id`를 주면 그
+        대화방 것만(둘 다 주면 둘 다 맞는 것만 — 남의 대화방이면 아무것도 풀지 않는다).
+        """
+        ...
+
+    async def held_graph_groups(self, limit: int) -> list[HeldGraphGroup]:
+        """보류된 메시지를 사용자·대화방별로 묶은 목록 (모든 사용자, 최근에 보류된 방부터 `limit`줄).
+
+        관리자 화면용이다 — 건수·횟수·시각만 읽고 본문·화자 이름·방 제목은 읽지 않는다.
         """
         ...
 

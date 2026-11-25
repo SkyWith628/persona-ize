@@ -1,9 +1,9 @@
 // 운영 대시보드(/admin)의 시작점. 빌드 없는 ES 모듈이고, 관리자 API(/v1/admin/*)를 읽는다.
-// 쓰기는 두 가지다: 수집 표의 "다시 시도"(보류된 그래프 메시지)와 회원 관리(승인·정지·권한·세션 끊기·삭제)
+// 쓰기는 두 가지다: "다시 시도"(보류된 그래프 메시지 — 수집 표는 전체, 보류 표는 대화방 하나)와 회원 관리(승인·정지·권한·세션 끊기·삭제)
 // — 모두 확인을 받은 뒤에만 보내고, CSRF 토큰은 누를 때마다 `/v1/auth/me`에서 새로 읽는다.
 // 화면을 열거나 새로 고칠 때마다 서버의 관리자 접근 기록에 남는다 — 그래서 자동 새로 고침은 하지 않는다.
 
-import { getJson, postJson, sendJson } from "./admin/api.js";
+import { getJson, sendJson } from "./admin/api.js";
 import { confirmDialog } from "./admin/dialog.js";
 import {
   clock,
@@ -18,6 +18,7 @@ import {
   membersQuery,
   num,
   rangeText,
+  retryBody,
   retryConfirmText,
   retryErrorText,
   retryResultText,
@@ -26,6 +27,7 @@ import {
   renderAccess,
   renderFailure,
   renderFeedback,
+  renderHeld,
   renderJobs,
   renderMembers,
   renderOverview,
@@ -53,6 +55,8 @@ const state = {
   usersOffset: 0,
   overviewSeq: 0, // 기간을 빠르게 바꿔도 마지막 요청의 응답만 그린다
   usersSeq: 0,
+  heldSeq: 0,
+  graphEnabled: false, // 마지막 요약 기준 — 꺼진 서버에서는 보류 표의 다시 시도 버튼을 내지 않는다
   // 회원 관리: 검색어·필터·쪽. 검색어는 화면 상태로만 둔다(주소·브라우저 저장소에 넣지 않는다 — 이메일일 수 있다)
   members: { query: "", status: "", role: "", offset: 0 },
   membersSeq: 0,
@@ -117,17 +121,37 @@ async function loadOverview() {
   const seq = ++state.overviewSeq;
   const overview = await getJson(`/v1/admin/overview?days=${state.days}`);
   if (seq !== state.overviewSeq) return false;
+  state.graphEnabled = Boolean(overview.graph?.enabled);
   renderOverview(roots, overview, { onRetryHeld: retryHeld });
   $("range-text").textContent = rangeText(overview);
   return true;
 }
 
+/** 보류 표(대화방별)를 읽어 그린다. 그 사이 더 새로운 요청이 나갔으면 그리지 않는다. */
+async function loadHeld() {
+  const seq = ++state.heldSeq;
+  const items = await getJson(`/v1/admin/graph/held?limit=${LIST_LIMIT}`);
+  if (seq !== state.heldSeq) return;
+  renderHeld($("t-held"), items, {
+    canRetry: state.graphEnabled,
+    onRetry: (group, button) => retryHeld(group.messages, button, group),
+  });
+}
+
+/** 보류 표 구획의 안내(줄의 다시 시도 결과·오류). 빈 글자면 자리를 차지하지 않는다. */
+function setHeldNote(text, { error = false } = {}) {
+  const node = $("held-note");
+  node.textContent = text;
+  node.classList.toggle("error", error);
+}
+
 /**
- * 수집 표의 "다시 시도": 확인 → 보류 풀기(POST) → 결과 안내 → 요약을 새로 읽는다.
+ * "다시 시도": 확인 → 보류 풀기(POST) → 결과 안내 → 요약과 보류 표를 새로 읽는다.
+ * `group`(보류 표의 한 줄)을 주면 그 대화방만, 없으면(수집 표의 버튼) 전체를 푼다.
  * 수집은 서버가 뒤에서 하므로 바로 끝난다. 풀린 메시지는 요약의 "기다리는 메시지"로 옮겨 보인다.
  */
-async function retryHeld(count, button) {
-  if (!window.confirm(retryConfirmText(count))) return;
+async function retryHeld(count, button, group = null) {
+  if (!window.confirm(retryConfirmText(count, group))) return;
   button.disabled = true; // 두 번 눌러 두 번 보내지 않게. 성공하면 요약을 다시 그리며 버튼이 사라진다
   busy(+1);
   setStatus("보류된 메시지를 다시 시도하는 중입니다…", { quiet: true });
@@ -135,23 +159,34 @@ async function retryHeld(count, button) {
   try {
     // 토큰은 누를 때마다 새로 읽는다 (다른 탭에서 다시 로그인했을 수 있다)
     const me = await getJson("/v1/auth/me");
-    text = retryResultText(await postJson("/v1/admin/graph/retry-held", me.csrf_token));
+    text = retryResultText(
+      await sendJson("POST", "/v1/admin/graph/retry-held", me.csrf_token, retryBody(group)),
+    );
   } catch (error) {
     busy(-1);
     button.disabled = false;
     if (error.status === 401) handleError(error);
+    else if (group) setHeldNote(retryErrorText(error), { error: true });
     else setStatus(retryErrorText(error), { error: true });
     return;
   }
   try {
     if (await loadOverview()) markUpdated();
+    // 풀린 줄이 표에서 빠진다 (누른 버튼도 함께 사라진다)
+    if (await loadInto($("t-held"), loadHeld)) return;
   } catch (error) {
     if (handleError(error)) return; // 접근이 막혔으면 안내 화면이 대신한다
   } finally {
     busy(-1);
   }
-  setStatus(text);
+  setStatus(text, { quiet: Boolean(group) });
   // 버튼이 있던 자리에도 결과를 남긴다 (위쪽 안내는 화면 밖일 수 있다)
+  if (group) {
+    setHeldNote(text);
+    $("h-held").focus(); // 누른 버튼은 줄과 함께 사라졌다
+    return;
+  }
+  setHeldNote("");
   const note = document.createElement("p");
   note.className = "hint";
   note.textContent = text;
@@ -355,6 +390,7 @@ async function loadAll() {
       loadInto($("t-jobs"), async () =>
         renderJobs($("t-jobs"), await getJson(`/v1/admin/jobs?limit=${LIST_LIMIT}`)),
       ),
+      loadInto($("t-held"), loadHeld),
       loadInto($("t-users"), loadUsers),
       loadInto($("t-members"), loadMembers),
     ]);
