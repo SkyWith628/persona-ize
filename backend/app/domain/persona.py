@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
@@ -20,6 +20,11 @@ RelationshipType = Literal[
     "partner",
     "acquaintance",  # 거래처·지인
 ]
+
+# 선호·금지 표현 하나의 글자 수 상한(앞뒤 공백을 뺀 뒤). 프롬프트 [설정] 블록의
+# PHRASE_MAX_CHARS, 화면의 LIMITS.phrase(js/lib/persona.js)와 같은 값이다.
+MAX_PHRASE_CHARS = 40
+_PHRASE_FIELDS = ("preferred_phrases", "forbidden_phrases")
 
 
 class PersonaSettings(BaseModel):
@@ -41,9 +46,29 @@ class PersonaSettings(BaseModel):
         seen: list[str] = []
         for v in values:
             v = v.strip()
+            if len(v) > MAX_PHRASE_CHARS:
+                # 잘라서 받지 않는다 — 금지 표현이 조용히 다른 글자가 되면 안 된다. 값은 문구에 넣지 않는다
+                raise ValueError(f"표현 하나는 {MAX_PHRASE_CHARS}자까지 넣을 수 있습니다")
             if v and v not in seen:
                 seen.append(v)
         return seen
+
+    @classmethod
+    def from_stored(cls, data: Any) -> PersonaSettings:
+        """저장소에서 읽은 설정을 되살린다.
+
+        표현 길이 상한(2026-11-25)이 생기기 전에 저장된 긴 표현은 앞 `MAX_PHRASE_CHARS`자만 남긴다 —
+        읽기가 검증 오류(500)로 깨지지 않게 한다. 새로 받는 입력에는 쓰지 않는다(입력은 422).
+        """
+        if isinstance(data, dict):
+            data = dict(data)
+            for field in _PHRASE_FIELDS:
+                values = data.get(field)
+                if isinstance(values, list):
+                    data[field] = [
+                        v.strip()[:MAX_PHRASE_CHARS].rstrip() if isinstance(v, str) else v for v in values
+                    ]
+        return cls.model_validate(data)
 
 
 class PersonaVersion(BaseModel):

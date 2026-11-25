@@ -77,6 +77,28 @@ async def test_contact_crud_and_isolation(repos) -> None:  # noqa: ANN001
         await contacts.latest_persona(b, c1.id)
 
 
+async def test_persona_with_long_stored_phrase_still_reads(repos) -> None:  # noqa: ANN001
+    """표현 길이 상한 전에 저장된 행: 읽을 때 앞 40자만 남기고 검증 오류를 내지 않는다."""
+    from sqlalchemy import update
+
+    from app.db.models import PersonaVersionRow
+
+    contacts, _ = repos
+    a = _user()
+    c = await contacts.create(a, "박지현", "superior")
+    await contacts.save_persona(a, c.id, PersonaSettings(formality=5), 0)
+    old = {"formality": 5, "forbidden_phrases": ["가" * 300, "ㅋㅋ"], "preferred_phrases": ["나" * 41]}
+    async with contacts._sessions.begin() as s:
+        await s.execute(
+            update(PersonaVersionRow).where(PersonaVersionRow.contact_id == c.id).values(settings=old)
+        )
+
+    got = (await contacts.latest_persona(a, c.id)).settings
+    assert got.forbidden_phrases == ["가" * 40, "ㅋㅋ"]
+    assert got.preferred_phrases == ["나" * 40]
+    assert (await contacts.get_persona(a, c.id, 1)).settings == got
+
+
 async def test_persona_versions_and_conflict(repos) -> None:  # noqa: ANN001
     contacts, _ = repos
     a = _user()

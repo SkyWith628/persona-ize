@@ -584,3 +584,10 @@
 - 재생성 2건(E011 A, E014 C)은 '그날 이사'·'일요일 이사'를 사람으로 읽은 오탐이었다. 직함 앞 낱말이 때를 가리키는 말이면 사람으로 읽지 않는다.
 - 확인: 세 사례 × A/B/C/D × 3회를 다시 돌려 36회 전부 추천, 재생성 0건. 나머지 13사례는 새 규칙으로 다시 돌리지 않았다.
 - 남은 것: `test` 4사례, 사람 채점(블라인드), E018·E019의 recall 0.50.
+
+## 2026-11-25 페르소나 선호·금지 표현 하나의 길이 상한 40자 (백로그 C)
+- 결정: `PersonaSettings`의 표현 하나는 앞뒤 공백을 뺀 뒤 40자까지(`MAX_PHRASE_CHARS`). 넘으면 자르지 않고 422 — 금지 표현이 조용히 다른 글자가 되면 안 된다. 오류 문구에 값은 넣지 않는다.
+- 40인 이유: 화면 칩 입력(`LIMITS.phrase`)과 프롬프트 [설정] 블록(`PHRASE_MAX_CHARS`)이 이미 40이었다 — 화면으로 넣은 값과 프롬프트 글자는 그대로다. 화면은 서버처럼 코드 포인트로 세게 맞췄다.
+- 이미 저장된 긴 값: 마이그레이션 없이 읽을 때 앞 40자만 남긴다(`PersonaSettings.from_stored`, Postgres 저장소의 `_persona`). 금지 표현은 포함 검사라 앞부분만 남아도 원래 문장을 막는다. 다음 저장 때 잘린 값이 새 버전이 된다.
+- 제안·기본값 경로(`suggestion_service`·`style_suggest`·`persona_signals`·`persona_from_aliases`·`DEFAULT_PERSONAS`)는 표현을 만들지 않고 저장된 설정을 `model_copy`만 해서 손대지 않았다.
+- 확인 못 한 것: Postgres 읽기 경로 테스트(`test_persona_with_long_stored_phrase_still_reads`)는 DB가 없는 환경이라 건너뛰었다. `mobile.js`(쉼표 입력)는 입력 단계 안내가 없어 긴 표현이면 서버 422로만 안다.

@@ -63,7 +63,7 @@ curl -s -c cookie.txt -X POST localhost:8000/v1/auth/register -H "Content-Type: 
 | `GET /v1/persona-defaults` | 관계 유형별 기본 페르소나 7종 |
 | `DELETE /v1/contacts/{id}` | **상대 삭제**. 그 상대의 대화방·메시지·묶음·그래프 에피소드·페르소나·첨삭 이력을 모두 지운다 (그래프 삭제가 실패해도 DB는 지우고 사유를 돌려준다) |
 
-settings: `formality·friendliness·directness`(1~5), `length`(shorter/same/longer), `emoji`(none/rare/often), `address_term`, `preferred_phrases[]`, `forbidden_phrases[]`, `notes`.
+settings: `formality·friendliness·directness`(1~5), `length`(shorter/same/longer), `emoji`(none/rare/often), `address_term`(30자), `preferred_phrases[]`(20개)·`forbidden_phrases[]`(50개, 표현 하나는 앞뒤 공백을 빼고 40자까지 — 넘으면 422), `notes`(500자).
 
 ## 과거 대화 가져오기 (문체 검색 C·그래프 D의 재료)
 

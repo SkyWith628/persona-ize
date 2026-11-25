@@ -43,7 +43,8 @@ KST = timezone(timedelta(hours=9))
 EXAMPLE_MAX_CHARS = 600
 BLOCK_MAX_CHARS = {"style": 2400, "context": 1200}
 TRUNCATED_MARK = " …(뒤 생략)"
-PHRASE_MAX_CHARS = 40  # [설정] 블록에 넣는 선호·금지 표현 하나의 길이
+# [설정] 블록에 넣는 선호·금지 표현 하나의 길이. 저장 상한(domain/persona.py MAX_PHRASE_CHARS)과 같다
+PHRASE_MAX_CHARS = 40
 
 
 def today_kst(as_of: datetime | None = None) -> date:
@@ -74,7 +75,7 @@ def _load(version: str, name: str) -> str:
 
 
 def _clip(phrase: str) -> str:
-    """표현 하나가 블록을 채우지 않게 앞부분만 쓴다 (저장되는 표현에는 길이 제한이 없다)."""
+    """표현 하나가 블록을 채우지 않게 앞부분만 쓴다 (저장 상한을 거치지 않고 만든 설정에 대비)."""
     return phrase if len(phrase) <= PHRASE_MAX_CHARS else phrase[:PHRASE_MAX_CHARS] + "…"
 
 

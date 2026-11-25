@@ -1,5 +1,5 @@
 // 페르소나(상대별 말투 설정) 화면의 순수 로직. 테스트: tests/persona.test.js
-// 값의 범위는 backend/app/domain/persona.py와 같다.
+// 값의 범위는 backend/app/domain/persona.py와 같다(phrase = MAX_PHRASE_CHARS — 넘으면 서버가 422).
 
 export const LIMITS = { address_term: 30, notes: 500, preferred_phrases: 20, forbidden_phrases: 50, phrase: 40 };
 
@@ -481,7 +481,8 @@ export function addPhrases(list, raw, max) {
     .filter(Boolean);
   let error = null;
   for (const v of incoming) {
-    if (v.length > LIMITS.phrase) {
+    // 서버처럼 글자(코드 포인트)로 센다 — length는 이모지를 2로 세어 서버가 받는 값을 막는다
+    if (Array.from(v).length > LIMITS.phrase) {
       error = `표현 하나는 ${LIMITS.phrase}자까지 넣을 수 있어요.`;
       continue;
     }
