@@ -133,7 +133,8 @@ settings: `formality·friendliness·directness`(1~5), `length`(shorter/same/long
 | `GET /v1/admin/jobs?limit=50` | 최근 가져오기 작업. `graph_error`는 오류 종류만 |
 | `GET /v1/admin/feedback?limit=50` | 최근 거절 피드백 (선택형 사유만) |
 | `GET /v1/admin/access-log?limit=50` | 관리자 접근 기록 |
-| `POST /v1/admin/graph/retry-held` | 본문 없음 → `{released, users, started}`. 거듭 실패해 보류된 메시지**만** 풀고(실패 횟수·보류 표시를 지운다 — 그래프와 이미 들어간 메시지는 그대로) 그 사용자들의 수집을 백그라운드로 다시 시작한다. 바로 응답하며 진행은 `overview`의 `graph.pending_messages`·`held_messages`로 본다. 메시지마다 모델 호출 비용이 들고 수집 상한을 따른다(예산이 없으면 미수집으로 남아 나중에 이어진다). 풀 것이 없으면 0건·`started=false`, 그래프가 꺼진 서버는 409 `graph_disabled`. 접근 기록에 `graph_retry_held`와 결과(`graph_retry_held_done`, `released=N users=M`)가 남는다 |
+| `GET /v1/admin/graph/held?limit=50` | 보류된 메시지를 사용자·대화방별로 묶은 목록(최근에 보류된 방부터): `[{user_id(줄인 id), conversation_id, messages, attempts(가장 큰 실패 횟수), oldest_held_at, latest_held_at}]`. 본문·화자 이름·방 제목은 없다. `conversation_id`를 `retry-held`의 범위로 쓴다 (2026-11-25) |
+| `POST /v1/admin/graph/retry-held` | 본문 없음(전체) 또는 `{"conversation_id": …, "user_id": …}`(둘 다 선택 — 그 범위만, 둘 다 주면 둘 다 맞는 것만. `user_id`는 회원관리의 사용자 id 전체) → `{released, users, started}`. 거듭 실패해 보류된 메시지**만** 풀고(실패 횟수·보류 표시를 지운다 — 그래프와 이미 들어간 메시지는 그대로) 그 사용자들의 수집을 백그라운드로 다시 시작한다. 바로 응답하며 진행은 `overview`의 `graph.pending_messages`·`held_messages`로 본다. 메시지마다 모델 호출 비용이 들고 수집 상한을 따른다(예산이 없으면 미수집으로 남아 나중에 이어진다). 풀 것이 없으면 0건·`started=false`, 그래프가 꺼진 서버는 409 `graph_disabled`. 접근 기록에 `graph_retry_held`(범위를 주면 `user=u_8f2…a1 conversation=<id>`)와 결과(`graph_retry_held_done`, `released=N users=M`)가 남는다 |
 
 회원관리 (2026-11-16) — 여기서만 사용자 id 전체와 이메일이 나간다:
 

@@ -16,15 +16,18 @@ import {
   gateFor,
   groupAccess,
   healthView,
+  heldGroupView,
   heldView,
   label,
   num,
   percent,
   rangeText,
+  retryBody,
   retryConfirmText,
   retryErrorText,
   retryResultText,
   share,
+  shortConversationId,
   usd,
 } from "../js/admin/format.js";
 
@@ -222,6 +225,32 @@ test("다시 시도: 확인 문구는 건수와 비용을 말하고, 결과·오
   );
   assert.equal(label(ACTION_LABEL, "graph_retry_held"), "보류 다시 시도");
   assert.equal(label(ACTION_LABEL, "graph_retry_held_done"), "보류 다시 시도 결과");
+});
+
+test("보류 표: 줄의 다시 시도는 그 대화방만 보내고, 확인 문구가 범위를 말한다", () => {
+  const group = { user_id: "u_8f2…a1", conversation_id: "11111111-2222-4333-8444-555555555555", messages: 2, attempts: 3 };
+  assert.equal(retryBody(), undefined); // 수집 표의 버튼: 본문 없이 전체
+  assert.equal(retryBody(null), undefined);
+  assert.deepEqual(retryBody(group), { conversation_id: group.conversation_id });
+  assert.equal(
+    retryConfirmText(2, group),
+    "대화방 11111111…의 보류 2건을 다시 시도합니다. 모델 호출 비용이 2건만큼 듭니다.\n계속할까요?",
+  );
+  // 본문을 주면 JSON으로 싣는다
+  const post = requestInit("POST", "tok", retryBody(group));
+  assert.equal(post.body, JSON.stringify({ conversation_id: group.conversation_id }));
+  assert.equal(post.headers["Content-Type"], "application/json");
+
+  assert.equal(shortConversationId(group.conversation_id), "11111111…");
+  assert.equal(shortConversationId("c1"), "c1");
+  assert.equal(shortConversationId(null), "–");
+
+  assert.deepEqual(heldGroupView(group), { count: 2, conversation: "11111111…", attempts: "3번", canRetry: true });
+  assert.equal(heldGroupView(group, false).canRetry, false); // 수집이 꺼진 서버
+  assert.equal(heldGroupView({ ...group, messages: 0 }).canRetry, false);
+  assert.equal(heldGroupView({ ...group, conversation_id: "" }).canRetry, false);
+  assert.deepEqual(heldGroupView(undefined), { count: 0, conversation: "–", attempts: "–", canRetry: false });
+  assert.equal(label(ACTION_LABEL, "graph_held"), "보류 목록");
 });
 
 test("쓰기 요청에만 CSRF 토큰을 싣는다", () => {
