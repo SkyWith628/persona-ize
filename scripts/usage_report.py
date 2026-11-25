@@ -1,4 +1,4 @@
-"""사용량 보고: 사용자·일(KST)·조건별 첨삭 호출 수와 토큰 (A1 비용 점검의 DB 쪽 근거).
+"""사용량 보고: 사용자·일(KST)·조건별 첨삭 호출 수와 토큰 (비용 점검의 DB 쪽 근거, decisions 11-10).
 
 사용 예 (저장소 루트, DATABASE_URL은 .env):
     .venv/Scripts/python.exe scripts/usage_report.py                 # 오늘 포함 최근 7일
