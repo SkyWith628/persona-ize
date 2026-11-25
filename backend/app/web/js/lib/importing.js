@@ -584,12 +584,8 @@ export function existingSpeakerNotes(speakers, roles, stored) {
 
 const IGNORED_ROLES_SHOWN = 5; // 결과 화면의 한 줄에 이름을 이만큼만 적는다
 
-/**
- * 가져오기 결과: 서버가 따르지 않은 화자 지정(응답의 ignored_speaker_roles)을 알리는 한 줄. 없으면 null.
- * 미리보기에서 이미 알렸더라도(existingSpeakerNotes) 결과에 남긴다 — 저장된 화자를 못 읽었으면 그때는 몰랐다.
- * @param {{ignored_speaker_roles?: Array<{name: string, requested_role: string, stored_role: string, messages: number}>}} job
- */
-export function ignoredRolesLine(job) {
+/** 따르지 않은 화자 지정을 "이름(…), 이름(…) 외 N건"으로 줄인 글. 없으면 null. */
+function ignoredRolesList(job) {
   const ignored = (Array.isArray(job?.ignored_speaker_roles) ? job.ignored_speaker_roles : []).filter(
     (ig) => ig && ig.name && ROLE_WORD[ig.requested_role] && ROLE_WORD[ig.stored_role],
   );
@@ -601,5 +597,61 @@ export function ignoredRolesLine(job) {
         `${ig.name}('${ROLE_WORD[ig.requested_role]}'로 골랐지만 '${ROLE_WORD[ig.stored_role]}'로 저장된 메시지 ${formatNumber(ig.messages ?? 0)}개)`,
     );
   const rest = ignored.length - shown.length;
-  return `이미 가져온 메시지의 화자는 바뀌지 않았어요: ${shown.join(", ")}${rest > 0 ? ` 외 ${formatNumber(rest)}건` : ""}. 바꾸거나 빼려면 상대 화면의 과거 대화에서 '화자별로 고치기'를 써 주세요.`;
+  return `${shown.join(", ")}${rest > 0 ? ` 외 ${formatNumber(rest)}건` : ""}`;
+}
+
+const CONTACT_LINK = { link: "contact", text: "상대 화면" };
+const FIX_HOW = "의 과거 대화에서 '화자별로 고치기'를 써 주세요.";
+
+/**
+ * 가져오기 결과: 서버가 따르지 않은 화자 지정(응답의 ignored_speaker_roles)을 알리는 한 줄. 없으면 null.
+ * 미리보기에서 이미 알렸더라도(existingSpeakerNotes) 결과에 남긴다 — 저장된 화자를 못 읽었으면 그때는 몰랐다.
+ * @param {{ignored_speaker_roles?: Array<{name: string, requested_role: string, stored_role: string, messages: number}>}} job
+ */
+export function ignoredRolesLine(job) {
+  const list = ignoredRolesList(job);
+  return list ? `이미 가져온 메시지의 화자는 바뀌지 않았어요: ${list}. 바꾸거나 빼려면 ${CONTACT_LINK.text}${FIX_HOW}` : null;
+}
+
+/**
+ * 가져오기 결과 화면의 제목과 안내. 안내는 많아야 하나이고 해법도 하나만 말한다:
+ * - 새 메시지 0건 + 따르지 않은 화자 지정 있음(kind "roles-only") → 화자별로 고치기(대화방 삭제는 권하지 않는다)
+ * - 새 메시지 0건 + 없음(kind "skipped", 옛 서버 응답 포함) → 대화방을 지우고 다시 가져오기
+ * - 새 메시지 있음 + 따르지 않은 지정 있음(kind "roles") → 화자별로 고치기
+ * parts의 `{link: "contact", text}`는 뷰가 그 상대 화면 링크로 그린다(상대를 모르면 글자 그대로).
+ * @returns {{nothingNew: boolean, title: string, note: null | {kind: string, tone: string, parts: Array<string|{link: string, text: string}>}}}
+ */
+export function importResultView(job) {
+  const nothingNew = (job?.imported ?? 0) === 0;
+  const list = ignoredRolesList(job);
+  const title = nothingNew ? "새로 저장한 메시지가 없어요" : "가져왔어요";
+  let note = null;
+  if (nothingNew && list) {
+    note = {
+      kind: "roles-only",
+      tone: "warn",
+      parts: [
+        `이미 가져온 대화와 같은 내용이라 건너뛰었어요. 전에 저장한 메시지는 그대로 있고, 화자도 바뀌지 않았어요: ${list}. 바꾸거나 빼려면 `,
+        CONTACT_LINK,
+        `${FIX_HOW} 대화방을 지우지 않아도 돼요.`,
+      ],
+    };
+  } else if (nothingNew) {
+    note = {
+      kind: "skipped",
+      tone: "",
+      parts: [
+        "이미 가져온 대화와 같은 내용이라 건너뛰었어요. 전에 저장한 메시지는 그대로 있어요. 나와 상대를 잘못 정해서 다시 올린 거라면, ",
+        CONTACT_LINK,
+        "에서 그 대화방을 지운 뒤 다시 가져와 주세요.",
+      ],
+    };
+  } else if (list) {
+    note = {
+      kind: "roles",
+      tone: "warn",
+      parts: [`이미 가져온 메시지의 화자는 바뀌지 않았어요: ${list}. 바꾸거나 빼려면 `, CONTACT_LINK, FIX_HOW],
+    };
+  }
+  return { nothingNew, title, note };
 }
