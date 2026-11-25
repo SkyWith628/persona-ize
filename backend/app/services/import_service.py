@@ -46,6 +46,7 @@ from app.domain.conversation import (
     Conversation,
     ConversationStats,
     DeletionResult,
+    IgnoredSpeakerRole,
     ImportJob,
     NewMessage,
     SpeakerRole,
@@ -354,13 +355,51 @@ class ImportService:
                 f"한 번에 {self._max_messages}개까지 가져올 수 있습니다 (지금 {len(messages)}개). "
                 "keep_recent로 최근 메시지만 가져오세요."
             )
-        return await self._save(
+        # 저장 전에 본다 — 저장이 이름 없는 예전 메시지에 이름을 채우면(`_store`) 그것까지 세게 된다
+        kept = {m.source_key for m in messages}
+        ignored = await self._ignored_speaker_roles(
+            user_id,
+            conv,
+            {
+                m.id: (name, role)  # type: ignore[misc]
+                for m in parsed.messages
+                if (name := speaker_label(m.speaker)) is not None
+                and (role := speaker_map.get(m.speaker)) is not None
+                and (role == "skip" or m.id in kept)  # keep_recent로 빠진 메시지는 지정한 것이 아니다
+            },
+        )
+        job = await self._save(
             user_id,
             conv,
             messages,
             me_name_from=(parsed, speaker_map),
             max_user_messages=max_user_messages,
         )
+        return job.model_copy(update={"ignored_speaker_roles": ignored}) if ignored else job
+
+    async def _ignored_speaker_roles(
+        self, user_id: str, conv: Conversation, requested: dict[str, tuple[str, RawSpeakerRole]]
+    ) -> list[IgnoredSpeakerRole]:
+        """이번 지정(`requested`: 메시지 키 → 화자 이름·역할) 가운데 저장된 메시지와 달라 따르지 않을 것.
+
+        이미 있는 메시지는 다시 올려도 건너뛴다 — 역할이 바뀌지 않고 `skip`이어도 남는다. 그 사실을 응답으로
+        알리기만 한다(동작은 그대로). 화자 이름 없이 저장된 메시지(0011 이전)는 누구 것인지 몰라 세지 않는다.
+        대화방 잠금 밖에서 읽는 안내용 값이다 — 같은 순간의 역할 고치기와 겹치면 한 박자 어긋날 수 있다.
+        """
+        if not requested:
+            return []
+        counts: dict[tuple[str, str, str], int] = {}
+        for stored in await self._conversations.list_messages(user_id, conv.id):
+            asked = requested.get(stored.source_key)
+            if stored.speaker_name is None or asked is None or asked[1] == stored.speaker_role:
+                continue
+            # 이름은 이번 파일의 것을 쓴다 (저장된 이름과 같은 메시지 키면 같은 화자다)
+            key = (asked[0], asked[1], stored.speaker_role)
+            counts[key] = counts.get(key, 0) + 1
+        return [
+            IgnoredSpeakerRole(name=name, requested_role=want, stored_role=have, messages=n)  # type: ignore[arg-type]
+            for (name, want, have), n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+        ]
 
     async def _adopt_me_name(
         self, user_id: str, conv: Conversation, parsed: ParsedImport, speaker_map: dict[str, RawSpeakerRole]

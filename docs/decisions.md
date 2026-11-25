@@ -591,3 +591,10 @@
 - 이미 저장된 긴 값: 마이그레이션 없이 읽을 때 앞 40자만 남긴다(`PersonaSettings.from_stored`, Postgres 저장소의 `_persona`). 금지 표현은 포함 검사라 앞부분만 남아도 원래 문장을 막는다. 다음 저장 때 잘린 값이 새 버전이 된다.
 - 제안·기본값 경로(`suggestion_service`·`style_suggest`·`persona_signals`·`persona_from_aliases`·`DEFAULT_PERSONAS`)는 표현을 만들지 않고 저장된 설정을 `model_copy`만 해서 손대지 않았다.
 - 확인 못 한 것: Postgres 읽기 경로 테스트(`test_persona_with_long_stored_phrase_still_reads`)는 DB가 없는 환경이라 건너뛰었다. `mobile.js`(쉼표 입력)는 입력 단계 안내가 없어 긴 표현이면 서버 422로만 안다.
+
+## 2026-11-25 다시 올릴 때 따르지 않은 화자 지정을 가져오기 응답으로 알린다
+- 원문 가져오기(`POST …/imports/raw`) 응답에 `ignored_speaker_roles: [{name, requested_role, stored_role, messages}]`를 더했다(기본 `[]`). 이미 저장된 메시지의 화자를 다른 역할이나 `skip`으로 지정하면 전처럼 건너뛰되, 건너뛴 것을 화자 이름 × 저장된 역할별 메시지 수로 적는다.
+- 저장하지 않는다(열·마이그레이션 없음): 요청마다 저장 전에 메시지 키로 견줘 계산하므로 끝난 같은 파일을 다시 올려도 나오고, `GET /v1/imports/{id}`에서는 늘 `[]`다. `source_hash`·멱등 동작은 그대로다.
+- 이름 단위가 아니라 메시지 단위로 센다 — 이어서 가져온 파일에서 그 화자의 새 메시지는 지정대로 들어가므로 세지 않는다. 이름 없이 저장된 메시지(0011 이전)는 빼고, 그 업로드가 이름을 채운 다음 번부터 센다.
+- 웹 결과 화면이 한 줄로 알린다(`ignoredRolesLine`). 메시지 배열 가져오기(`imports`)와 아이폰 앱은 그대로다.
+- 확인: 인메모리 저장소 테스트와 화면 단위 테스트. 저장소 코드는 고치지 않았고(기존 `list_messages`만 쓴다) Postgres로는 돌려 보지 않았다.

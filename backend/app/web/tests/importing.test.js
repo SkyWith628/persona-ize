@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   applyKnownRoles,
   existingSpeakerNotes,
+  ignoredRolesLine,
   knownRoles,
   MAX_IMPORT_CHARS,
   chatTypeLabel,
@@ -574,4 +575,24 @@ test("이어서 가져오기 안내: 이름이 저장되지 않은 대화방이�
   assert.deepEqual(existingSpeakerNotes(FILE_SPEAKERS, roles, null), none);
   // 저장된 사람이 이번 파일에 한 명도 없으면(다른 채팅방 파일) '이미 있는 사람' 줄은 없다
   assert.equal(existingSpeakerNotes([{ name: "이서연" }], { 이서연: "contact" }, STORED).known, null);
+});
+
+test("가져오기 결과: 서버가 따르지 않은 화자 지정을 한 줄로 알린다", () => {
+  assert.equal(ignoredRolesLine({ imported: 3 }), null); // 옛 서버(필드 없음)
+  assert.equal(ignoredRolesLine({ ignored_speaker_roles: [] }), null);
+  assert.equal(ignoredRolesLine(null), null);
+  const line = ignoredRolesLine({
+    ignored_speaker_roles: [
+      { name: "박지현", requested_role: "me", stored_role: "contact", messages: 1200 },
+      { name: "김민수", requested_role: "skip", stored_role: "me", messages: 3 },
+      { name: "", requested_role: "me", stored_role: "contact", messages: 1 }, // 모양이 어긋난 줄은 뺀다
+    ],
+  });
+  assert.equal(
+    line,
+    "이미 가져온 메시지의 화자는 바뀌지 않았어요: 박지현('나'로 골랐지만 '상대'로 저장된 메시지 1,200개), 김민수('제외'로 골랐지만 '나'로 저장된 메시지 3개). 바꾸거나 빼려면 상대 화면의 과거 대화에서 '화자별로 고치기'를 써 주세요.",
+  );
+  const many = Array.from({ length: 7 }, (_, i) => ({ name: `화자${i}`, requested_role: "me", stored_role: "contact", messages: 1 }));
+  assert.match(ignoredRolesLine({ ignored_speaker_roles: many }), /화자4\([^)]*\) 외 2건\. /);
+  assert.doesNotMatch(ignoredRolesLine({ ignored_speaker_roles: many }), /화자5/);
 });

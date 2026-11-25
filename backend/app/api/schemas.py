@@ -275,6 +275,15 @@ class DeletionOut(BaseModel):
     graph_error: str | None
 
 
+class IgnoredSpeakerRoleOut(BaseModel):
+    """다시 올린 파일의 화자 지정 가운데 따르지 않은 것 하나. 한 이름에 두 역할이 저장돼 있으면 둘이다."""
+
+    name: str = Field(description="내보내기의 화자 이름")
+    requested_role: Literal["me", "contact", "skip"] = Field(description="이번 `speaker_map`의 지정")
+    stored_role: SpeakerRole = Field(description="이 대화방에 저장돼 있는 역할 (그대로다)")
+    messages: int = Field(description="지정을 따르지 않고 그대로 둔 저장된 메시지 수")
+
+
 class ImportJobOut(BaseModel):
     id: UUID
     conversation_id: UUID
@@ -293,6 +302,14 @@ class ImportJobOut(BaseModel):
         description="processing 동안: 벡터가 준비된 말투 묶음 수. 서버가 모르면 null (index_total과 함께)",
     )
     index_total: int | None = Field(None, description="processing 동안: 이번에 만들 말투 묶음 전체 수")
+    ignored_speaker_roles: list[IgnoredSpeakerRoleOut] = Field(
+        default_factory=list,
+        description=(
+            "`POST …/imports/raw`의 응답에만 채운다(저장하지 않아 `GET /v1/imports/{id}`에서는 늘 빈 목록). "
+            "이미 저장된 메시지의 화자를 다른 역할이나 `skip`으로 지정하면 그 지정은 따르지 않는다 — 역할을 "
+            "바꾸거나 지우려면 `PUT /v1/conversations/{id}/speaker-roles`의 `speakers`."
+        ),
+    )
 
 
 SPEAKER_ROLES_MAX = 200  # 한 번에 고칠 수 있는 화자 수
