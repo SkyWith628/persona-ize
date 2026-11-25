@@ -32,6 +32,22 @@
 ## 팀
 4인 팀. 팀장 1명이 개발 전체(백엔드, LangGraph 워크플로, 검색, 실험 하니스, 배포, 웹·iOS 화면)를 맡고, 나머지 3명이 시나리오, 평가·품질, 지식그래프 데이터를 맡는다. 팀원은 사례·루브릭·합성 대화를 CSV/마크다운으로 PR에 올리고, 팀장이 리뷰해 코드에 연결한다. 역할별 플레이북은 [docs/project/roles/](docs/project/roles/).
 
+## 화면
+
+![첨삭 화면](docs/images/demo-compose.png)
+
+PC 웹 첨삭 화면. 상대를 고르고 초안과 상황을 적으면 오른쪽에 추천 문장이 나온다.
+
+![말투 제안](docs/images/demo-persona-suggest.png)
+
+상대 화면의 "과거 대화 기준 제안". 내가 보낸 메시지에서 말투·호칭이 바뀐 시점을 규칙으로 읽어 설정 값을 제안한다(모델 호출 없음).
+
+<img src="docs/images/demo-mobile.png" alt="모바일 웹 작성 화면" width="300">
+
+모바일 웹(`/m`)의 작성 화면.
+
+화면은 합성 대화(`data/synthetic`)를 넣은 로컬 서버(`LLM_PROVIDER=fake`, 인메모리)에서 찍었다.
+
 ## 구조
 
 ![Persona_ize 구조](docs/images/architecture-stack-ko.png)
