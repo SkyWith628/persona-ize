@@ -6,6 +6,13 @@
 데이터: 상대 4명(김상무님 130건·이과장 200건·박영수 92건·Michael Brown 129건), 말투 설정 v1, 그래프 수집 완료(에피소드 551개). 다시 만들려면 `scripts/load_kakao_demo.py --config <설정> --user demo --yes --graph`(그래프 약 80분·19달러 — 시연 전에 다시 만들지 않는다).
 **시연 전에 아무 첨삭 하나를 미리 돌려 워밍업한다**(서버 시작 직후 첫 C/D 요청은 10초쯤 걸린다).
 
+## 시연 전 확인 — 경로가 깨지지 않았는지 (모델 호출 없음)
+코드를 고친 뒤와 시연 전날에 돌린다. 아래 장면 0~5를 합성 대화(상사·동료·영어 상대·말투가 변한 지인, 카카오톡 PC .csv 꼴)로 끝까지 태우고, 깨지면 `[실패] 장면 2 · D 첨삭 — HTTP 500 code=…`처럼 어느 장면의 어느 단계인지 말한다.
+- 개발 PC(Docker, 서버·DB 불필요, 1~2초): `make demo-check-docker` — make가 없으면 `docker compose --profile test run --rm test pytest -q -s -p no:cacheprovider tests/test_demo_flow.py`. CI의 pytest에도 들어 있다.
+- 떠 있는 서버에(HTTP, Postgres까지 지나간다): 가짜 모델로 띄운 서버(`CLAUDE.md` 함정의 `pi-verify` 명령, 8101)에 `python3 scripts/demo_check.py --base-url http://web.localhost:8101`. 임시 계정을 만들고 끝에 지운다. **시연 서버(`LLM_PROVIDER=anthropic`)에는 돌리지 않는다** — 스크립트가 거부한다(첨삭 7회 + 메시지 80건의 그래프 수집 비용).
+- 화면까지(선택, Playwright가 있는 환경에서만): `node scripts/demo_ui/demo_ui_check.cjs --base-url <가짜 모델 서버> --out <캡처 폴더>`.
+- **이 검사가 못 보는 것**: 가짜 모델은 초안을 그대로 돌려준다. 문장이 다듬어지는지, 장면 1 C·2·3의 **주의 문구**, C와 D의 차이, 원문 유지, demo 계정의 실제 데이터·그래프(551건)는 보지 못한다. 그건 아래 대본을 실제 모델로 돌리는 리허설이 본다.
+
 한 장면은 2~3분, 전체 10분 안. 조건 전환은 첨삭 폼의 "고급 · 실험 조건".
 
 ## 0. 30초 소개
