@@ -227,7 +227,7 @@ final class RecentsTests: XCTestCase {
 
 final class KeyboardLinkTests: XCTestCase {
     private func link(selected: String = "b", recents: [String] = []) -> KeyboardLink {
-        KeyboardLink(server: "https://example.test", cookie: "token", csrf: "csrf",
+        KeyboardLink(server: "https://example.test", token: "tok-1",
                      contacts: [.init(id: "a", alias: "A", ready: false), .init(id: "b", alias: "B", ready: true),
                                 .init(id: "c", alias: "C", ready: true)],
                      selected: selected, recents: recents)
@@ -237,7 +237,7 @@ final class KeyboardLinkTests: XCTestCase {
         XCTAssertEqual(link().current?.id, "b")
         XCTAssertEqual(link(selected: "a").current?.id, "b", "페르소나 없는 상대는 고른 상태로 두지 않는다")
         XCTAssertEqual(link(selected: "gone").current?.id, "b")
-        XCTAssertNil(KeyboardLink(server: "", cookie: "", csrf: "", contacts: [], selected: "", recents: []).current)
+        XCTAssertNil(KeyboardLink(server: "", token: "", contacts: [], selected: "", recents: []).current)
     }
 
     func testChooseRemembersUpToThreeRecentsAndOrdersThemFirst() {
@@ -253,19 +253,32 @@ final class KeyboardLinkTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(KeyboardLink.self, from: JSONEncoder().encode(value)), value)
     }
 
-    func testRequestCarriesSessionCookieCsrfAndIdempotencyKey() throws {
+    func testRequestCarriesBearerTokenAndIdempotencyKey() throws {
         let key = UUID()
         let post = try KeyboardClient(link: link()).request("POST", "v1/rewrites", body: ["draft_text": "넵"], key: key)
         XCTAssertEqual(post.url?.absoluteString, "https://example.test/v1/rewrites")
-        XCTAssertEqual(post.value(forHTTPHeaderField: "Cookie"), "pi_session=token")
-        XCTAssertEqual(post.value(forHTTPHeaderField: "X-CSRF-Token"), "csrf")
+        XCTAssertEqual(post.value(forHTTPHeaderField: "Authorization"), "Bearer tok-1")
         XCTAssertEqual(post.value(forHTTPHeaderField: "Idempotency-Key"), key.uuidString)
+        // Bearer 인증에는 쿠키도 CSRF 헤더도 싣지 않는다.
+        XCTAssertNil(post.value(forHTTPHeaderField: "Cookie"))
+        XCTAssertNil(post.value(forHTTPHeaderField: "X-CSRF-Token"))
 
         let get = try KeyboardClient(link: link()).request("GET", "v1/usage")
-        XCTAssertNil(get.value(forHTTPHeaderField: "X-CSRF-Token"))
+        XCTAssertEqual(get.value(forHTTPHeaderField: "Authorization"), "Bearer tok-1")
         var plain = link()
         plain.server = "http://example.test"
-        XCTAssertThrowsError(try KeyboardClient(link: plain).request("GET", "v1/usage"), "HTTPS가 아니면 쿠키를 보내지 않는다")
+        XCTAssertThrowsError(try KeyboardClient(link: plain).request("GET", "v1/usage"), "HTTPS가 아니면 토큰을 보내지 않는다")
+    }
+
+    func testOldCookieLinkFileIsNotRead() {
+        // 쿠키·CSRF 시절의 파일은 읽지 않는다 — 키보드는 "앱에서 로그인"을 안내하고, 앱이 로그인하면 새로 쓴다.
+        let old = Data(#"{"server":"https://example.test","cookie":"c","csrf":"x","contacts":[],"selected":"","recents":[]}"#.utf8)
+        XCTAssertNil(try? JSONDecoder().decode(KeyboardLink.self, from: old))
+    }
+
+    func testKeyboardRewriteLetsServerPickCondition() {
+        XCTAssertEqual(KeyboardClient.rewriteBody(contact: "c1", draft: "넵"),
+                       ["contact_id": "c1", "draft_text": "넵", "condition": "auto"])
     }
 }
 
@@ -313,5 +326,88 @@ final class ImportJobTests: XCTestCase {
         XCTAssertNil(old.status)
         XCTAssertFalse(old.styleActive)
         XCTAssertTrue(old.active)
+    }
+
+    func testIgnoredSpeakerRolesAreOptional() throws {
+        // 예전 서버 응답에는 필드가 없고, 진행 확인(GET) 응답은 늘 빈 목록이다.
+        XCTAssertEqual(try job(#""status":"completed","graph_status":"skipped""#).ignoredRoles, [])
+        XCTAssertEqual(try job(#""status":"completed","graph_status":"skipped","ignored_speaker_roles":[]"#).ignoredRoles, [])
+        XCTAssertEqual(try job(#""status":"completed","graph_status":"skipped","ignored_speaker_roles":null"#).ignoredRoles, [])
+    }
+
+    func testIgnoredSpeakerRolesAreDecoded() throws {
+        let fields = #""status":"completed","graph_status":"skipped","ignored_speaker_roles":"#
+            + #"[{"name":"김민수","requested_role":"contact","stored_role":"me","messages":1},"#
+            + #"{"name":"박지현","requested_role":"skip","stored_role":"contact","messages":2}]"#
+        XCTAssertEqual(try job(fields).ignoredRoles, [
+            IgnoredSpeakerRole(name: "김민수", requested_role: "contact", stored_role: "me", messages: 1),
+            IgnoredSpeakerRole(name: "박지현", requested_role: "skip", stored_role: "contact", messages: 2),
+        ])
+    }
+}
+
+final class IgnoredRolesNoteTests: XCTestCase {
+    private func role(_ name: String, _ requested: String = "contact", _ stored: String = "me",
+                      _ messages: Int = 3) -> IgnoredSpeakerRole {
+        IgnoredSpeakerRole(name: name, requested_role: requested, stored_role: stored, messages: messages)
+    }
+
+    func testNoIgnoredRolesMeansNoNote() {
+        XCTAssertNil(IgnoredRolesNote.make(imported: 5, ignored: []))
+        XCTAssertNil(IgnoredRolesNote.make(imported: 0, ignored: []))
+    }
+
+    func testOneRoleIsOneParagraph() {
+        let note = IgnoredRolesNote.make(imported: 4, ignored: [role("김민수", "contact", "me", 1234)])
+        XCTAssertEqual(note?.head, "이미 가져온 메시지의 화자는 바뀌지 않았어요: 김민수('상대'로 골랐지만 '나'로 저장된 메시지 1,234개). "
+            + "바꾸거나 빼려면 PC 웹에서 상대 화면의 과거 대화에 있는 '화자별로 고치기'를 써 주세요.")
+        XCTAssertEqual(note?.items, [])
+        XCTAssertNil(note?.more)
+        XCTAssertNil(note?.tail)
+        XCTAssertEqual(note?.text, note?.head)
+    }
+
+    func testSeveralRolesBecomeAList() {
+        let note = IgnoredRolesNote.make(imported: 4, ignored: [role("김민수"), role("박지현", "skip", "contact", 2)])
+        XCTAssertEqual(note?.head, "이미 가져온 메시지의 화자는 바뀌지 않았어요.")
+        XCTAssertEqual(note?.items, [
+            IgnoredRolesNote.Item(name: "김민수", detail: "'상대'로 골랐지만 '나'로 저장된 메시지 3개"),
+            IgnoredRolesNote.Item(name: "박지현", detail: "'제외'로 골랐지만 '상대'로 저장된 메시지 2개"),
+        ])
+        XCTAssertNil(note?.more)
+        XCTAssertEqual(note?.tail, IgnoredRolesNote.how)
+        XCTAssertEqual(note?.text, "이미 가져온 메시지의 화자는 바뀌지 않았어요. 김민수('상대'로 골랐지만 '나'로 저장된 메시지 3개), "
+            + "박지현('제외'로 골랐지만 '상대'로 저장된 메시지 2개). " + IgnoredRolesNote.how)
+    }
+
+    func testMoreThanFiveNamesAreCounted() {
+        let note = IgnoredRolesNote.make(imported: 1, ignored: (1...7).map { role("화자\($0)") })
+        XCTAssertEqual(note?.items.count, 5)
+        XCTAssertEqual(note?.items.last?.name, "화자5")
+        XCTAssertEqual(note?.more, "외 2건")
+        XCTAssertTrue(note?.text.contains("화자5('상대'로 골랐지만 '나'로 저장된 메시지 3개) 외 2건. ") ?? false)
+    }
+
+    func testNothingNewExplainsSkipAndDoesNotSuggestDeleting() {
+        let one = IgnoredRolesNote.make(imported: 0, ignored: [role("김민수")])
+        XCTAssertTrue(one?.head.hasPrefix("이미 가져온 대화와 같은 내용이라 건너뛰었어요.") ?? false)
+        XCTAssertTrue(one?.head.hasSuffix("'화자별로 고치기'를 써 주세요. 대화방을 지우지 않아도 돼요.") ?? false)
+
+        let many = IgnoredRolesNote.make(imported: 0, ignored: [role("김민수"), role("박지현")])
+        XCTAssertEqual(many?.head, IgnoredRolesNote.skippedKept + ".")
+        XCTAssertEqual(many?.tail, IgnoredRolesNote.how + IgnoredRolesNote.noDelete)
+    }
+
+    func testMalformedEntriesAreLeftOut() {
+        let broken = [
+            IgnoredSpeakerRole(name: nil, requested_role: "me", stored_role: "contact", messages: 1),
+            IgnoredSpeakerRole(name: "", requested_role: "me", stored_role: "contact", messages: 1),
+            IgnoredSpeakerRole(name: "가", requested_role: "boss", stored_role: "contact", messages: 1),
+            IgnoredSpeakerRole(name: "나", requested_role: "me", stored_role: nil, messages: 1),
+        ]
+        XCTAssertNil(IgnoredRolesNote.make(imported: 2, ignored: broken))
+        let note = IgnoredRolesNote.make(imported: 2, ignored: broken + [role("김민수", "me", "contact", 0)])
+        XCTAssertEqual(note?.items, [])
+        XCTAssertTrue(note?.head.contains("김민수('나'로 골랐지만 '상대'로 저장된 메시지 0개)") ?? false)
     }
 }
