@@ -24,6 +24,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta, timezone
 from typing import Literal
 
+from app.domain.conversation import fit_speaker_name
+
 ImportFormat = Literal["kakao", "telegram", "plain", "json"]
 RequestedFormat = Literal["auto", "kakao", "telegram", "plain", "json"]
 SuggestedRole = Literal["me", "contact"]
@@ -151,8 +153,11 @@ def clean(parsed: ParsedImport) -> ParsedImport:
     """
     kept: list[ParsedMessage] = []
     too_long = out_of_range = 0
+    # 긴 화자 이름은 여기서 저장되는 꼴로 맞춘다 — 미리보기의 이름이 곧 `speaker_map`의 열쇠이고 저장되는
+    # 이름이어야 다시 올릴 때·역할을 고칠 때 이름 대조가 어긋나지 않는다.
+    parsed.suggested_roles = {fit_speaker_name(name): role for name, role in parsed.suggested_roles.items()}
     for m in parsed.messages:
-        m.speaker = m.speaker.strip()
+        m.speaker = fit_speaker_name(m.speaker)
         if len(m.text) > MAX_MESSAGE_CHARS * 2:
             # 정리해도 상한을 넘는다 — 긴 글을 정리하는 비용도 쓰지 않는다
             m.text = m.text.strip()

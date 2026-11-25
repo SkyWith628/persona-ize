@@ -52,6 +52,7 @@ from app.domain.conversation import (
     SpeakerRole,
     SpeakerRoleChange,
     exception_kind,
+    fit_speaker_name,
     speaker_label,
 )
 from app.domain.usage import QuotaExceededError
@@ -317,6 +318,8 @@ class ImportService:
         개인정보 가림은 파서 단계에서 끝나 있다 (미리보기와 저장의 메시지 id가 같도록).
         """
         conv = await self._conversations.get(user_id, conversation_id)  # 소유권
+        # 파서가 긴 화자 이름을 맞춰 두었다(`fit_speaker_name`) — 원래 이름으로 적은 지정도 같은 화자로 읽는다
+        speaker_map = {fit_speaker_name(name): role for name, role in speaker_map.items()}
         if parsed.chats is not None:
             names = ", ".join(f"{c.name}(id={c.id}, {c.messages}건)" for c in parsed.chats[:10])
             raise InvalidInputError(f"대화가 여러 개인 내보내기입니다. chat_id로 하나를 골라 주세요: {names}")

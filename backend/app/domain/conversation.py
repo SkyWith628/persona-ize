@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 from datetime import UTC, datetime, timedelta, timezone
 from typing import Literal
@@ -61,11 +62,27 @@ def graph_units(text: str) -> int:
 
 SpeakerRole = Literal["me", "contact"]
 SPEAKER_NAME_MAX = 64  # messages.speaker_name 열 길이
+_SPEAKER_NAME_TAG = 6  # 긴 이름 끝에 붙이는 지문(16진수) 글자 수
+
+
+def fit_speaker_name(name: str) -> str:
+    """화자 이름을 열 길이에 맞춘다. 64자까지는 그대로, 넘으면 `앞 57자 + … + 원래 이름의 지문 6자`.
+
+    앞부분만 남기면 앞 64자가 같은 두 화자가 한 사람이 된다(역할 고치기·제외가 둘을 함께 건드린다,
+    2026-11-25) — 지문으로 갈라 두고, 말줄임표로 줄인 이름임을 드러낸다. 같은 이름은 늘 같은 값이
+    되고, 이미 맞춘 값을 다시 넣어도 그대로다. 파서(`importers.base.clean`)가 미리보기 전에 부르므로
+    미리보기·`speaker_map`·저장된 이름·역할 고치기·`ignored_speaker_roles`가 모두 이 이름을 쓴다.
+    """
+    name = name.strip()
+    if len(name) <= SPEAKER_NAME_MAX:
+        return name
+    tag = hashlib.sha256(name.encode("utf-8", errors="replace")).hexdigest()[:_SPEAKER_NAME_TAG]
+    return name[: SPEAKER_NAME_MAX - _SPEAKER_NAME_TAG - 1].rstrip() + "…" + tag
 
 
 def speaker_label(name: str | None) -> str | None:
     """저장할 화자 이름: 앞뒤 공백을 떼고 열 길이에 맞춘다. 역할 낱말(me/contact)·빈 값은 이름이 아니다."""
-    label = (name or "").strip()[:SPEAKER_NAME_MAX].strip()
+    label = fit_speaker_name(name or "")
     return label if label and label not in ("me", "contact") else None
 
 

@@ -712,6 +712,26 @@ select.input {
   white-space: nowrap;
 }
 
+/* 화자가 여럿인 안내: 머리말 · 목록 · 해법. 긴 이름은 줄을 바꿔 상자를 넘지 않게 한다 */
+.note-listed > p,
+.note-listed > ul {
+  margin: var(--space-2) 0 0;
+}
+
+.note-listed > p:first-child {
+  margin-top: 0;
+}
+
+.note-listed li {
+  overflow-wrap: anywhere;
+}
+
+/* "외 N건"은 화자가 아니므로 점 없이 옅게 */
+.note-listed .note-more {
+  list-style: none;
+  color: var(--muted);
+}
+
 .note-warn {
   padding: var(--space-3) var(--space-4);
   border-left: 3px solid var(--warn);

@@ -18,6 +18,7 @@ import {
   healthView,
   heldGroupView,
   heldView,
+  jobMessages,
   label,
   num,
   percent,
@@ -105,6 +106,17 @@ test("코드 표기: 아는 코드는 문구로, 모르는 코드는 그대로, 
   assert.equal(label(REASON_LABEL, "brand_new_code"), "brand_new_code");
   assert.equal(label(REASON_LABEL, null), "–");
   assert.equal(label(CHECK_LABEL, "toString"), "toString"); // 객체에 원래 있는 이름에 속지 않는다
+});
+
+test("작업 표의 메시지 칸: 새로 넣은 건수에 중복을 덧붙이고, 역할 고치기는 줄표", () => {
+  assert.equal(jobMessages({ kind: "import", imported: 12, duplicates: 0 }), "12건");
+  assert.equal(jobMessages({ kind: "import", imported: 0, duplicates: 12 }), "0건 (중복 12건)");
+  assert.equal(jobMessages({ kind: "import", imported: 8, duplicates: 4 }), "8건 (중복 4건)");
+  assert.equal(jobMessages({ kind: "import", imported: 1500, duplicates: 2300 }), "1,500건 (중복 2,300건)");
+  assert.equal(jobMessages({ kind: "speaker_roles", imported: 0, duplicates: 0 }), "–");
+  // 예전 서버(필드 없음)와 종류 없는 줄은 지금까지처럼 건수만
+  assert.equal(jobMessages({ imported: 0 }), "0건");
+  assert.equal(jobMessages({ kind: "import", imported: 3, duplicates: null }), "3건");
 });
 
 test("비용 카드: 단가가 없으면 금액을 만들지 않는다", () => {
