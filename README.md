@@ -1,7 +1,7 @@
 # Persona_ize
 
 상대·상황에 맞는 **사용자 본인의 말투**로 메시지를 첨삭하되, **원문의 사실과 의도를 보존**하는 서비스.
-공모전(2026-12) + 포트폴리오. 설계: [docs/design/project-design.md](docs/design/project-design.md) · 그래프 실험: [docs/design/design.md](docs/design/design.md) · 결정: [docs/project/decisions.md](docs/project/decisions.md) · API: [docs/guides/api.md](docs/guides/api.md) · **배포: [docs/guides/deploy.md](docs/guides/deploy.md)**
+공모전(2026-12) + 포트폴리오. 설계: [docs/design/project-design.md](docs/design/project-design.md) · 그래프 실험: [docs/design/design.md](docs/design/design.md) · 결정: [docs/project/decisions.md](docs/project/decisions.md) · API: [docs/guides/api.md](docs/guides/api.md) · **배포: [docs/guides/deploy.md](docs/guides/deploy.md)** · 문서 전체 목록: [docs/README.md](docs/README.md)
 
 ```
 상대 선택 + 초안 + 상황
@@ -11,6 +11,15 @@
 ```
 
 실험 조건: **A** 일반 첨삭 / **B** +상대별 페르소나 / **C** +벡터 검색한 본인 과거 표현 / **D** +그래프 검색 맥락.
+
+## 구조
+
+![Persona_ize 구조](docs/images/architecture-stack-ko.png)
+
+파란 선이 요청이 지나가는 길이다. 화면에서 Caddy와 FastAPI를 거쳐 LangGraph 워크플로로 들어가고, 문장을 고쳐 쓸 때만 Claude를 부른다. 회색 선은 서버 안에서 저장소로 가는 연결, 점선은 테스트와 배포.
+
+- 파일 하나하나까지 보려면 [코드 지도](docs/floorplan/persona-ize-map.html)를 받아 브라우저로 연다(코드 파일 310개·요청 64개에 설명이 붙어 있다. 읽는 법은 [docs/floorplan/README.md](docs/floorplan/README.md)).
+- 영문·어두운 배경 그림과 원본은 `docs/images/architecture-stack-*`.
 
 ## 빠른 시작
 
@@ -61,7 +70,7 @@ curl -s -X POST localhost:8000/v1/rewrites -H "X-User-Id: me" -H "Idempotency-Ke
 | `evals/` | 평가·품질 | 사례 CSV, 보존 규칙, 루브릭, 실행 하니스 |
 | `data/synthetic/` | 사용자·시나리오 | 합성 과거 대화 JSON |
 | `graph/` | 지식그래프 | 스키마, 호칭 병합·질의 정답, Graphiti 스파이크 |
-| `docs/` | 전원 | 설계·결정·일정 |
+| `docs/` | 전원 | `design/` 설계 · `guides/` 안내서(배포·API·데이터 형식·시연) · `project/` 결정·남은 일·역할 · `images/` 그림 · `floorplan/` 코드 지도 · `archive/` 예전 문서. 목록은 [docs/README.md](docs/README.md) |
 | `backend/app/web/` | 팀장 | PC 웹 앱(빌드 없는 ES 모듈, 서버 `/`에서 서빙)·운영 대시보드(`/admin`)·시연 프로토타입(`/static/proto.html`). `apps/web/`(React)는 보류 |
 | `apps/ios/` | 팀장 | 아이폰 앱(SwiftUI)·보조 키보드 확장. 설치는 `apps/ios/README.md`, 화면 설계는 `docs/design/iphone-mobile.md` |
 | `docker/`, `scripts/ops/` | 팀장 | 운영 구성(Caddy·백업)과 배포·복원 스크립트 |
@@ -77,7 +86,7 @@ curl -s -X POST localhost:8000/v1/rewrites -H "X-User-Id: me" -H "Idempotency-Ke
 | `make test-docker` · `make lint-docker` | 위 둘을 컨테이너에서 (호스트 venv를 못 쓰는 PC) |
 | `scripts/ops/deploy.sh` · `make prod-ps` · `make backup` | 운영 배포·상태·백업 ([docs/guides/deploy.md](docs/guides/deploy.md)) |
 | `python scripts/smoke_test.py --base-url <주소>` | 떠 있는 서버의 전 흐름 점검(가입 → 첨삭 → 계정 삭제) |
-| `make eval` | 평가 사례 A/B 실행 → `evals/results/` |
+| `make eval` | 평가 사례 A/B/C 실행 → `evals/results/` (D와 반복 실행은 `evals/run_eval.py --conditions A,B,C,D --repeat 3`) |
 | `make graph-dry-run` | 그래프 스파이크 변환만 확인 |
 | `python scripts/validate_data_files.py` | CSV/JSON 접점 파일 형식 검사 |
 | `make usage-report` | 사용자·일(KST)·조건별 첨삭 호출 수·토큰 (최근 7일, `scripts/usage_report.py --help`) |
@@ -87,12 +96,14 @@ curl -s -X POST localhost:8000/v1/rewrites -H "X-User-Id: me" -H "Idempotency-Ke
 
 Windows에 `make`가 없으면 Makefile의 명령을 그대로 실행한다.
 
-## 상태 (2026-11-24)
+## 상태 (2026-11-25)
 - 저장소: `github.com/SkyWith628/persona-ize` (비공개).
 - 백엔드: 상대·페르소나, 첨삭 워크플로(LangGraph: 의도·보존 추출 → 검색 → 프롬프트 → 검증 → 재생성 1회 → 원문 유지), PostgreSQL(Alembic), C(pgvector 문체 kNN)·D(Graphiti 그래프 맥락) 검색, 말투 프로필(문장 어미·호칭 구간, 모델 호출 없음)과 설정 제안, 삭제(대화방·상대·계정), 사용량 제어, 세션 쿠키·Bearer·소셜 로그인, 회원관리, 대화 가져오기(카카오톡·텔레그램·붙여넣기, 개인정보 패턴 가림, 그래프 수집 상한), 운영 대시보드.
 - 화면: PC 웹 앱(`/`), 모바일 웹(`/m`), 운영 대시보드(`/admin`), 안내 문서 초안. 아이폰 앱·보조 키보드는 `apps/ios/`(CI에서 빌드·시뮬레이터까지, 실기기 미검증).
-- 검증: 백엔드 테스트 1,539개 · 화면 단위 테스트 212개. 11/24에 PC 화면으로 가입 → 가져오기 → 제안 → 첨삭 → 이력 → 계정 삭제를 실제 모델로 끝까지 확인했고, 모바일 웹은 폰 크기에서 전 탭을 확인했다.
-- 실측: Opus 5.5로 5사례 × A/B/C/D × 3회 — 60회 전부 추천, 원문 유지·재생성 0건([11/24 메모](evals/results/2026-11-24-rules1124-repeat3.md)). 이전 측정은 `evals/results/`. 사례 20개·블라인드 평가는 진행 중.
+- 검증: 백엔드 테스트 1,564개 · 화면 단위 테스트 227개. 11/24에 PC 화면으로 가입 → 가져오기 → 제안 → 첨삭 → 이력 → 계정 삭제를 실제 모델로 끝까지 확인했고, 모바일 웹은 폰 크기에서 전 탭을 확인했다.
+- 실측: Opus 5.5로 dev 16사례 × A/B/C/D × 3회 — 192회 중 190회 추천, 원문 유지 2건, 재생성 5건. 여기서 나온 규칙 둘을 고친 뒤 해당 세 사례는 36회 전부 추천([11/24 메모](evals/results/2026-11-24-dev16-repeat3.md)). 이전 측정은 `evals/results/`. 평가 사례는 20개(dev 16 · test 4), 블라인드 평가는 진행 중.
 - 배포: 운영 모드 검사·보안 헤더·요청 제한, 운영용 Docker 구성(Caddy HTTPS, 백업), 배포·복원 스크립트, 스모크 테스트([docs/guides/deploy.md](docs/guides/deploy.md)).
+- 학습 모델(제안, 아직 만들거나 학습시킨 것 없음): 규칙 검증이 놓치는 "뜻이 달라진 경우"를 직접 학습한 작은 모델로 보완하는 [설계안](docs/design/ml-design-2026-11-24.md)과, 모델 네 개의 설계서([판정 모델](docs/design/ml-judge-design-2026-11-25.md) · [수집 전 거르기](docs/design/ml-prefilter-design-2026-11-25.md) · [문체 유사도](docs/design/ml-style-sim-design-2026-11-25.md) · [조건 선택기](docs/design/ml-condition-selector-design-2026-11-25.md)), 판정 모델 후보의 [비용 측정](docs/design/ml-judge-bench-2026-11-25.md)(GPU 메모리·학습 속도·CPU 판정 시간).
+- 문서: 11/25에 `docs/`를 쓰임새별 폴더로 나누고 구조 그림과 코드 지도를 넣었다. 예전 설계도와 회의 자료는 `docs/archive/`.
 - 시연: [docs/guides/demo-script.md](docs/guides/demo-script.md) (demo 계정의 카카오톡 대화 551건, 4장면, 보험). 시연 데이터 적재는 `scripts/load_kakao_demo.py`.
 - 다음: [docs/project/backlog.md](docs/project/backlog.md) — 팀장 단독 항목(A), 팀원 산출물 대기(B), 보류(C).
