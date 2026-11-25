@@ -655,3 +655,8 @@ export function importResultView(job) {
   }
   return { nothingNew, title, note };
 }
+
+/** 결과 안내를 글자로만(링크 없이). 화면 낭독기에 알릴 때 쓴다. 안내가 없으면 빈 글자. */
+export function resultNoteText(view) {
+  return (view?.note?.parts || []).map((part) => (typeof part === "string" ? part : part.text)).join("");
+}

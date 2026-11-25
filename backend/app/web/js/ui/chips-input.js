@@ -11,7 +11,7 @@ import { h, setChildren, uid } from "./dom.js";
  * @param {number} opts.max
  * @param {string} [opts.placeholder]
  * @param {(values: string[]) => void} [opts.onChange]
- * @returns {{el: HTMLElement, get: () => string[], set: (values: string[]) => void}}
+ * @returns {{el: HTMLElement, get: () => string[], set: (values: string[]) => void, setError: (message: string) => void}}
  */
 export function chipsInput({ label, hint = "", values, max, placeholder = "", onChange = null }) {
   let list = [...(values || [])];
@@ -19,7 +19,8 @@ export function chipsInput({ label, hint = "", values, max, placeholder = "", on
   const inputId = uid("chips");
   const hintId = uid("chips-hint");
   const chipsEl = h("ul", { class: "chips-list", "aria-label": `${label} 목록` });
-  const errorEl = h("p", { class: "field-error", role: "alert", hidden: true });
+  const errorId = uid("chips-error");
+  const errorEl = h("p", { class: "field-error", id: errorId, role: "alert", hidden: true });
   const countEl = h("span", { class: "counter" });
   const input = h("input", {
     id: inputId,
@@ -27,12 +28,16 @@ export function chipsInput({ label, hint = "", values, max, placeholder = "", on
     type: "text",
     autocomplete: "off",
     placeholder,
-    "aria-describedby": hintId,
+    "aria-describedby": `${hintId} ${errorId}`,
   });
 
   function showError(message) {
     errorEl.textContent = message || "";
     errorEl.hidden = !message;
+    if (message) input.setAttribute("aria-invalid", "true");
+    else input.removeAttribute("aria-invalid");
+    // 화면 아래 붙박이 저장 줄에 가리지 않게(CSS scroll-margin) 오류 문구까지 보이도록 민다
+    if (message) errorEl.scrollIntoView?.({ block: "nearest" });
   }
 
   function render() {
@@ -75,8 +80,10 @@ export function chipsInput({ label, hint = "", values, max, placeholder = "", on
     const result = addPhrases(list, raw, max);
     list = result.list;
     showError(result.error);
-    if (!result.error) input.value = "";
-    else if (list.length > before) input.value = "";
+    // 넣지 못한 표현(너무 긴 것 등)은 입력 칸에 남겨 고쳐 쓰게 한다 — 조용히 사라지지 않게
+    // 값이 같으면 다시 쓰지 않는다(고치는 중에 커서가 끝으로 튀지 않게)
+    const rest = result.rejected.join(", ");
+    if (input.value !== rest) input.value = rest;
     render();
     if (list.length !== before) onChange?.([...list]);
   }
@@ -103,6 +110,7 @@ export function chipsInput({ label, hint = "", values, max, placeholder = "", on
   });
   input.addEventListener("input", () => {
     if (input.value.includes(",")) commit();
+    else if (!errorEl.hidden && !input.value.trim()) showError(""); // 다 지웠으면 지난 오류도 지운다
   });
   input.addEventListener("blur", commit);
 
@@ -124,5 +132,6 @@ export function chipsInput({ label, hint = "", values, max, placeholder = "", on
       showError("");
       render();
     },
+    setError: (message) => showError(message),
   };
 }

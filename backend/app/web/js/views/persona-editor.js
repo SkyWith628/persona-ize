@@ -18,6 +18,7 @@ import {
   describeSettings,
   isFewMessages,
   normalizeSettings,
+  personaSaveError,
   settingsEqual,
   signalMatches,
   signalView,
@@ -224,6 +225,14 @@ export function mountPersonaEditor(box, { contact, persona: initial, onSaved = n
   }
 
   // ---------- 저장·충돌 ----------
+  /** 저장 실패 알림. 서버가 어느 항목 때문인지 알려 주면(422) 그 항목 이름으로 말하고, 표현 칸이면 칸 아래에도 적는다. */
+  function showSaveError(err, fallback) {
+    const rejected = personaSaveError(err);
+    if (rejected?.field === "preferred_phrases") preferred.setError(rejected.detail);
+    if (rejected?.field === "forbidden_phrases") forbidden.setError(rejected.detail);
+    toast(rejected ? rejected.message : describeError(err, fallback), { kind: "error" });
+  }
+
   async function save(settings = readForm()) {
     try {
       const saved = await api.contacts.savePersona(contact.id, settings, persona?.version ?? 0);
@@ -231,7 +240,7 @@ export function mountPersonaEditor(box, { contact, persona: initial, onSaved = n
       return true;
     } catch (err) {
       if (err.status === 409) await showConflict();
-      else if (err.status !== 401) toast(describeError(err, "저장하지 못했어요."), { kind: "error" });
+      else if (err.status !== 401) showSaveError(err, "저장하지 못했어요.");
       return false;
     }
   }
@@ -529,7 +538,7 @@ export function mountPersonaEditor(box, { contact, persona: initial, onSaved = n
                         accept(saved, `v${v.version} 설정으로 되돌렸어요 (새 버전 v${saved.version}).`);
                       } catch (err) {
                         if (err.status === 409) await showConflict();
-                        else if (err.status !== 401) toast(describeError(err, "되돌리지 못했어요."), { kind: "error" });
+                        else if (err.status !== 401) showSaveError(err, "되돌리지 못했어요.");
                       }
                     });
                   },

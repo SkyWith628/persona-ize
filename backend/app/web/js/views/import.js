@@ -21,6 +21,7 @@ import {
   meName,
   METHODS,
   previewView,
+  resultNoteText,
   ROLE_OPTIONS,
   skipUnassigned,
   stylePhaseView,
@@ -1065,8 +1066,10 @@ export function mountImport(root, ctx) {
       // 숫자가 바뀔 때마다 읽어 주면 시끄럽다 — 상태가 바뀔 때만 알린다
       const statusKey = `${style.status}/${graph.status}`;
       if (statusKey !== lastStatus) {
+        // 처음 한 번은 결과 안내(건너뜀·따르지 않은 화자 지정)도 함께 읽어 준다 — 포커스는 제목에만 간다
+        const first = lastStatus === undefined ? resultNoteText(result) : "";
         lastStatus = statusKey;
-        liveEl.textContent = `${style.title}. ${graph.title}${graph.count ? ` ${graph.count}` : ""}`;
+        liveEl.textContent = `${first ? `${first} ` : ""}${style.title}. ${graph.title}${graph.count ? ` ${graph.count}` : ""}`;
       }
       // 사건 정리가 방금 끝났으면 제안을 한 번 다시 읽는다 — 말투가 바뀐 계기와 범위 단서가 붙는다
       if (register && lastGraphStatus && lastGraphStatus !== "completed" && graph.status === "completed") register.load();
