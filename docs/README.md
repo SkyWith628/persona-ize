@@ -11,6 +11,10 @@
 | [graph-redesign-2026-11-16.md](graph-redesign-2026-11-16.md) | 지식 그래프 재설계와 말투 프로필 |
 | [knowledge-graph.md](knowledge-graph.md) | 지식 그래프 구조와 쓰는 법 |
 | [ml-design-2026-11-24.md](ml-design-2026-11-24.md) | 학습 모델 도입 제안 (그림 원본: [ml-overview.drawio](ml-overview.drawio)) |
+| [ml-judge-design-2026-11-25.md](ml-judge-design-2026-11-25.md) | 학습 모델 ① 의미 보존 판정 모델 설계 (설계도 포함) |
+| [ml-prefilter-design-2026-11-25.md](ml-prefilter-design-2026-11-25.md) | 학습 모델 ② 그래프 수집 전 거르기 설계 (설계도 포함) |
+| [ml-style-sim-design-2026-11-25.md](ml-style-sim-design-2026-11-25.md) | 학습 모델 ③ 문체 유사도 모델 설계 (설계도 포함) |
+| [ml-condition-selector-design-2026-11-25.md](ml-condition-selector-design-2026-11-25.md) | 학습 모델 ④ 조건 선택기 설계 (설계도 포함) |
 | [literature-review.md](literature-review.md) | 참고한 논문 정리 |
 
 ## 운영과 진행
