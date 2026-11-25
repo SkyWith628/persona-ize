@@ -1,6 +1,7 @@
 # Persona_ize 설계 보완 v3 — 그래프 실험(D) 중심
 
 > 구조 그림: [한글](images/architecture-stack-ko.png) · [영문](images/architecture-stack-en.png) (2026-11-25, `main` 기준. 어두운 배경은 파일 이름에 `-dark`, 원본은 같은 폴더의 `architecture-stack-*.html`)
+> 코드 지도: [floorplan/persona-ize-map.html](floorplan/persona-ize-map.html) (받아서 브라우저로 연다. 파일·요청마다 설명이 붙어 있다. 읽는 법은 [floorplan/README.md](floorplan/README.md))
 > 예전 설계도: [archive/architecture_v2.drawio](archive/architecture_v2.drawio)
 > **기준 문서는 팀 설계다.** [project-design.md](projects/persona-ize/docs/project-design.md) · [literature-review.md](projects/persona-ize/docs/literature-review.md)
 > 이 문서는 그 위에 (1) 전체 흐름을 한 장으로 정리하고 (2) 후속 실험 D(그래프 검색)를 논문 근거로 구체화한다. 충돌하면 팀 문서를 따른다.
