@@ -20,6 +20,9 @@ __pycache__/
 runs/
 evals/results/*.jsonl
 
+# 평가 사례의 빈 틀 (evals/coverage.py --template 이 만든다. 번호가 금방 낡는다)
+evals/eval_cases.todo.csv
+
 # Node (apps/web)
 node_modules/
 apps/web/dist/

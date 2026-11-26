@@ -2,8 +2,9 @@ import Foundation
 
 /// 앱이 로그인한 동안 키보드 확장에 넘겨 주는 연결 정보. 앱 그룹 컨테이너에 파일 하나로 둔다.
 ///
-/// 세션 쿠키 값이 들어 있으므로 기기 잠금 중에는 읽을 수 없게 저장하고(`completeFileProtection`),
-/// 로그아웃·계정 삭제 때 지운다. 비밀번호는 넣지 않는다.
+/// 로그인 토큰(Bearer)이 들어 있으므로 기기 잠금 중에는 읽을 수 없게 저장하고(`completeFileProtection`),
+/// 로그아웃·계정 삭제·토큰 만료 때 지운다. 비밀번호는 넣지 않는다.
+/// 예전 모양(쿠키·CSRF)의 파일은 읽지 못해 nil이 된다 — 앱에서 다시 로그인하면 새로 쓴다.
 struct KeyboardLink: Codable, Equatable {
     struct Person: Codable, Equatable, Identifiable {
         let id: String
@@ -13,8 +14,7 @@ struct KeyboardLink: Codable, Equatable {
     }
 
     var server: String
-    var cookie: String
-    var csrf: String
+    var token: String
     var contacts: [Person]
     /// 마지막에 고른 상대 (키보드는 지금 누구와 대화 중인지 알 수 없다).
     var selected: String
@@ -78,7 +78,7 @@ struct DraftReplacement: Equatable {
     }
 }
 
-/// 키보드 확장이 쓰는 최소 클라이언트. 앱의 세션 쿠키와 CSRF 토큰을 요청마다 직접 붙인다.
+/// 키보드 확장이 쓰는 최소 클라이언트. 앱이 받은 토큰을 요청마다 `Authorization: Bearer`로 붙인다.
 struct KeyboardClient {
     let link: KeyboardLink
 
@@ -93,8 +93,7 @@ struct KeyboardClient {
     func request(_ method: String, _ path: String, body: [String: String]? = nil, key: UUID? = nil) throws -> URLRequest {
         var request = URLRequest(url: try ServerAddress.url(from: link.server).appendingPathComponent(path))
         request.httpMethod = method
-        request.setValue("pi_session=\(link.cookie)", forHTTPHeaderField: "Cookie")
-        if method != "GET" { request.setValue(link.csrf, forHTTPHeaderField: "X-CSRF-Token") }
+        BearerAuth.apply(link.token, to: &request)
         if let body {
             request.httpBody = try JSONEncoder().encode(body)
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -114,8 +113,13 @@ struct KeyboardClient {
         return data
     }
 
+    /// 첨삭 요청 본문. 조건은 서버가 고른다(`auto` — 웹과 같은 기본값). 응답의 `condition`이 실제 적용된 A~D다.
+    static func rewriteBody(contact: String, draft: String) -> [String: String] {
+        ["contact_id": contact, "draft_text": draft, "condition": "auto"]
+    }
+
     func rewrite(contact: String, draft: String, key: UUID) async throws -> Rewrite {
-        let body = ["contact_id": contact, "draft_text": draft, "condition": "D"]
+        let body = Self.rewriteBody(contact: contact, draft: draft)
         return try JSONDecoder().decode(Rewrite.self, from: await send(request("POST", "v1/rewrites", body: body, key: key)))
     }
 

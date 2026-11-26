@@ -7,11 +7,14 @@
 |---|---|
 | [characters.csv](characters.csv) | 등장인물 표 (가이드 4단계). `relation`(팀장/동기/…) → `relationship_type`·호칭. 합성 대화의 `contact`와 이름이 같아야 한다 |
 | [eval_cases.csv](eval_cases.csv) | 평가 사례. 열: `case_id, relation, situation, original_text, preserve_items, must_not_change, expected_notes, needs_graph, relevant_msg_ids, as_of, split`. 1주차 20 → 2주차 60 → 3주차 120 (관계 4종 × 상황 5종 × 6) |
+| [eval_cases.draft.csv](eval_cases.draft.csv) | **검토 전 초안**(E021~). 평가 담당이 읽고 고쳐 `eval_cases.csv`로 옮긴다. 평가 실행·CI는 읽지 않는다. 검사는 `python scripts/validate_data_files.py --cases evals/eval_cases.draft.csv` |
+| `coverage.py` | 관계 × 상황 칸별 사례 수와 목표(`--per-cell`, 기본 6) 대비 모자란 수, split·조건 유형 분포를 마크다운으로. `--template`은 모자란 칸의 빈 행 CSV(`eval_cases.todo.csv`, 커밋하지 않음). 모델 호출 없음. 쓰는 법은 가이드 10절 |
 | [preserve_rules.md](preserve_rules.md) | 보존 항목 분류표와 검증 규칙 — `backend/app/ai/preserve.py`의 근거 |
 | [style_rubric.md](style_rubric.md) | 스타일 5점 루브릭 (블라인드 평가·LLM judge 공용) |
 | `run_eval.py` | 사례 × 조건(A/B/C/D)을 백엔드 워크플로로 실행해 `results/`에 CSV 저장 |
 | `layer_diff.py` | 같은 초안을 모든 상대에게 돌려 층별(문체 예시·프롬프트·결과)로 두 상대가 얼마나 닮았는지 숫자로 냄. `--generate` 없이는 모델 호출 없음. 아래 "층별 비교" 절 |
 | `suggestion_accuracy.py` | 제안 정확도: 말투 제안이 정답 설정과 얼마나 맞는지 채점 (문장을 만들지 않음, 모델 호출 없음). 아래 "제안 정확도" 절 |
+| `summarize.py` | 집계·비교표: `run_eval.py` 결과 CSV(여러 개 가능)를 조건별로 집계해 마크다운 표와 CSV로 냄 — 추천 비율, 지연 p50·p95, 토큰, 비용 어림, recall, `fm*` 건수, 설계서 §8 목표 대비. 모델 호출 없음. `python evals/summarize.py results/<결과>.csv --by-case` |
 | `gold_personas.csv` | **정답 설정 타임라인** — 평가 담당이 쓴다 (아직 없음). 형식은 아래 절 |
 | [gold_personas.example.csv](gold_personas.example.csv) | 위 파일의 **예시**. 개발자가 형식을 보여 주려고 쓴 것이고 팀의 정답이 아니다 |
 | `results/` | 실행 결과. 요약 CSV만 커밋, 원시 jsonl은 제외 |

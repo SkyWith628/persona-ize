@@ -63,7 +63,20 @@ enum ServerAddress {
     }
 }
 
-/// 리디렉션을 따르지 않는다. 세션 쿠키·CSRF 토큰이 다른 주소로 넘어가지 않게 한다.
+/// `Authorization: Bearer <토큰>` 인증 (`POST /v1/auth/token`이 준 토큰). 쿠키가 아니라서 CSRF 헤더가 필요 없다.
+enum BearerAuth {
+    static func apply(_ token: String, to request: inout URLRequest) {
+        request.setValue("Bearer " + token, forHTTPHeaderField: "Authorization")
+    }
+
+    /// 서버가 이 토큰을 거절했는가(만료·폐기·정지된 계정). 서버는 이때만 401에
+    /// `WWW-Authenticate: Bearer error="invalid_token"`을 붙인다 — 비밀번호가 틀린 401과 구분한다.
+    static func rejected(status: Int, challenge: String?) -> Bool {
+        status == 401 && (challenge ?? "").contains("invalid_token")
+    }
+}
+
+/// 리디렉션을 따르지 않는다. 토큰이 다른 주소로 넘어가지 않게 한다.
 final class NoRedirects: NSObject, URLSessionTaskDelegate {
     func urlSession(_ session: URLSession, task: URLSessionTask,
                     willPerformHTTPRedirection response: HTTPURLResponse,

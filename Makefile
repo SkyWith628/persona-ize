@@ -14,7 +14,7 @@ SMOKE_PY ?= python3
 BASE_URL ?= https://localhost
 
 .PHONY: help setup venv up up-all down logs dev migrate import-synthetic demo-prepare test lint eval blind graph-dry-run usage-report graph-reset housekeeping \
-	test-docker lint-docker lock prod-config prod-up prod-down prod-logs prod-ps backup smoke
+	test-docker lint-docker demo-check demo-check-docker lock prod-config prod-up prod-down prod-logs prod-ps backup smoke
 
 help:
 	@echo "make setup     - .env.example → .env (최초 1회)"
@@ -38,6 +38,8 @@ help:
 	@echo "호스트 venv를 못 쓰는 PC (컨테이너에서, .env를 넣지 않는다 — 실제 DB·API를 건드리지 않음)"
 	@echo "make test-docker [ARGS='tests/test_auth.py -k login'] - 백엔드 테스트 (Postgres 통합 테스트 포함)"
 	@echo "make lint-docker   - ruff (저장소 전체)"
+	@echo "make demo-check-docker - 시연 흐름 회귀 검사 (서버·모델 없이, 장면별 줄 출력 — docs/guides/demo-script.md)"
+	@echo "make demo-check BASE_URL=http://web.localhost:8101 - 같은 검사를 떠 있는 가짜 모델 서버에 (임시 계정을 만들고 지운다)"
 	@echo "make lock          - 의존성 버전 고정 파일(backend/constraints.txt)을 운영 이미지의 설치 목록으로 갱신"
 	@echo ""
 	@echo "운영 (docs/guides/deploy.md, 값은 .env.production — 다른 파일은 PROD_ENV=...)"
@@ -113,6 +115,14 @@ test-docker:
 # lint는 저장소 전체를 읽기 전용으로 붙여 CI와 같은 범위(문서의 코드 블록 포함)를 본다. ruff는 .env를 읽지 않는다.
 lint-docker:
 	docker compose --profile test run --rm --no-deps -v "$(CURDIR):/lint:ro" -w /lint test sh -c "ruff check . && ruff format --check ."
+
+# 시연 흐름 회귀 검사 (scripts/demo_check.py). 경로만 본다 — 가짜 모델은 초안을 그대로 돌려준다.
+# -docker: 서버 없이 메모리 저장소로(테스트 컨테이너). 다른 하나는 떠 있는 가짜 모델 서버에 HTTP로.
+demo-check-docker:
+	docker compose --profile test run --rm test pytest -q -s -p no:cacheprovider tests/test_demo_flow.py
+
+demo-check:
+	$(SMOKE_PY) scripts/demo_check.py --base-url $(BASE_URL) $(ARGS)
 
 # 의존성 버전 고정 파일을 지금 운영 이미지에 실제로 깔린 목록으로 다시 쓴다 (올리는 절차는 backend/constraints.txt 머리말).
 # 머리말 주석은 남기고 목록만 바꾼다.

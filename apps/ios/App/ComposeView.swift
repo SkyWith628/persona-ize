@@ -10,7 +10,7 @@ struct ComposeView: View {
     @AppStorage(Prefs.experiment) private var experiment = false
     @State private var draft = ""
     @State private var situation = ""
-    @State private var condition = "D"
+    @State private var condition = Labels.defaultCondition
     @State private var result: Rewrite?
     @State private var edited = ""
     @State private var fixing = false
@@ -29,8 +29,11 @@ struct ComposeView: View {
         session.contacts.first { $0.id == contact }?.persona_version != nil
     }
 
+    /// 직접 고른 B~D인데 말투 설정이 없다. 자동(기본)은 서버가 쓸 수 있는 조건을 골라 막히지 않는다.
+    private var needsPersona: Bool { !hasPersona && Labels.needsPersona(condition) }
+
     private var blocked: Bool {
-        contact.isEmpty || (!hasPersona && condition != "A")
+        contact.isEmpty || needsPersona
             || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
@@ -92,7 +95,7 @@ struct ComposeView: View {
         .onChange(of: condition) { _ in invalidate() }
         .onChange(of: experiment) { on in
             // 실험 설정을 끄면 숨은 값이 남아 결과를 바꾸지 않게 기본으로 되돌린다.
-            if !on { condition = "D"; situation = "" }
+            if !on { condition = Labels.defaultCondition; situation = "" }
         }
         .alert("초안을 그대로 둘까요?", isPresented: $rejecting) {
             TextField("추천이 맞지 않은 이유 (선택)", text: $reason)
@@ -135,7 +138,7 @@ struct ComposeView: View {
                         }
                     }
                 }
-                if !hasPersona && condition != "A" {
+                if needsPersona {
                     Label("상대 탭에서 이 상대에게 쓸 말투를 정하면 다듬을 수 있어요.", systemImage: "info.circle.fill")
                         .font(.footnote).foregroundStyle(Theme.warn)
                         .card(padding: Theme.Space.m, fill: Theme.warnSoft)
@@ -238,6 +241,13 @@ struct ComposeView: View {
             }
             .font(.title3).foregroundStyle(Theme.ink)
             .card(fill: Theme.accentSoft)
+            if condition == Labels.defaultCondition && rewrite.condition == "A" && !hasPersona {
+                // 자동으로 골랐는데 A(기준선)가 됐다면 말투 설정이 없다는 뜻이다 (웹과 같은 안내).
+                Label("이 상대의 말투 설정이 없어서 일반적인 다듬기만 했어요. 상대 탭에서 말투를 정할 수 있어요.",
+                      systemImage: "info.circle.fill")
+                    .font(.footnote).foregroundStyle(Theme.ink2)
+                    .card(padding: Theme.Space.m, fill: Theme.surface2)
+            }
             if !rewrite.result.preserved_items.isEmpty {
                 FlowLayout(spacing: Theme.Space.s) {
                     ForEach(rewrite.result.preserved_items.indices, id: \.self) {
