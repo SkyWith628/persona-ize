@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import importlib.util
+import re
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -79,6 +80,25 @@ def _settings(**overrides: Any) -> Settings:
     values: dict[str, Any] = {"llm_provider": "fake", "embedding_provider": "fake"}
     values.update(auth_allow_header_stub=False, log_level="WARNING", **overrides)
     return Settings(_env_file=None, **values)  # type: ignore[call-arg]
+
+
+class _FakeClock:
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def _limiter(app: Any) -> Any:
+    """앱에 걸린 요청 제한기 (`core/middleware.py`의 미들웨어가 들고 있다)."""
+    from app.core.ratelimit import RateLimiter
+
+    for middleware in app.user_middleware:
+        for value in (*middleware.args, *middleware.kwargs.values()):
+            if isinstance(value, RateLimiter):
+                return value
+    raise AssertionError("요청 제한 미들웨어가 없습니다")
 
 
 def _run(app_client: TestClient, **kwargs: Any) -> tuple[Any, _Client, list[str]]:
@@ -195,7 +215,11 @@ def test_a_broken_step_names_its_scene_and_does_not_print_the_response_body() ->
 
     assert not report.ok
     assert report.failed_scenes() == ["1", "2", "3"]
-    assert report.failed[0] == "장면 1 · B 첨삭 — HTTP 422 code=invalid_input"
+    # 어느 요청이 어떤 코드로 깨졌는지와 서버 로그에서 찾을 요청 id까지 한 줄에
+    assert re.fullmatch(
+        r"장면 1 · B 첨삭 — POST /v1/rewrites → HTTP 422 code=invalid_input req=[0-9a-f]{32}",
+        report.failed[0],
+    ), report.failed[0]
     # 첨삭이 없어도 장면 4(제안)와 내 데이터는 본다. 이력·피드백은 할 것이 없어 건너뛴다
     assert any(line.startswith("[ OK ] 장면 4 · 제안 카드") for line in lines)
     assert [s.split(" — ")[0] for s in report.skipped] == ["장면 5 · 피드백 저장", "장면 5 · 이력"]
@@ -203,6 +227,78 @@ def test_a_broken_step_names_its_scene_and_does_not_print_the_response_body() ->
     for draft, _situation in demo.DRAFTS.values():
         assert draft not in printed
     assert check.deleted and ("DELETE", "/v1/auth/me") in client.calls  # 실패해도 계정은 지운다
+
+
+def test_rate_limited_requests_wait_and_retry_even_where_the_status_is_read_directly() -> None:
+    """운영 구성 스모크에서는 `smoke_test.py` 바로 뒤에 돈다 — 같은 IP의 1분 창(120건)을 함께 쓴다.
+
+    요청 제한에 걸리면 `Retry-After`만큼 쉬었다 다시 보낸다. 상태 코드를 직접 보는 단계(로그아웃 뒤 401,
+    CSRF 403, 삭제 뒤 401)도 같다 — 예전에는 그 단계들이 429를 그대로 실패로 읽었다.
+    """
+    waits: list[float] = []
+    # 한도 40건: 68건을 보내는 동안 두 번쯤 걸린다. 쉬는 대신 서버의 시계를 그만큼 민다
+    settings = _settings(rate_limit_per_minute=40)
+    with TestClient(create_app(settings)) as app_client:
+        clock = _FakeClock()
+        _limiter(app_client.app).clock = clock
+
+        def sleep(seconds: float) -> None:
+            waits.append(seconds)
+            clock.now += seconds
+
+        check, _client, lines = _run(app_client, sleep=sleep)
+        report = check.run()
+
+    assert report.failed == [] and report.skipped == [], "\n".join(report.failed + report.skipped)
+    assert report.passed == STEPS
+    limited = [w for w in waits if w >= 1]
+    assert limited and all(w <= demo.RATE_WAIT_MAX for w in limited)
+    assert sum("요청 제한(429)" in line for line in lines) == len(limited)
+
+
+def test_a_request_limit_that_never_clears_is_reported_as_429() -> None:
+    class Limited:
+        status = 429
+        headers = {"Retry-After": "7", "X-Request-ID": "abc"}
+
+        def json(self) -> dict[str, Any]:
+            return {"code": "rate_limited", "message": "…"}
+
+    class Ok(Limited):
+        status = 200
+        headers: dict[str, str] = {}
+
+        def json(self) -> dict[str, Any]:
+            return {"status": "ok", "llm_provider": "fake"}
+
+    class Server:
+        csrf = None
+        calls = 0
+
+        def request(self, method: str, path: str, body: Any = None, **kw: Any) -> Any:
+            self.calls += 1
+            return Ok() if path == "/healthz" else Limited()
+
+    waits: list[float] = []
+    server = Server()
+    report = demo.DemoCheck(server, out=lambda _line: None, sleep=waits.append).run()
+    # 화면 셸(/)에서 막힌다: 처음 1번 + 다시 3번, 그 뒤 가입 설정도 같은 식으로 막혀 장면 0에서 멈춘다
+    assert report.failed[0] == "장면 0 · 화면 셸 — GET / → HTTP 429 code=rate_limited req=abc"
+    assert report.failed_scenes() == ["0"]
+    assert waits == [7.0] * (2 * demo.RATE_RETRIES) and server.calls == 1 + 2 * (1 + demo.RATE_RETRIES)
+
+
+def test_the_daily_usage_limit_is_not_retried() -> None:
+    """사용량 한도(429 `usage_exceeded`)는 기다려도 풀리지 않는다 — 쉬지 않고 그 단계의 실패로 말한다."""
+    waits: list[float] = []
+    with TestClient(create_app(_settings(usage_daily_rewrite_limit=2))) as app_client:
+        check, _client, _lines = _run(app_client, sleep=waits.append)
+        report = check.run()
+
+    assert [w for w in waits if w >= 1] == []
+    assert report.failed_scenes() == ["2", "3"]  # 장면 1의 B·C까지가 한도다
+    assert "POST /v1/rewrites → HTTP 429 code=usage_exceeded" in report.failed[0]
+    assert check.deleted
 
 
 def test_real_model_servers_are_refused_unless_asked() -> None:

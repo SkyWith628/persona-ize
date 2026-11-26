@@ -8,7 +8,14 @@
 같은 장면을 pytest도 돈다(`backend/tests/test_demo_flow.py` — 서버 없이 메모리 저장소로, CI와
 `make demo-check-docker`). 장면 함수는 이 파일 하나에만 있고, 스크립트와 테스트는 전송 계층만 다르다.
 
-장면 (실패하면 어느 장면의 어느 단계인지와 응답 코드·오류 `code`를 찍는다. 응답 본문은 찍지 않는다)
+CI의 운영 구성 스모크(`.github/workflows/ci.yml`의 `deploy` 잡)에서도 `smoke_test.py` 바로 뒤에 돈다 —
+운영 모드·Caddy 경유·그래프 켜짐·가짜 모델. 그 구성에서는 그래프 수집이 실패로 끝나고(모델 키가 없다)
+이 검사는 그것을 실패로 치지 않는다: 가져오기 작업의 `graph_status`는 찍기만 하고, D는 그래프 검색이
+더해진 경로(검색 버전)인지만 본다. 두 스크립트의 `/v1` 요청은 합쳐서 85건쯤이라(스모크 17 + 이 검사 68,
+말투 분석을 기다리면 그만큼 더) 요청 제한 120/분 아래지만, 넘으면 `Retry-After`만큼 쉬었다 다시 보낸다.
+
+장면 (실패하면 어느 장면의 어느 단계인지와 요청 경로·응답 코드·오류 `code`·요청 id를 찍는다 — 요청 id로
+서버 로그의 그 줄을 찾는다. 응답 본문은 찍지 않는다)
   0   헬스·화면 셸·가입(초대 코드·동의)·로그아웃 → 로그인·CSRF
   준비 상대 4명(상사·동료·영어 상대·말투가 변한 지인) → 말투 설정 → 카카오톡 PC .csv 꼴의 합성 대화
       가져오기(미리보기 → 화자 지정 → 저장 → 말투 분석 완료 대기 → 대화방 통계·화자 목록)
@@ -48,6 +55,8 @@ from pathlib import Path
 from typing import Any
 
 FAKE_MODEL = "fake-echo"
+RATE_RETRIES = 3  # IP 요청 제한(429)에 걸렸을 때 다시 보내는 횟수
+RATE_WAIT_MAX = 65.0  # 한 번에 쉬는 시간의 상한(초) — 제한 창이 60초다
 ME = "윤가람"
 SCENE_ORDER = ("0", "준비", "1", "2", "3", "4", "5", "끝")
 SCENE_TITLES = {
@@ -303,14 +312,27 @@ class SkippedError(Exception):
     """앞 단계가 실패해 할 수 없는 단계."""
 
 
-def describe(response: Any) -> str:
-    """오류 응답을 `HTTP 422 code=invalid_input` 꼴로. 서버가 쓴 문장은 싣지 않는다(입력이 섞일 수 있다)."""
+def error_code(response: Any) -> str | None:
     data = response.json()
-    code = None
-    if isinstance(data, dict):
-        detail = data.get("detail") if isinstance(data.get("detail"), dict) else data
-        code = detail.get("code")
-    return f"HTTP {response.status}" + (f" code={code}" if code else "")
+    if not isinstance(data, dict):
+        return None
+    detail = data.get("detail") if isinstance(data.get("detail"), dict) else data
+    code = detail.get("code")
+    return code if isinstance(code, str) else None
+
+
+def describe(response: Any) -> str:
+    """오류 응답을 `HTTP 422 code=invalid_input req=…` 꼴로. 서버가 쓴 문장은 싣지 않는다(입력이 섞인다).
+
+    `req`는 서버가 응답에 실은 요청 id(`X-Request-ID`)다 — 서버 로그의 `[요청 id]` 줄과 맞춰 본다.
+    """
+    code = error_code(response)
+    request_id = response.headers.get("X-Request-ID")
+    return (
+        f"HTTP {response.status}"
+        + (f" code={code}" if code else "")
+        + (f" req={request_id}" if request_id else "")
+    )
 
 
 def need(data: Any, keys: tuple[str, ...], what: str) -> None:
@@ -378,6 +400,7 @@ class DemoCheck:
         index_wait: float = 120.0,
         poll_seconds: float = 0.5,
         out: Callable[[str], None] = print,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self.client = client
         self.invite_code = invite_code
@@ -387,6 +410,7 @@ class DemoCheck:
         self.index_wait = index_wait
         self.poll_seconds = poll_seconds
         self.out = out
+        self.sleep = sleep
         self.report = Report()
         self.username = f"democheck-{secrets.token_hex(4)}"
         self.password = secrets.token_urlsafe(18)
@@ -431,18 +455,31 @@ class DemoCheck:
         self._line(" OK ", name, detail, started)
         return True
 
-    def call(self, method: str, path: str, body: Any = None, *, expect: tuple[int, ...], **kw: Any) -> Any:
-        """요청 하나. 기대한 상태 코드가 아니면 StepError. 요청 제한(429)이면 한 번 기다렸다 다시 보낸다."""
+    def send(self, method: str, path: str, body: Any = None, **kw: Any) -> Any:
+        """요청 하나. IP 요청 제한(429 `rate_limited`)이면 `Retry-After`만큼 쉬었다 다시 보낸다.
+
+        스모크 테스트 바로 뒤에 돌면 같은 IP의 1분 창을 함께 쓴다. 사용량 한도(429 `usage_exceeded`)는
+        기다려도 풀리지 않으므로 그대로 돌려준다. 상태 코드를 직접 보는 단계도 이 길로 보낸다.
+        """
         response = self.client.request(method, path, body, **kw)
-        if response.status == 429 and 429 not in expect:
-            data = response.json()
-            if not (isinstance(data, dict) and data.get("code") == "usage_exceeded"):
-                wait = min(float(response.headers.get("Retry-After") or 5), 65.0)
-                self.out(f"       요청 제한(429) — {wait:.0f}초 기다렸다 다시 보냅니다")
-                time.sleep(wait)
-                response = self.client.request(method, path, body, **kw)
+        for _ in range(RATE_RETRIES):
+            if response.status != 429 or error_code(response) == "usage_exceeded":
+                break
+            try:
+                wait = float(response.headers.get("Retry-After") or 5)
+            except ValueError:
+                wait = 5.0
+            wait = min(max(wait, 1.0), RATE_WAIT_MAX)
+            self.out(f"       요청 제한(429) {method} {path} — {wait:.0f}초 쉬었다 다시 보냅니다")
+            self.sleep(wait)
+            response = self.client.request(method, path, body, **kw)
+        return response
+
+    def call(self, method: str, path: str, body: Any = None, *, expect: tuple[int, ...], **kw: Any) -> Any:
+        """요청 하나. 기대한 상태 코드가 아니면 StepError — 어느 요청이었는지(경로)와 응답 코드를 싣는다."""
+        response = self.send(method, path, body, **kw)
         if response.status not in expect:
-            raise StepError(describe(response))
+            raise StepError(f"{method} {path.partition('?')[0]} → {describe(response)}")
         return response
 
     def get(self, path: str) -> Any:
@@ -493,7 +530,8 @@ class DemoCheck:
         if not self.registered:
             raise SkippedError("가입이 되지 않았습니다")
         self.call("POST", "/v1/auth/logout", expect=(204,))
-        check(self.client.request("GET", "/v1/auth/me").status == 401, "로그아웃 뒤에도 세션이 살아 있습니다")
+        status = self.send("GET", "/v1/auth/me").status
+        check(status == 401, f"로그아웃 뒤에도 세션이 살아 있습니다: HTTP {status}")
         body = {"username": self.username, "password": self.password}
         data = self.call("POST", "/v1/auth/login", body, expect=(200,)).json()
         need(data, ("csrf_token",), "로그인 응답")
@@ -506,7 +544,7 @@ class DemoCheck:
         if not self.registered:
             raise SkippedError("가입이 되지 않았습니다")
         body = {"alias": "막혀야 함", "relationship_type": "colleague"}
-        status = self.client.request("POST", "/v1/contacts", body, csrf=False).status
+        status = self.send("POST", "/v1/contacts", body, csrf=False).status
         check(status == 403, f"CSRF 토큰 없는 쓰기가 거부되지 않았습니다: HTTP {status}")
         return "토큰 없는 쓰기는 403"
 
@@ -568,7 +606,7 @@ class DemoCheck:
         deadline = time.monotonic() + self.index_wait
         polls = 0
         while job["status"] == "processing" and time.monotonic() < deadline:
-            time.sleep(self.poll_seconds)
+            self.sleep(self.poll_seconds)
             polls += 1
             job = self.get(f"/v1/imports/{job['id']}")
         check(job["status"] != "processing", f"말투 분석이 {self.index_wait:.0f}초 안에 끝나지 않았습니다")
@@ -845,7 +883,7 @@ class DemoCheck:
         return f"상대 {data['contacts']}명, 대화방 {data['conversations']}개, 메시지 {data['messages']}건"
 
     def session_gone(self) -> str:
-        status = self.client.request("GET", "/v1/auth/me").status
+        status = self.send("GET", "/v1/auth/me").status
         check(status == 401, f"계정 삭제 뒤에도 세션이 살아 있습니다: HTTP {status}")
         return "삭제 뒤 401"
 
