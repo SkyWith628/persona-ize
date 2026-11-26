@@ -13,7 +13,7 @@
 //
 // 장면: 0 가입 → 로그아웃 → 로그인 / 준비 상대 추가 → 카카오톡 .csv 올리기 → 화자 지정 → 가져오기(상대 4명)
 //       1 상사 B(지킨 항목·복사) → C(참고한 과거 표현) / 2 동료 C → D / 3 영어 상대 자동
-//       4 말투가 변한 지인의 제안 카드 → 적용 → 저장 / 5 이력 → 내 데이터 → 내려받기 / 끝 계정 지우기
+//       4 말투가 변한 지인의 제안 카드 → 근거 메시지 보기(키보드) → 적용 → 저장 / 5 이력 → 내 데이터 → 내려받기 / 끝 계정 지우기
 // 가짜 모델 서버용이다. 보는 것은 화면이 다음 단계로 넘어가는지뿐이고, 문장 품질·주의 문구는 보지 못한다.
 
 "use strict";
@@ -30,7 +30,7 @@ const REL_LABEL = { superior: "상사", colleague: "동료·동기", acquaintanc
 const ROLE_LABEL = { me: "나", contact: "상대", skip: "제외" };
 
 function parseArgs(argv) {
-  const args = { baseUrl: "http://127.0.0.1:8141", out: null, data: null, invite: "", width: 1280, timeout: 10000 };
+  const args = { baseUrl: "http://127.0.0.1:8141", out: null, data: null, invite: "", width: 1280, scale: 1, timeout: 10000 };
   for (let i = 0; i < argv.length; i += 1) {
     const flag = argv[i];
     const value = () => {
@@ -43,6 +43,7 @@ function parseArgs(argv) {
     else if (flag === "--data") args.data = value();
     else if (flag === "--invite-code") args.invite = value();
     else if (flag === "--width") args.width = Number(value());
+    else if (flag === "--scale") args.scale = Number(value());
     else if (flag === "--timeout") args.timeout = Number(value()) * 1000;
     else if (flag === "--assume-fake") args.assumeFake = true;
     else if (flag === "--allow-real-model") args.allowReal = true;
@@ -83,7 +84,7 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.help) {
     console.log("node scripts/demo_ui/demo_ui_check.cjs [--base-url URL] [--out DIR] [--data DIR] [--invite-code 코드]");
-    console.log("    [--width 1280] [--timeout 초] [--assume-fake | --allow-real-model] [--keep-account] [--headed]");
+    console.log("    [--width 1280] [--scale 1] [--timeout 초] [--assume-fake | --allow-real-model] [--keep-account] [--headed]");
     return 0;
   }
   let chromium;
@@ -116,6 +117,7 @@ async function main() {
   // 시연 PC와 같은 시간대·언어로 (헤드리스 기본은 UTC라 대화 시각이 9시간 어긋나 보인다)
   const context = await browser.newContext({
     viewport: { width: args.width, height: 900 },
+    deviceScaleFactor: args.scale || 1,
     acceptDownloads: true,
     locale: "ko-KR",
     timezoneId: "Asia/Seoul",
@@ -127,6 +129,10 @@ async function main() {
   // 화면 오류: 스크립트 예외와 5xx 응답은 그 단계의 실패로 친다. 401(로그인 전 /me)은 정상이다.
   const problems = [];
   page.on("pageerror", (err) => problems.push(`화면 스크립트 오류 ${err.name}`));
+  // 콘솔 오류도 실패다. 응답 코드 때문에 브라우저가 적는 줄(로그인 전 /me의 401 등)은 뺀다 — 5xx는 아래가 잡는다
+  page.on("console", (msg) => {
+    if (msg.type() === "error" && !/Failed to load resource/.test(msg.text())) problems.push("화면 콘솔 오류");
+  });
   page.on("response", (res) => {
     if (res.status() === 429) problems.push("요청 제한(429) — 요청 제한이 없는 서버에 돌리세요");
     if (res.status() >= 500) problems.push(`HTTP ${res.status()} ${res.request().method()} ${new URL(res.url()).pathname}`);
@@ -272,7 +278,10 @@ async function main() {
     state.ready.add(c.key);
     if (c.key === "changed") {
       await page.getByText(`${c.alias}에게 쓰는 말투를 읽었어요`).waitFor();
-      return `${detail} · 말투 제안이 결과 화면에 뜸`;
+      // 가져오기 직후의 제안에서도 근거 원문이 펼쳐진다 (캡처에 남게 펼친 채로 둔다)
+      await page.getByRole("button", { name: "근거 메시지 보기" }).click();
+      await page.locator(".card-evidence-group.is-after .card-evidence-text").first().waitFor();
+      return `${detail} · 말투 제안이 결과 화면에 뜸 · 근거 펼침`;
     }
     return detail;
   };
@@ -344,6 +353,30 @@ async function main() {
     // 보기만으로는 저장되지 않는다
     check(await page.getByText("말투 설정 v1").count(), "제안을 보기만 했는데 설정 버전이 바뀌었습니다");
     return `${title} ${change}`;
+  };
+  // 근거 메시지 보기: 키보드로 펼치고 접는다. 원문은 대화방 목록 + 메시지 조회로 읽어 온다(새 API 없음)
+  const suggestionEvidence = async () => {
+    ready("changed");
+    const toggle = page.locator(".suggestion-card .card-evidence-toggle");
+    if (!(await toggle.count())) throw new Skipped("제안 카드가 열리지 않았습니다");
+    check((await toggle.getAttribute("aria-expanded")) === "false", "근거가 처음부터 펼쳐져 있습니다");
+    const panel = page.locator(`#${await toggle.getAttribute("aria-controls")}`);
+    await toggle.focus();
+    await page.keyboard.press("Enter");
+    check((await toggle.getAttribute("aria-expanded")) === "true", "Enter로 근거가 펼쳐지지 않았습니다");
+    await panel.locator(".card-evidence-group.is-after .card-evidence-text").first().waitFor();
+    const before = await panel.locator(".card-evidence-group.is-before .card-evidence-text").count();
+    const after = await panel.locator(".card-evidence-group.is-after .card-evidence-text").count();
+    check(before > 0 && after > 0, "바뀌기 전·뒤의 근거 원문이 함께 보이지 않습니다");
+    const labels = (await panel.locator(".card-evidence-label").allInnerTexts()).map((t) => t.trim());
+    check(/^바뀌기 전/.test(labels[0]) && /^바뀐 뒤/.test(labels[1]), "근거 묶음의 제목이 다릅니다");
+    await page.keyboard.press("Space");
+    check((await toggle.getAttribute("aria-expanded")) === "false" && (await panel.isHidden()), "Space로 근거가 접히지 않았습니다");
+    await page.keyboard.press("Enter"); // 캡처에 남게 다시 펼친다 (다시 읽지 않는다)
+    await panel.locator(".card-evidence-text").first().waitFor();
+    const wide = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
+    check(!wide, "근거를 펼치면 가로 스크롤이 생깁니다");
+    return `${labels.join(" / ")} — 원문 ${before + after}건, 키보드로 펼침·접힘`;
   };
   const saveSuggestion = async () => {
     ready("changed");
@@ -433,6 +466,7 @@ async function main() {
       }, "3-english-auto");
       scene = "4";
       await step("제안 카드", suggestion, "4-suggestion-card");
+      await step("근거 메시지 보기", suggestionEvidence, "4-suggestion-evidence");
       await step("제안 적용 → 저장", saveSuggestion, "4-suggestion-saved");
       scene = "5";
       await step("이력", history, "5-history");

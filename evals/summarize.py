@@ -6,11 +6,14 @@
     python evals/summarize.py 결과.csv --scores evals/blind/<이름>-merged.csv --out 비교표.md
     python evals/summarize.py 결과.csv --price claude-opus-5-5=4:20      # 단가(USD/100만 토큰) 덮어쓰기
     python evals/summarize.py 결과.csv --no-cost
+    python evals/summarize.py 본실행.csv 재확인.csv --replace           # 겹치는 실행은 뒤 파일 것으로
 
 읽는 열은 `run_eval.py`가 쓰는 이름 그대로다(`condition`·`status`·`attempts`·`latency_ms`·`input_tokens`·
 `output_tokens`·`model_version`·`recall`·`context_recall`·`fm*`). 예전 결과 파일처럼 열이 없으면 "—"다.
 파일을 여럿 주면 줄을 그대로 합친다 — 같은 (사례, 조건, 회차)가 두 번 들어오면 경고한다(재확인 실행을 본
-실행에 합치면 실행 수가 부풀려진다).
+실행에 합치면 실행 수가 부풀려진다). `--replace`를 주면 겹치는 실행은 **뒤 파일이 앞 파일을 대체**한다
+(고친 규칙으로 다시 돌린 사례를 본 실행에 바꿔 넣을 때). 마크다운의 각 절은 `*_lines` 함수로 나뉘어 있고
+`evals/report.py`(최종 비교 보고서 뼈대)가 그대로 가져다 쓴다.
 
 계산
 - 추천 비율 = `status == recommended` ÷ 실행 수. 설계서 §8의 "핵심 사실 보존"과 나란히 적지만 **보존 규칙을
@@ -78,6 +81,43 @@ NOT_SCORED = "채점 전"
 def read_rows(path: Path) -> list[dict[str, str]]:
     with path.open(encoding="utf-8-sig", newline="") as fp:
         return [{k: (v or "") for k, v in row.items() if k is not None} for row in csv.DictReader(fp)]
+
+
+def run_key(row: dict[str, str]) -> tuple[str, str, str]:
+    """실행 하나를 가리키는 키: (사례, 조건, 회차)."""
+    return (row.get("case_id", ""), row.get("condition", ""), row.get("repeat", ""))
+
+
+def merge_rows(
+    groups: list[list[dict[str, str]]], *, replace: bool = False
+) -> tuple[list[dict[str, str]], int]:
+    """파일별 줄 목록을 하나로 합친다. 돌려주는 값은 (줄, 대체된 실행 수).
+
+    `replace=False`(기본)는 그대로 이어 붙인다 — 겹치는 실행은 `build_summary`가 경고한다.
+    `replace=True`는 같은 (사례, 조건, 회차)가 **앞 파일들에** 있으면 뒤 파일의 줄이 그 자리를 차지한다
+    (사례 순서는 처음 나온 대로). 한 파일 안에서 겹치는 줄은 건드리지 않는다.
+    """
+    out: list[dict[str, str]] = []
+    replaced = 0
+    for rows in groups:
+        if not replace:
+            out += rows
+            continue
+        earlier: dict[tuple[str, str, str], int] = {}
+        for i, row in enumerate(out):
+            earlier.setdefault(run_key(row), i)
+        for row in rows:
+            at = earlier.pop(run_key(row), None)
+            if at is None:
+                out.append(row)
+            else:
+                out[at] = row
+                replaced += 1
+    return out, replaced
+
+
+def replace_note(replaced: int) -> str:
+    return f"--replace: 뒤 파일이 앞 파일의 같은 (사례, 조건, 회차) {replaced}개를 대체했다."
 
 
 def percentile(values: list[float], p: float) -> float | None:
@@ -332,7 +372,7 @@ def build_summary(
     total = summarize_rows("전체", rows, prices)
 
     warnings: list[str] = []
-    keys = Counter((r.get("case_id", ""), r.get("condition", ""), r.get("repeat", "")) for r in rows)
+    keys = Counter(run_key(r) for r in rows)
     dupes = sum(1 for n in keys.values() if n > 1)
     if dupes:
         warnings.append(
@@ -535,10 +575,15 @@ def target_rows(summary: Summary) -> list[list[str]]:
     return out
 
 
-def render_markdown(summary: Summary, *, by_case: bool = False) -> str:
+def _columns(summary: Summary) -> list[ConditionStats]:
+    """표의 열: 조건들, 둘 이상이면 끝에 전체."""
     stats = summary.conditions
-    cols = [*stats, summary.total] if len(stats) > 1 else stats
-    lines: list[str] = ["# 평가 집계", ""]
+    return [*stats, summary.total] if len(stats) > 1 else stats
+
+
+def header_lines(summary: Summary) -> list[str]:
+    """입력·실행 수·모델·버전·주의 (목록 줄)."""
+    lines: list[str] = []
     if summary.sources:
         lines.append("- 입력: " + ", ".join(f"`{s}`" for s in summary.sources))
     lines.append(
@@ -552,14 +597,16 @@ def render_markdown(summary: Summary, *, by_case: bool = False) -> str:
         )
     for w in summary.warnings:
         lines.append(f"- 주의: {w}")
-    if not stats:
-        lines += ["", "결과 줄이 없다."]
-        return "\n".join(lines) + "\n"
+    return lines
 
-    lines += ["", "## 목표 대비 (설계서 §8의 초기 목표)", ""]
-    lines += _table(["지표", "목표", "측정값", "판정"], target_rows(summary))
 
-    lines += ["", "## 조건별", ""]
+def target_lines(summary: Summary) -> list[str]:
+    return _table(["지표", "목표", "측정값", "판정"], target_rows(summary))
+
+
+def condition_lines(summary: Summary) -> list[str]:
+    """조건별 표와 비용 설명."""
+    cols = _columns(summary)
 
     def row(label: str, cell) -> list[str]:
         return [label, *[cell(s) for s in cols]]
@@ -596,7 +643,7 @@ def render_markdown(summary: Summary, *, by_case: bool = False) -> str:
             lambda s: DASH if s.cost_usd is None or not s.runs else f"${s.cost_usd / s.runs:.4f}",
         ),
     ]
-    lines += _table(["", *[s.condition for s in cols]], body)
+    lines = _table(["", *[s.condition for s in cols]], body)
     if summary.prices is not None:
         used = sorted(m for m in summary.models if m in summary.prices)
         price_text = ", ".join(
@@ -608,8 +655,16 @@ def render_markdown(summary: Summary, *, by_case: bool = False) -> str:
             f"기본 단가 출처 {PRICE_SOURCE}). "
             "캐시·그래프 수집 비용은 들어 있지 않고 Console 청구액과 대조하지 않았다.",
         ]
+    return lines
 
-    lines += ["", "## 실패 신호 (`fm*` 열 — 참고 신호이고 실패 판정이 아니다)", ""]
+
+def signal_lines(summary: Summary) -> list[str]:
+    """`fm*` 신호 표."""
+    cols = _columns(summary)
+
+    def row(label: str, cell) -> list[str]:
+        return [label, *[cell(s) for s in cols]]
+
     signal_labels = [
         ("fm11_first_checks", "fm11 1차 시도가 검증에 걸림"),
         ("fm13_attempts", "fm13 시도 2회 이상"),
@@ -627,9 +682,12 @@ def render_markdown(summary: Summary, *, by_case: bool = False) -> str:
     )
     for check in sorted(summary.total.first_checks):
         body.append(row(f"fm11 종류: `{check}`", lambda s, c=check: str(s.first_checks.get(c, 0))))
-    lines += _table(["", *[s.condition for s in cols]], body)
+    return _table(["", *[s.condition for s in cols]], body)
 
-    lines += ["", "## 사람 점수 (블라인드)", ""]
+
+def score_lines(summary: Summary) -> list[str]:
+    """사람 점수 표, 없으면 "채점 전" 한 줄."""
+    lines: list[str] = []
     if summary.scores:
         sc = summary.scores
         header = ["조건", "채점 항목 수", *sc.columns, "평균"]
@@ -651,37 +709,51 @@ def render_markdown(summary: Summary, *, by_case: bool = False) -> str:
         lines.append(
             f"{NOT_SCORED} — `scripts/make_blind_sheet.py merge`의 `*-merged.csv`를 `--scores`로 준다."
         )
+    return lines
 
+
+def case_lines(summary: Summary) -> list[str]:
+    """사례 × 조건 표(추천 수/실행 수 · recall 평균)와 C·D 비교 목록."""
+    names = [s.condition for s in summary.conditions]
+    table: dict[str, dict[str, dict[str, str]]] = {}
+    for c in summary.cases:
+        table.setdefault(c["case_id"], {})[c["condition"]] = c
+    body = []
+    for cid, per in table.items():
+        cells = []
+        for name in names:
+            c = per.get(name)
+            if c is None:
+                cells.append(DASH)
+                continue
+            cell = f"{c['recommended']}/{c['runs']}"
+            if c["recall_mean"]:
+                cell += f" · {c['recall_mean']}"
+            cells.append(cell)
+        body.append([cid, *cells])
+    lines = _table(["사례", *names], body)
+    if "C" in names and "D" in names:
+        lines += [
+            "",
+            "- D의 recall이 C보다 높은 사례: " + (", ".join(better_cases(summary.cases, "D", "C")) or "없음"),
+            "- C의 recall이 D보다 높은 사례: " + (", ".join(better_cases(summary.cases, "C", "D")) or "없음"),
+            "- D의 추천 수가 C보다 적은 사례: "
+            + (", ".join(better_cases(summary.cases, "C", "D", key="recommended")) or "없음"),
+        ]
+    return lines
+
+
+def render_markdown(summary: Summary, *, by_case: bool = False) -> str:
+    lines: list[str] = ["# 평가 집계", "", *header_lines(summary)]
+    if not summary.conditions:
+        lines += ["", "결과 줄이 없다."]
+        return "\n".join(lines) + "\n"
+    lines += ["", "## 목표 대비 (설계서 §8의 초기 목표)", "", *target_lines(summary)]
+    lines += ["", "## 조건별", "", *condition_lines(summary)]
+    lines += ["", "## 실패 신호 (`fm*` 열 — 참고 신호이고 실패 판정이 아니다)", "", *signal_lines(summary)]
+    lines += ["", "## 사람 점수 (블라인드)", "", *score_lines(summary)]
     if by_case:
-        lines += ["", "## 사례별 (추천 수/실행 수 · recall 평균)", ""]
-        names = [s.condition for s in stats]
-        table: dict[str, dict[str, dict[str, str]]] = {}
-        for c in summary.cases:
-            table.setdefault(c["case_id"], {})[c["condition"]] = c
-        body = []
-        for cid, per in table.items():
-            cells = []
-            for name in names:
-                c = per.get(name)
-                if c is None:
-                    cells.append(DASH)
-                    continue
-                cell = f"{c['recommended']}/{c['runs']}"
-                if c["recall_mean"]:
-                    cell += f" · {c['recall_mean']}"
-                cells.append(cell)
-            body.append([cid, *cells])
-        lines += _table(["사례", *names], body)
-        if "C" in names and "D" in names:
-            lines += [
-                "",
-                "- D의 recall이 C보다 높은 사례: "
-                + (", ".join(better_cases(summary.cases, "D", "C")) or "없음"),
-                "- C의 recall이 D보다 높은 사례: "
-                + (", ".join(better_cases(summary.cases, "C", "D")) or "없음"),
-                "- D의 추천 수가 C보다 적은 사례: "
-                + (", ".join(better_cases(summary.cases, "C", "D", key="recommended")) or "없음"),
-            ]
+        lines += ["", "## 사례별 (추천 수/실행 수 · recall 평균)", "", *case_lines(summary)]
     return "\n".join(lines) + "\n"
 
 
@@ -808,6 +880,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="단가(USD/100만 토큰)를 더하거나 덮어쓴다. 여러 번 줄 수 있다",
     )
     p.add_argument("--no-cost", action="store_true", help="비용을 내지 않는다")
+    p.add_argument(
+        "--replace",
+        action="store_true",
+        help="같은 (사례, 조건, 회차)가 겹치면 뒤 파일이 앞 파일을 대체한다 (기본: 그대로 합치고 경고)",
+    )
     p.add_argument("--out", type=Path, default=None, help="마크다운을 이 파일에 쓴다 (기본: 표준 출력)")
     p.add_argument("--csv", type=Path, default=None, help="조건별 집계 CSV")
     p.add_argument("--case-csv", type=Path, default=None, help="사례 × 조건 CSV")
@@ -818,9 +895,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     try:
         prices = None if args.no_cost else parse_prices(args.price, DEFAULT_PRICES)
-        rows: list[dict[str, str]] = []
-        for path in args.results:
-            rows += read_rows(path)
+        rows, replaced = merge_rows([read_rows(path) for path in args.results], replace=args.replace)
         summary = build_summary(
             rows,
             sources=[p.name for p in args.results],
@@ -832,6 +907,8 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, ValueError) as exc:
         print(f"오류: {exc}", file=sys.stderr)
         return 2
+    if args.replace:
+        summary.warnings.append(replace_note(replaced))
     text = render_markdown(summary, by_case=args.by_case)
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)

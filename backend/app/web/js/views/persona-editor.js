@@ -27,6 +27,7 @@ import {
 } from "../lib/persona.js";
 import { buildHash } from "../lib/router.js";
 import { invalidateContacts } from "../session.js";
+import { cardEvidence } from "../ui/card-evidence.js";
 import { chipsInput } from "../ui/chips-input.js";
 import { confirmDialog } from "../ui/dialog.js";
 import { busy, h, setChildren, uid } from "../ui/dom.js";
@@ -370,6 +371,7 @@ export function mountPersonaEditor(box, { contact, persona: initial, onSaved = n
         { class: "suggestion-card-rows" },
         view.rows.map((row) => [h("dt", null, row.label), h("dd", null, row.text)]),
       ),
+      cardEvidence(card, contact.id),
       question ? h("p", { class: "suggestion-card-ask" }, question) : null,
       h(
         "div",

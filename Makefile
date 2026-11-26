@@ -14,7 +14,7 @@ SMOKE_PY ?= python3
 BASE_URL ?= https://localhost
 
 .PHONY: help setup venv up up-all down logs dev migrate import-synthetic demo-prepare test lint eval blind graph-dry-run usage-report graph-reset housekeeping \
-	test-docker lint-docker demo-check demo-check-docker lock prod-config prod-up prod-down prod-logs prod-ps backup smoke
+	test-docker lint-docker demo-check demo-check-docker check-links lock prod-config prod-up prod-down prod-logs prod-ps backup smoke
 
 help:
 	@echo "make setup     - .env.example → .env (최초 1회)"
@@ -26,6 +26,7 @@ help:
 	@echo "make dev       - 로컬에서 백엔드만 실행 (http://localhost:8000/docs)"
 	@echo "make test      - 백엔드 테스트"
 	@echo "make lint      - ruff"
+	@echo "make check-links - 문서(.md)의 상대 링크·이미지가 실제 파일을 가리키는지 (docs/archive/ 제외)"
 	@echo "make import-synthetic - data/synthetic 합성 대화를 DB에 적재 (헤더 스텁 user=demo)"
 	@echo "make demo-prepare - 시연 계정(demo)·페르소나·합성 대화·그래프 준비 (docs/guides/demo-script.md)"
 	@echo "make eval      - evals/eval_cases.csv 로 A/B/C 실행, 결과 CSV 저장"
@@ -88,6 +89,10 @@ test:
 
 lint:
 	$(PY) -m ruff check . && $(PY) -m ruff format --check .
+
+# 문서 링크 검사 (표준 라이브러리만 — 시스템 파이썬으로 돈다). CI의 data-files 잡과 같다.
+check-links:
+	$(SMOKE_PY) scripts/check_doc_links.py $(ARGS)
 
 eval:
 	$(PY) evals/run_eval.py --cases evals/eval_cases.csv --conditions A,B,C

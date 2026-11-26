@@ -33,6 +33,7 @@ import { describeSettings, importProposal } from "../lib/persona.js";
 import { buildHash } from "../lib/router.js";
 import { invalidateContacts, loadContacts } from "../session.js";
 import { store } from "../store.js";
+import { cardEvidence } from "../ui/card-evidence.js";
 import { addContactDialog } from "../ui/contact-dialog.js";
 import { busy, h, setChildren, uid } from "../ui/dom.js";
 import { emptyState, errorState, meter, note, pageHead, skeleton, unavailable } from "../ui/parts.js";
@@ -980,6 +981,8 @@ export function mountImport(root, ctx) {
         box,
         h("p", { class: "phase-title" }, `${c.alias}에게 쓰는 말투를 읽었어요`),
         p.rows.length ? h("dl", { class: "suggestion-card-rows" }, p.rows.map((row) => [h("dt", null, row.label), h("dd", null, row.text)])) : null,
+        // 근거 줄이 있을 때만: 그 줄이 말하는 메시지의 원문을 이 자리에서 펼쳐 본다
+        p.rows.length ? cardEvidence(data?.card, c.id) : null,
         p.changes.length
           ? h("p", { class: "phase-detail" }, "바뀌는 설정: ", p.changes.map((ch) => `${ch.label} ${ch.from} → ${ch.to}`).join(" · "))
           : null,

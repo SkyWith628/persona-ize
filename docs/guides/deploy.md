@@ -430,6 +430,10 @@ scripts/ops/compose.sh down -v              # 연습이 끝나면 볼륨까지 �
 ```
 포트를 바꾸면 http→https 리다이렉트는 여전히 443을 가리킨다(운영은 80/443이라 문제없다).
 
+CI(`.github/workflows/ci.yml`의 `deploy` 잡)가 이 구성을 러너에 띄워 스모크 테스트 → 시연 흐름 검사를 차례로 돈다. 로컬에서도 같다:
+`python3 scripts/smoke_test.py --base-url https://localhost:8143 --insecure --invite-code <코드>` 뒤에
+`python3 scripts/demo_check.py --base-url https://localhost:8143 --insecure --invite-code <코드> --assume-fake`(가짜 모델로 띄웠을 때만 — 장면은 `docs/guides/demo-script.md`).
+
 ## 15. 검증한 것과 못 한 것 (2026-11-11)
 
 ### 직접 돌려 확인한 것 (Windows 11 + Docker Desktop, Engine 29.9 / Compose 5.6, 가짜 모델, `SITE_ADDRESS=localhost`)
