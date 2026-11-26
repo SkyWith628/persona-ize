@@ -55,9 +55,12 @@ jobs:
           python-version: "3.12"
       - name: Validate CSV/JSON 접점 파일
         run: python scripts/validate_data_files.py
+      # 문서를 옮기거나 지워 끊긴 상대 링크(마크다운 링크·이미지)를 잡는다. docs/archive/는 예전 기록이라 뺀다.
+      - name: 문서 링크 검사 (추적되는 .md의 상대 경로)
+        run: python scripts/check_doc_links.py
 
   # 운영 배포 구성(docs/guides/deploy.md)이 깨지지 않았는지 본다: 설정 파일 검증 → 운영 이미지 빌드 → 이미지 자체 점검
-  # → 러너 안에 운영 스택을 띄워 스모크 테스트(가짜 모델, 실제 Claude 호출 없음).
+  # → 러너 안에 운영 스택을 띄워 스모크 테스트 → 시연 흐름 검사(가짜 모델, 실제 Claude 호출 없음).
   # 같은 명령을 Windows + Docker Desktop에서 손으로 검증했고(2026-11-11), GitHub 러너에서는 main 첫 푸시에서
   # 고친 것 없이 통과했다(5분 14초: 이미지 빌드 3분 44초, 스택 기동 48초, 스모크 10초 — 빌드 캐시 없이).
   deploy:
@@ -131,8 +134,20 @@ jobs:
       - name: 스모크 테스트 (Caddy 경유)
         run: python3 scripts/smoke_test.py --base-url https://localhost --insecure --invite-code ci-invite
 
+      # 시연 장면 0~5(가입 → 상대 4명·대화 가져오기 → B·C·D·자동 첨삭 → 제안 카드 → 이력·내 데이터 → 계정 삭제)가
+      # 운영 구성에서도 끝까지 이어지는지 본다. 운영 모드는 /healthz가 모델을 알려 주지 않아 --assume-fake를 준다
+      # (위에서 LLM_PROVIDER=fake로 띄웠다). 이 스택은 그래프가 켜져 있고 모델 키가 없어 그래프 수집이 실패로
+      # 끝난다 — 스크립트는 그것을 실패로 치지 않고, D가 그래프 검색 경로로 200을 주는지만 본다.
+      # 스모크와 합쳐 /v1 요청이 85건쯤이라 요청 제한(120/분) 아래다. 넘으면 스크립트가 Retry-After만큼 쉰다.
+      # 깨지면 "장면 N · 단계 — METHOD 경로 → HTTP 코드 code=… req=<요청 id>"를 찍는다(아래 로그에서 그 id를 찾는다).
+      - name: 시연 흐름 검사 (Caddy 경유, 장면 0~5)
+        timeout-minutes: 10
+        run: python3 scripts/demo_check.py --base-url https://localhost --insecure --invite-code ci-invite --assume-fake
+
       - name: 실패 시 상태·로그
         if: failure()
         run: |
           docker compose --env-file .env.production -f docker-compose.prod.yml ps || true
-          docker compose --env-file .env.production -f docker-compose.prod.yml logs --tail 80 backend caddy || true
+          # backend는 요청마다 줄을 남긴다 — 두 스크립트의 요청이 다 보이게 넉넉히 읽는다
+          docker compose --env-file .env.production -f docker-compose.prod.yml logs --tail 600 backend || true
+          docker compose --env-file .env.production -f docker-compose.prod.yml logs --tail 80 caddy neo4j || true
