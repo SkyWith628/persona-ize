@@ -15,6 +15,7 @@
 | `layer_diff.py` | 같은 초안을 모든 상대에게 돌려 층별(문체 예시·프롬프트·결과)로 두 상대가 얼마나 닮았는지 숫자로 냄. `--generate` 없이는 모델 호출 없음. 아래 "층별 비교" 절 |
 | `suggestion_accuracy.py` | 제안 정확도: 말투 제안이 정답 설정과 얼마나 맞는지 채점 (문장을 만들지 않음, 모델 호출 없음). 아래 "제안 정확도" 절 |
 | `summarize.py` | 집계·비교표: `run_eval.py` 결과 CSV(여러 개 가능)를 조건별로 집계해 마크다운 표와 CSV로 냄 — 추천 비율, 지연 p50·p95, 토큰, 비용 어림, recall, `fm*` 건수, 설계서 §8 목표 대비. 모델 호출 없음. `python evals/summarize.py results/<결과>.csv --by-case` |
+| `report.py` | 최종 비교 보고서의 뼈대: 결과 CSV(여러 개 가능, `--replace`로 재확인 실행을 바꿔 넣음)에서 머리말·목표 대비·단계별 차이(A→B, B→C, C→D)·D 채택 조건 네 가지의 근거 표·실패 목록·관계 × 상황 칸별 표·지연 분석을 채운 마크다운을 만든다. 해석·판정·결론은 `> ✍` 자리에 사람이 쓴다. `--update <보고서>.md`는 자동 구역(`<!-- auto:start … -->`)만 다시 채우고 사람이 쓴 글은 그대로 둔다. 집계는 `summarize.py`의 것. 모델 호출 없음. `python evals/report.py results/<결과>.csv --out <보고서>.md` |
 | `gold_personas.csv` | **정답 설정 타임라인** — 평가 담당이 쓴다 (아직 없음). 형식은 아래 절 |
 | [gold_personas.example.csv](gold_personas.example.csv) | 위 파일의 **예시**. 개발자가 형식을 보여 주려고 쓴 것이고 팀의 정답이 아니다 |
 | `results/` | 실행 결과. 요약 CSV만 커밋, 원시 jsonl은 제외 |
