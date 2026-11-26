@@ -15,7 +15,7 @@
 
 ## 다시 만드는 법
 
-[haydenschmitty/floorplan](https://github.com/haydenschmitty/floorplan) 플러그인(MIT)으로 만들었습니다. Node.js 18 이상이 필요합니다.
+[haydenschmitty/floorplan](https://github.com/haydenschmitty/floorplan) 플러그인(MIT)으로 만들었습니다. Node.js 18 이상이 필요합니다. 이 저장소에는 스킬로 넣어 두었으므로(`.claude/skills/floorplan`) 따로 설치하지 않아도 됩니다.
 
 1. `source/`의 `architecture.json`과 `descriptions/`를 저장소 루트의 `floorplan/` 폴더로 복사합니다. 이 폴더는 스스로 git에서 빠집니다.
 2. Claude Code에서 "floorplan을 갱신해 줘"라고 하면 바뀐 파일만 다시 읽습니다.
