@@ -345,6 +345,90 @@ export function cardView(card, fallbackAlias = "") {
   };
 }
 
+/** 근거로 보여 줄 메시지 수: 말투 구간마다 · 호칭 · 계기. 근거는 수백 건일 수 있어 경계 근처만 고른다. */
+export const EVIDENCE_PER_SPEECH = 3;
+export const EVIDENCE_PER_OTHER = 2;
+
+/**
+ * 제안 카드에서 원문을 보여 줄 대표 근거 메시지를 고른다. 고를 것이 없으면 null.
+ * 구간의 메시지 id는 시간 순이다(backend/app/ai/register.py) — 말투가 바뀐 카드는 앞 구간의 **마지막**
+ * 몇 건과 뒤 구간의 **처음** 몇 건, 곧 바뀐 자리의 앞뒤를 고른다. 호칭·계기는 처음 나온 것부터.
+ * 같은 메시지는 먼저 나온 묶음에만 넣는다.
+ * groups: [{ key: "before" | "after" | "address" | "trigger", label, total, ids }]
+ */
+export function evidencePlan(card) {
+  if (!card || typeof card !== "object") return null;
+  const seen = new Set();
+  const groups = [];
+  const push = (key, label, ids, picked) => {
+    const fresh = picked.filter((id) => !seen.has(id));
+    if (!label || !fresh.length) return;
+    for (const id of fresh) seen.add(id);
+    groups.push({ key, label, total: ids.length, ids: fresh });
+  };
+  const previousIds = cleanIds(card.speech_previous?.message_ids);
+  const currentIds = cleanIds(card.speech_current?.message_ids);
+  const previous = levelLabel(card.speech_previous?.level);
+  const current = levelLabel(card.speech_current?.level);
+  const changed = Boolean(previous && current && previousIds.length);
+  if (changed) push("before", `바뀌기 전 · ${previous}`, previousIds, previousIds.slice(-EVIDENCE_PER_SPEECH));
+  if (current) push("after", changed ? `바뀐 뒤 · ${current}` : `${current}로 읽은 메시지`, currentIds, currentIds.slice(0, EVIDENCE_PER_SPEECH));
+  const term = cleanText(card.address?.term, LIMITS.address_term);
+  const addressIds = cleanIds(card.address?.message_ids);
+  if (term) push("address", `호칭 '${term}'`, addressIds, addressIds.slice(0, EVIDENCE_PER_OTHER));
+  const event = String(card.trigger?.event ?? "").trim();
+  const triggerIds = cleanIds(card.trigger?.message_ids);
+  if (event) push("trigger", `계기 · ${event}`, triggerIds, triggerIds.slice(0, EVIDENCE_PER_OTHER));
+  return groups.length ? { groups } : null;
+}
+
+function roomPrefix(conv) {
+  const key = String(conv?.source_key ?? "");
+  return key ? `${key}:` : "";
+}
+
+/** 고른 근거 메시지가 들어 있을 수 있는 대화방만 — 근거 id는 `<대화방 키>:<메시지 키>`다. */
+export function evidenceRooms(plan, conversations) {
+  const ids = (plan?.groups ?? []).flatMap((g) => g.ids);
+  return (Array.isArray(conversations) ? conversations : []).filter((conv) => {
+    const prefix = roomPrefix(conv);
+    return Boolean(prefix) && ids.some((id) => id.startsWith(prefix));
+  });
+}
+
+/**
+ * 고른 근거에 지금 남아 있는 원문을 붙인다. rooms: [{ conversation, messages }](메시지 조회 응답 그대로).
+ * 지워진 메시지(화자 제외·대화방 삭제)는 조용히 빠진다 — 남은 것이 없는 묶음은 내지 않는다.
+ * { groups: [{ key, label, total, messages: [{ id, speaker_role, sent_at, text }] }], shown, missing }
+ */
+export function evidenceGroups(plan, rooms) {
+  const byId = new Map();
+  for (const room of Array.isArray(rooms) ? rooms : []) {
+    const prefix = roomPrefix(room?.conversation);
+    if (!prefix) continue;
+    for (const m of Array.isArray(room.messages) ? room.messages : []) {
+      const id = `${prefix}${m?.source_key ?? ""}`;
+      if (!byId.has(id)) byId.set(id, { id, speaker_role: String(m?.speaker_role ?? ""), sent_at: m?.sent_at ?? "", text: String(m?.text ?? "") });
+    }
+  }
+  const out = { groups: [], shown: 0, missing: 0 };
+  for (const group of plan?.groups ?? []) {
+    const messages = group.ids.map((id) => byId.get(id)).filter(Boolean);
+    out.missing += group.ids.length - messages.length;
+    if (!messages.length) continue;
+    out.shown += messages.length;
+    out.groups.push({ key: group.key, label: group.label, total: group.total, messages });
+  }
+  return out;
+}
+
+/** 근거 묶음의 제목 옆 설명: 전부 보였으면 "3건", 일부만 골랐으면 "9건 중 3건". */
+export function evidenceCountText(group) {
+  const shown = Array.isArray(group?.messages) ? group.messages.length : 0;
+  const total = cleanCount(group?.total);
+  return total > shown ? `${total}건 중 ${shown}건` : `${shown}건`;
+}
+
 /** 제안 신호 한 건을 화면 표시용으로. 모르는 항목·범위 밖 값이면 usable=false. */
 export function signalView(signal) {
   const field = String(signal?.field ?? "");

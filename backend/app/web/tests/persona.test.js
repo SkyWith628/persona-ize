@@ -11,6 +11,10 @@ import {
   cardView,
   cleanPhrases,
   describeSettings,
+  evidenceCountText,
+  evidenceGroups,
+  evidencePlan,
+  evidenceRooms,
   evidenceText,
   importProposal,
   isFewMessages,
@@ -398,4 +402,86 @@ test("가져오기 직후 제안: 내 메시지가 없거나 적으면 제안하
   assert.equal(importProposal(null, DEFAULT_SETTINGS).state, "none");
   assert.equal(importProposal({ based_on_messages: 3, settings: null, signals: SUGGESTION.signals }, DEFAULT_SETTINGS).state, "few");
   assert.equal(importProposal({ based_on_messages: 3, settings: null, signals: [] }, null).settings, null);
+});
+
+// ---- 제안 카드의 근거 메시지 원문 (ui/card-evidence.js가 쓰는 순수 로직) ----
+
+const ids = (prefix, n) => Array.from({ length: n }, (_, i) => `${prefix}:m${String(i + 1).padStart(2, "0")}`);
+
+test("근거 고르기: 말투가 바뀐 카드는 앞 구간의 마지막 3건과 뒤 구간의 처음 3건", () => {
+  const plan = evidencePlan({
+    speech_previous: { level: "haeyo", count: 9, message_ids: ids("a", 9) },
+    speech_current: { level: "hapsyo", count: 4, message_ids: ids("b", 4), since: "2026-11-10" },
+  });
+  assert.deepEqual(plan.groups, [
+    { key: "before", label: "바뀌기 전 · 해요체", total: 9, ids: ["a:m07", "a:m08", "a:m09"] },
+    { key: "after", label: "바뀐 뒤 · 합쇼체", total: 4, ids: ["b:m01", "b:m02", "b:m03"] },
+  ]);
+  // 근거가 수백 건이어도 고르는 수는 같다
+  const many = evidencePlan({
+    speech_previous: { level: "hae", count: 300, message_ids: ids("a", 300) },
+    speech_current: { level: "hapsyo", count: 200, message_ids: ids("b", 200) },
+    address: { term: "팀장님", count: 40, message_ids: ids("b", 40) },
+  });
+  assert.deepEqual(many.groups.map((g) => g.ids.length), [3, 3]);
+  assert.equal(many.groups[0].ids[2], "a:m300");
+});
+
+test("근거 고르기: 이전 구간이 없는 카드·호칭·계기, 같은 메시지는 한 번만, 빈 근거", () => {
+  const only = evidencePlan({ speech_current: { level: "haeyo", count: 5, message_ids: ids("c1", 5) } });
+  assert.deepEqual(only.groups, [{ key: "after", label: "해요체로 읽은 메시지", total: 5, ids: ["c1:m01", "c1:m02", "c1:m03"] }]);
+  const plan = evidencePlan(CARD);
+  assert.deepEqual(
+    plan.groups.map((g) => [g.key, g.label, g.ids]),
+    [
+      ["before", "바뀌기 전 · 반말", ["c3:m02", "c3:m04", "c3:m06"]],
+      ["after", "바뀐 뒤 · 합쇼체", ["c3:m08", "c3:m10"]],
+      // 호칭의 근거 c3:m08은 이미 "바뀐 뒤"에 있어 호칭 묶음은 내지 않는다
+      ["trigger", "계기 · 파트장 발령", ["c3:m05"]],
+    ],
+  );
+  const address = evidencePlan({ address: { term: "팀장님", count: 3, message_ids: ["c1:m01", "c1:m04", "c1:m09"] } });
+  assert.deepEqual(address.groups, [{ key: "address", label: "호칭 '팀장님'", total: 3, ids: ["c1:m01", "c1:m04"] }]);
+  for (const empty of [null, {}, { two_valued: { hapsyo: 2, hae: 2 } }, { speech_current: { level: "hapsyo", count: 2, message_ids: [] } }, { speech_current: { level: "???", message_ids: ["a:1"] } }]) {
+    assert.equal(evidencePlan(empty), null);
+  }
+});
+
+test("근거 원문 붙이기: 대화방을 고르고, 지워진 메시지는 건너뛴다", () => {
+  const plan = evidencePlan({
+    speech_previous: { level: "haeyo", count: 2, message_ids: ["k3:2510-aa", "k3:2511-bb"] },
+    speech_current: { level: "hapsyo", count: 2, message_ids: ["k3:2512-cc", "k31:2513-dd"] },
+  });
+  const convs = [
+    { id: "u1", source_key: "k3" },
+    { id: "u2", source_key: "k31" },
+    { id: "u3", source_key: "k" }, // "k:"로 시작하는 근거는 없다 — 앞 글자만 같은 방은 읽지 않는다
+    { id: "u4", source_key: "" },
+  ];
+  assert.deepEqual(evidenceRooms(plan, convs).map((c) => c.id), ["u1", "u2"]);
+  assert.deepEqual(evidenceRooms(plan, null), []);
+  const msg = (source_key, text, speaker_role = "me") => ({ id: `uuid-${source_key}`, source_key, speaker_role, sent_at: "2026-11-10T01:00:00Z", text });
+  const found = evidenceGroups(plan, [
+    { conversation: convs[0], messages: [msg("2510-aa", "넵 확인했어요"), msg("2512-cc", "확인했습니다."), msg("9999-zz", "상관없는 말", "contact")] },
+    { conversation: convs[1], messages: [msg("2513-dd", "보고드리겠습니다.")] },
+  ]);
+  assert.deepEqual(found.groups.map((g) => [g.key, g.total, g.messages.map((m) => m.text)]), [
+    ["before", 2, ["넵 확인했어요"]],
+    ["after", 2, ["확인했습니다.", "보고드리겠습니다."]],
+  ]);
+  assert.equal(found.shown, 3);
+  assert.equal(found.missing, 1);
+  assert.equal(found.groups[1].messages[0].id, "k3:2512-cc");
+  assert.equal(found.groups[1].messages[0].speaker_role, "me");
+  // 하나도 남지 않으면 묶음이 없다 — 화면은 "찾을 수 없어요"를 보인다
+  const gone = evidenceGroups(plan, [{ conversation: convs[0], messages: [] }]);
+  assert.deepEqual(gone, { groups: [], shown: 0, missing: 4 });
+  assert.deepEqual(evidenceGroups(plan, null), { groups: [], shown: 0, missing: 4 });
+});
+
+test("근거 묶음의 건수 문구", () => {
+  assert.equal(evidenceCountText({ total: 9, messages: [1, 2, 3] }), "9건 중 3건");
+  assert.equal(evidenceCountText({ total: 2, messages: [1, 2] }), "2건");
+  assert.equal(evidenceCountText({ total: 3, messages: [1] }), "3건 중 1건");
+  assert.equal(evidenceCountText({ messages: [1] }), "1건");
 });

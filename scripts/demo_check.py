@@ -721,6 +721,35 @@ class DemoCheck:
             f"{current['since']}부터), 묻기={card['ask']}, 제안 {card['proposed']}"
         )
 
+    def suggestion_evidence(self) -> str:
+        """카드의 근거 메시지 id가 원문으로 풀리는지 — 화면의 "근거 메시지 보기"와 같은 길이다.
+
+        새 API가 아니라 대화방 목록 + 메시지 조회다 (`web/js/ui/card-evidence.js`). 화면처럼 바뀌기 전
+        구간의 마지막 3건과 바뀐 뒤 구간의 처음 3건을 고른다. 본문은 찍지 않는다.
+        """
+        contact = self.contact("changed")
+        card = getattr(self, "_card", None)
+        if card is None:
+            raise SkippedError("제안 카드를 받지 못했습니다")
+        before = list(card["speech_previous"]["message_ids"])[-3:]
+        after = list(card["speech_current"]["message_ids"])[:3]
+        check(bool(before) and bool(after), "바뀌기 전·뒤의 근거 메시지 id가 없습니다")
+        found: dict[str, dict[str, Any]] = {}
+        for conv in self.get(f"/v1/conversations?contact_id={contact['id']}"):
+            prefix = f"{conv['source_key']}:"
+            if not any(ref.startswith(prefix) for ref in (*before, *after)):
+                continue
+            for message in self.get(f"/v1/conversations/{conv['id']}/messages"):
+                found[prefix + message["source_key"]] = message
+        missing = [ref for ref in (*before, *after) if ref not in found]
+        check(not missing, f"근거 메시지 {len(missing)}건을 메시지 조회에서 찾지 못했습니다")
+        picked = [found[ref] for ref in (*before, *after)]
+        check(all(m["speaker_role"] == "me" for m in picked), "근거에 내 메시지가 아닌 것이 있습니다")
+        check(all(m["text"].strip() for m in picked), "근거 메시지의 본문이 비어 있습니다")
+        ordered = [m["sent_at"] for m in picked]
+        check(ordered == sorted(ordered), "근거 메시지가 시간 순이 아닙니다 (바뀌기 전 → 뒤)")
+        return f"바뀌기 전 {len(before)}건 + 바뀐 뒤 {len(after)}건의 원문"
+
     def accept_suggestion(self) -> str:
         contact = self.contact("changed")
         card = getattr(self, "_card", None)
@@ -892,6 +921,7 @@ class DemoCheck:
         self.step("D 첨삭", lambda: self.with_graph("english"))
         self._scene = "4"
         self.step("제안 카드", self.suggestion)
+        self.step("제안 근거 원문", self.suggestion_evidence)
         self.step("제안 저장", self.accept_suggestion)
         self.step("맥락 그래프 조회", self.contact_graph)
         self._scene = "5"

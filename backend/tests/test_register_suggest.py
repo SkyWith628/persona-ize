@@ -378,6 +378,41 @@ def test_api_card_for_a_contact_whose_speech_level_changed(client: TestClient) -
     assert client.get(url.removesuffix("/suggestion"), headers=HEADERS).status_code == 404
 
 
+def test_api_card_evidence_ids_resolve_to_the_originals_through_the_message_api(client: TestClient) -> None:
+    """화면의 "근거 메시지 보기"가 기대는 약속 (`web/js/ui/card-evidence.js`) — 새 API 없이 원문으로 간다.
+
+    카드의 근거 id는 `<대화방 source_key>:<메시지 source_key>`이고 구간 안에서 시간 순이다(화면이 앞 구간의
+    마지막·뒤 구간의 처음 몇 건을 고른다). 대화방 목록과 메시지 조회는 본인 것만 돌려주고, 대화를 지우면
+    근거는 가리킬 곳이 없어진다.
+    """
+    url = _contact_with_history(client, MINE)
+    contact_id = url.split("/")[3]
+    card = client.get(url, headers=HEADERS).json()["card"]
+    before, after = card["speech_previous"]["message_ids"], card["speech_current"]["message_ids"]
+    assert (before, after) == (["c3:m00", "c3:m02", "c3:m04", "c3:m06"], ["c3:m08", "c3:m10", "c3:m12"])
+
+    convs = client.get("/v1/conversations", params={"contact_id": contact_id}, headers=HEADERS).json()
+    assert [c["source_key"] for c in convs] == ["c3"]
+    messages = client.get(f"/v1/conversations/{convs[0]['id']}/messages", headers=HEADERS).json()
+    by_ref = {f"c3:{m['source_key']}": m for m in messages}
+    texts = dict((key, text) for key, _, text in MINE)
+    for ref in (*before, *after):
+        assert by_ref[ref]["speaker_role"] == "me"
+        assert by_ref[ref]["text"] == texts[ref.split(":", 1)[1]]  # 저장된 그대로
+    sent = [by_ref[ref]["sent_at"] for ref in (*before, *after)]
+    assert sent == sorted(sent)
+
+    # 남의 근거는 풀 수 없다: 대화방 목록은 비고, 대화방 id를 알아도 메시지 조회는 404
+    other = {"X-User-Id": "user-b"}
+    assert client.get("/v1/conversations", params={"contact_id": contact_id}, headers=other).json() == []
+    assert client.get(f"/v1/conversations/{convs[0]['id']}/messages", headers=other).status_code == 404
+
+    # 대화를 지우면 근거도 카드도 사라진다 — 화면은 남은 것만 보이고, 없으면 "찾을 수 없어요"라고 한다
+    assert client.delete(f"/v1/conversations/{convs[0]['id']}", headers=HEADERS).status_code == 200
+    assert client.get("/v1/conversations", params={"contact_id": contact_id}, headers=HEADERS).json() == []
+    assert "card" not in client.get(url, headers=HEADERS).json()
+
+
 def test_api_scope_hints_from_the_graph_turn_the_card_into_a_question(client: TestClient) -> None:
     url = _contact_with_history(client, MINE)  # 변화 뒤 3건
     plain = client.get(url, headers=HEADERS).json()

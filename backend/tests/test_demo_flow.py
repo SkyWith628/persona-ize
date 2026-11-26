@@ -27,8 +27,8 @@ from app.main import create_app
 from tests.test_graph import FakeGraphStore
 
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "demo_check.py"
-# 헬스 1 + 장면 0의 4 + 준비 8 + 장면 1~3의 6 + 장면 4의 3 + 장면 5의 5 + 끝 2. 단계를 더하면 고친다
-STEPS = 29
+# 헬스 1 + 장면 0의 4 + 준비 8 + 장면 1~3의 6 + 장면 4의 4 + 장면 5의 5 + 끝 2. 단계를 더하면 고친다
+STEPS = 30
 
 
 def _load() -> Any:

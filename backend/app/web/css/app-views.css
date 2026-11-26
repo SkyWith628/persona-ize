@@ -939,6 +939,76 @@
   margin-top: var(--space-2);
 }
 
+/* 제안 카드의 근거 메시지: 버튼으로 펼쳐 원문을 본다 (상대 화면의 카드 · 가져오기 직후의 제안) */
+.card-evidence {
+  margin: var(--space-2) 0;
+}
+
+.card-evidence-toggle {
+  gap: var(--space-1);
+  margin-left: calc(-1 * var(--space-3));
+}
+
+/* 링크처럼 보이게 글자에만 밑줄을 긋는다 (화살표에는 긋지 않는다) */
+.card-evidence-toggle-label {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.card-evidence-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  min-width: 0;
+}
+
+.card-evidence-panel[hidden] {
+  display: none;
+}
+
+.card-evidence-group {
+  padding: var(--space-3) var(--space-4);
+  border-left: 3px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  min-width: 0;
+}
+
+/* 바뀐 뒤의 말투가 지금 제안의 근거다 — 색만이 아니라 묶음 제목("바뀌기 전"·"바뀐 뒤")이 뜻을 담는다 */
+.card-evidence-group.is-after {
+  border-left-color: var(--accent-strong);
+}
+
+.card-evidence-label {
+  font-size: var(--text-s);
+  font-weight: 700;
+  color: var(--ink-2);
+}
+
+.card-evidence-messages {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.card-evidence-meta {
+  font-size: var(--text-s);
+  color: var(--muted);
+}
+
+.card-evidence-who {
+  font-weight: 700;
+  color: var(--ink-2);
+}
+
+.card-evidence-text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 560px) {
   .suggestion-card-rows {
     grid-template-columns: 1fr;
