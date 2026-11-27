@@ -317,15 +317,17 @@ final class API {
     private struct Empty: Encodable {}
 
     private let base: URL
-    private let session = URLSession(configuration: .ephemeral, delegate: NoRedirects(), delegateQueue: nil)
+    private let session: URLSession
     private var token: String
     /// 서버가 토큰을 거절했을 때(만료·폐기) 한 번 부른다. 화면을 로그인으로 돌리는 일은 받는 쪽이 한다.
     var onExpired: (@MainActor () -> Void)?
 
     /// `token`은 기기에 남겨 둔 로그인을 되살릴 때만 준다. 새 로그인은 `signIn`이 채운다.
-    init(server: String, token: String = "") throws {
+    /// `configuration`은 단위 테스트가 가짜 전송(`protocolClasses`)을 넣을 때만 바꾼다. 앱은 늘 `.ephemeral`.
+    init(server: String, token: String = "", configuration: URLSessionConfiguration = .ephemeral) throws {
         base = try ServerAddress.url(from: server)
         self.token = token
+        session = URLSession(configuration: configuration, delegate: NoRedirects(), delegateQueue: nil)
     }
 
     deinit { session.invalidateAndCancel() }

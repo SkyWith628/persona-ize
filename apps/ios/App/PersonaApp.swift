@@ -32,6 +32,13 @@ final class Session: ObservableObject {
     static let expiredNotice = "로그인이 만료됐어요. 다시 로그인해 주세요."
     static let offlineNotice = "서버에 연결하지 못했어요. 연결을 확인한 뒤 다시 로그인해 주세요."
 
+    /// 기기에 남은 로그인으로 만드는 API의 전송 설정. 단위 테스트가 가짜 전송을 넣을 때만 바꾼다.
+    private let transport: () -> URLSessionConfiguration
+
+    init(transport: @escaping () -> URLSessionConfiguration = { .ephemeral }) {
+        self.transport = transport
+    }
+
     func start(_ client: API, username: String) async throws {
         contacts = try await client.contacts()
         self.username = username
@@ -49,7 +56,7 @@ final class Session: ObservableObject {
         guard restoring else { return }
         defer { restoring = false }
         guard api == nil, let saved = TokenStore.load() else { return }
-        guard let client = try? API(server: saved.server, token: saved.token) else {
+        guard let client = try? API(server: saved.server, token: saved.token, configuration: transport()) else {
             TokenStore.clear()
             return
         }
@@ -67,7 +74,9 @@ final class Session: ObservableObject {
     /// 서버 주소를 바꿔 로그인해도 예전 토큰이 다른 서버로 가지 않는다. 폐기에 실패해도 계속한다.
     func discardSaved() async {
         guard let saved = TokenStore.load() else { return }
-        if let old = try? API(server: saved.server, token: saved.token) { try? await old.logout() }
+        if let old = try? API(server: saved.server, token: saved.token, configuration: transport()) {
+            try? await old.logout()
+        }
         TokenStore.clear()
         KeyboardLink.clear()
     }
