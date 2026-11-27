@@ -413,6 +413,47 @@ final class TokenExpiryTests: XCTestCase {
         XCTAssertEqual(TokenStore.load(), saved, "연결 문제면 토큰을 남겨 다음에 다시 쓴다")
     }
 
+    func testRestoreServerErrorKeepsTokenAndIsNotCalledOffline() async throws {
+        let saved = try saveLogin()
+        let body = Data(#"{"code":"internal_error","message":"잠시 후 다시 시도해 주세요."}"#.utf8)
+        StubTransport.respond(.http(status: 500, headers: [:], body: body))
+        let session = Session(transport: StubTransport.configuration)
+
+        await session.restore()
+
+        XCTAssertNil(session.api)
+        XCTAssertEqual(session.notice, Session.serverErrorNotice, "서버 오류를 연결 문제로 보이지 않는다")
+        XCTAssertEqual(TokenStore.load(), saved, "일시적인 서버 오류면 토큰을 남긴다")
+    }
+
+    func testRestoreUnreadableResponseIsServerError() async throws {
+        let saved = try saveLogin()
+        let json = ["Content-Type": "application/json"]
+        StubTransport.respond(.http(status: 200, headers: json, body: Data("not json".utf8)))
+        let session = Session(transport: StubTransport.configuration)
+
+        await session.restore()
+
+        XCTAssertNil(session.api)
+        XCTAssertEqual(session.notice, Session.serverErrorNotice)
+        XCTAssertEqual(TokenStore.load(), saved)
+    }
+
+    func testRestoreBlockedAccountEndsAndShowsAccountNotice() async throws {
+        for (code, state) in [("account_pending", AccountState.pending), ("account_suspended", .suspended)] {
+            _ = try saveLogin()
+            let body = Data(#"{"code":"\#(code)","message":"계정 상태 때문에 쓸 수 없어요."}"#.utf8)
+            StubTransport.respond(.http(status: 403, headers: [:], body: body))
+            let session = Session(transport: StubTransport.configuration)
+
+            await session.restore()
+
+            XCTAssertNil(session.api, code)
+            XCTAssertEqual(session.notice, state.notice, code)
+            XCTAssertNil(TokenStore.load(), "\(code): 쓸 수 없는 토큰은 지운다")
+        }
+    }
+
     func testRestoreWithoutSavedLoginSendsNothing() async {
         let session = Session(transport: StubTransport.configuration)
         await session.restore()
