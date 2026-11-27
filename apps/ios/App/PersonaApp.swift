@@ -164,6 +164,7 @@ private struct StatusBar: ViewModifier {
                 .padding(.horizontal, Theme.Space.l).padding(.vertical, Theme.Space.s)
                 .background(Theme.bg)
                 .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("상태 안내")
             }
         }
     }

@@ -1,10 +1,11 @@
 import XCTest
 
-/// 화면 흐름 검사 둘:
+/// 화면 흐름 검사 넷:
 /// - 예시 화면 → 가입 → 첫 상대 → 다듬기 → 이력 → 다시 열기(로그인 유지) → 로그아웃.
 /// - 가입 → 상대 화면에서 대화방 추가 → 카카오톡 대화 붙여넣기 → 가져오기 → 화자 안내(누가 나인지) →
 ///   내 이름을 넣고 다시 가져오기 → 말투 분석 완료.
 /// - 토큰 만료 안내: 끈 사이 토큰이 폐기되면 다시 열 때, 쓰는 중 폐기되면 다음 요청에서 로그인 화면 + 안내.
+/// - 오류 뒤 재시도: 중계로 서버를 끊거나 응답을 버린 뒤 같은 버튼으로 다시 시도(`testRewriteRetryAfterServerError`).
 ///
 /// 로컬 서버가 떠 있어야 한다(README "화면 흐름 검사"). 주소는 `TEST_RUNNER_PERSONA_UITEST_SERVER`로
 /// 바꿀 수 있고 기본은 `https://localhost:8443`이다. 빌드에 든 기본 서버(운영)로는 절대 가지 않게
@@ -148,6 +149,54 @@ final class FlowUITests: XCTestCase {
         XCTAssertFalse(app.tabBars.buttons["작성"].exists)
     }
 
+    /// 오류 뒤 재시도. 중계(scripts/ios_ui_relay.py)로 두 가지 실패를 만든다 — 요청이 서버에 닿지 않는 경우(down)와
+    /// 서버는 처리했는데 응답을 못 받은 경우(drop). 둘 다 안내만 뜨고 앱·초안은 그대로다. 중계를 되돌리고 같은 버튼을
+    /// 다시 누르면 추천이 뜬다. 세 번 모두 같은 Idempotency-Key였고, 그래서 서버는 첨삭을 한 번만 셌다(오늘 1회).
+    func testRewriteRetryAfterServerError() throws {
+        let server = try localServer()
+        try relay(server, "clear")  // 중계 없이 띄운 서버면 여기서 건너뛴다
+        defer { _ = try? relay(server, "up") }
+        let app = signUpWithFirstContact(server: server).app
+        XCTAssertTrue(app.tabBars.buttons["작성"].waitForExistence(timeout: wait), "탭 화면이 뜨지 않았다")
+        let editor = app.textViews["초안"]
+        type(draft, into: editor)
+        let polish = app.buttons["\(alias)에게 맞게"]
+        let notice = app.descendants(matching: .any)["상태 안내"]
+        let failed = NSPredicate(format: "exists == true AND label != %@ AND label != %@", "처리하고 있어요", "")
+
+        for mode in ["down", "drop"] {
+            try relay(server, mode)
+            tap(polish)
+            let shown = XCTWaiter().wait(for: [XCTNSPredicateExpectation(predicate: failed, object: notice)],
+                                         timeout: wait)
+            XCTAssertEqual(shown, .completed, "\(mode): 오류 안내가 뜨지 않았다")
+            XCTAssertEqual(app.state, .runningForeground, "\(mode): 앱이 죽었다")
+            XCTAssertFalse(app.staticTexts["\(alias)에게 맞게 다듬었어요"].exists, "\(mode): 실패했는데 결과가 있다")
+            XCTAssertTrue((editor.value as? String)?.contains(draft) == true, "\(mode): 초안을 잃었다: \(String(describing: editor.value))")
+            XCTAssertTrue(polish.waitForExistence(timeout: wait) && polish.isEnabled, "\(mode): 다시 누를 버튼이 없다")
+        }
+
+        try relay(server, "up")
+        tap(polish)
+        XCTAssertTrue(app.staticTexts["\(alias)에게 맞게 다듬었어요"].waitForExistence(timeout: wait),
+                      "재시도했는데 다듬은 결과가 나오지 않았다")
+        XCTAssertTrue(app.buttons["키보드에 준비"].waitForExistence(timeout: wait))
+        // drop 때 서버가 이미 한 번 셌다. 같은 키의 재시도는 저장된 결과를 돌려받아 다시 세지 않는다.
+        let once = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "오늘 1 /")).firstMatch
+        XCTAssertTrue(once.waitForExistence(timeout: wait), "사용량이 1회가 아니다 — 재시도가 새 요청으로 셌다")
+
+        // 중계 기록: 세 번의 다듬기 요청(앱이 몰래 다시 보낸 것이 있으면 그것까지)이 모두 같은 키.
+        let records = (try relay(server, "log")["requests"] as? [[String: Any]] ?? [])
+            .filter { $0["method"] as? String == "POST" && $0["path"] as? String == "/v1/rewrites" }
+        let keys = Set(records.map { $0["key"] as? String ?? "" })
+        let outcomes = records.map { $0["outcome"] as? String ?? "" }
+        XCTAssertEqual(keys.count, 1, "재시도마다 키가 달랐다: \(keys)")
+        XCTAssertFalse(keys.contains(""), "Idempotency-Key 없이 보냈다")
+        XCTAssertTrue(outcomes.contains("cut") && outcomes.contains("dropped"), "실패 요청이 기록에 없다: \(outcomes)")
+        XCTAssertEqual(outcomes.last, "passed", "마지막 요청이 서버를 거쳐 오지 않았다: \(outcomes)")
+        XCTAssertEqual(records.last?["status"] as? Int, 201)
+    }
+
     // MARK: 도구
 
     /// 처음 상태에서 연다 → 예시 화면 건너뛰기 → 가입(가입 응답에는 토큰이 없어 앱이 이어서 토큰을 받는다)
@@ -287,5 +336,27 @@ final class FlowUITests: XCTestCase {
                 return
             }
         }
+    }
+}
+
+extension FlowUITests {
+    /// 화면 흐름 검사의 중계(`scripts/ios_ui_relay.py`)에 명령(up·down·drop·clear·log)을 보내고 답(JSON)을 돌려준다.
+    /// 앱과 같은 주소의 `/__relay/`로 보낸다 — 시뮬레이터가 믿는 같은 인증서다. 중계가 없으면 건너뛴다.
+    @discardableResult
+    func relay(_ server: String, _ command: String) throws -> [String: Any] {
+        guard let base = URL(string: server) else { throw XCTSkip("서버 주소가 틀렸다: \(server)") }
+        let url = base.appendingPathComponent("__relay").appendingPathComponent(command)
+        var reply: (Data?, Int) = (nil, 0)
+        let done = XCTestExpectation(description: "relay \(command)")
+        URLSession.shared.dataTask(with: url) { data, response, _ in
+            reply = (data, (response as? HTTPURLResponse)?.statusCode ?? 0)
+            done.fulfill()
+        }.resume()
+        _ = XCTWaiter().wait(for: [done], timeout: 10)
+        guard reply.1 == 200, let data = reply.0,
+              let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw XCTSkip("중계가 없다(scripts/ios_ui_check.sh로 돌린다): \(command) → \(reply.1)")
+        }
+        return json
     }
 }
