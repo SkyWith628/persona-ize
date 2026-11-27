@@ -3,6 +3,18 @@ import SwiftUI
 @main
 struct PersonaApp: App {
     @StateObject private var session = Session()
+
+    init() {
+        #if DEBUG
+        // 화면 흐름 검사(UITests)가 매번 같은 처음 상태에서 시작하게 한다. 설정을 지우면
+        // 키체인에 남은 토큰도 쓰지 않는다(TokenStore의 표시가 함께 지워진다). 출시 빌드에는 없다.
+        if ProcessInfo.processInfo.arguments.contains("-uiTestReset"),
+           let domain = Bundle.main.bundleIdentifier {
+            UserDefaults.standard.removePersistentDomain(forName: domain)
+        }
+        #endif
+    }
+
     var body: some Scene { WindowGroup { Root().environmentObject(session) } }
 }
 
@@ -19,6 +31,14 @@ final class Session: ObservableObject {
 
     static let expiredNotice = "로그인이 만료됐어요. 다시 로그인해 주세요."
     static let offlineNotice = "서버에 연결하지 못했어요. 연결을 확인한 뒤 다시 로그인해 주세요."
+    static let serverErrorNotice = "서버에서 문제가 생겼어요. 잠시 뒤 다시 로그인해 주세요."
+
+    /// 기기에 남은 로그인으로 만드는 API의 전송 설정. 단위 테스트가 가짜 전송을 넣을 때만 바꾼다.
+    private let transport: () -> URLSessionConfiguration
+
+    init(transport: @escaping () -> URLSessionConfiguration = { .ephemeral }) {
+        self.transport = transport
+    }
 
     func start(_ client: API, username: String) async throws {
         contacts = try await client.contacts()
@@ -32,12 +52,13 @@ final class Session: ObservableObject {
     }
 
     /// 앱을 열 때 한 번: 키체인의 토큰으로 로그인 상태를 되살린다.
-    /// 토큰이 거절되면(401) 지우고 로그인 화면으로, 연결 문제면 토큰은 두고 로그인 화면으로 보낸다.
+    /// 토큰이 거절되면(401)·계정이 막혔으면(403 대기·정지) 지우고 로그인 화면으로, 연결 문제·서버 오류면
+    /// 토큰은 두고 로그인 화면으로 보낸다. 안내는 넷 중 하나다(만료·계정 상태·연결·서버).
     func restore() async {
         guard restoring else { return }
         defer { restoring = false }
         guard api == nil, let saved = TokenStore.load() else { return }
-        guard let client = try? API(server: saved.server, token: saved.token) else {
+        guard let client = try? API(server: saved.server, token: saved.token, configuration: transport()) else {
             TokenStore.clear()
             return
         }
@@ -46,8 +67,15 @@ final class Session: ObservableObject {
         } catch let error as ServiceError where error.status == 401 {
             end()
             notice = Self.expiredNotice
-        } catch {
+        } catch let error as AccountStateError {
+            // 승인 대기·정지 계정: 이 토큰으로는 쓸 수 없다. 지우고 계정 상태 안내를 보인다.
+            end()
+            notice = error.state.notice
+        } catch is URLError {
             notice = Self.offlineNotice
+        } catch {
+            // 서버 오류(5xx)·응답 해석 실패: 연결 문제가 아니다. 토큰은 남겨 다음에 다시 쓴다.
+            notice = Self.serverErrorNotice
         }
     }
 
@@ -55,7 +83,9 @@ final class Session: ObservableObject {
     /// 서버 주소를 바꿔 로그인해도 예전 토큰이 다른 서버로 가지 않는다. 폐기에 실패해도 계속한다.
     func discardSaved() async {
         guard let saved = TokenStore.load() else { return }
-        if let old = try? API(server: saved.server, token: saved.token) { try? await old.logout() }
+        if let old = try? API(server: saved.server, token: saved.token, configuration: transport()) {
+            try? await old.logout()
+        }
         TokenStore.clear()
         KeyboardLink.clear()
     }
@@ -143,6 +173,7 @@ private struct StatusBar: ViewModifier {
                 .padding(.horizontal, Theme.Space.l).padding(.vertical, Theme.Space.s)
                 .background(Theme.bg)
                 .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("상태 안내")
             }
         }
     }

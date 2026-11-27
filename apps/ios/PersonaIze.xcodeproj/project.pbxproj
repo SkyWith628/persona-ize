@@ -26,6 +26,7 @@
 		CE74257DE59EC0A74A7F07CC /* KeyboardController.swift in Sources */ = {isa = PBXBuildFile; fileRef = CACE38E6845FA3BA652D0016 /* KeyboardController.swift */; };
 		E168C5F8EA7873C05DDF60E5 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF857FE7F3E3E29B7A785076 /* Theme.swift */; };
 		E3DF94799C566F25BE3F006B /* PersonaApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63C0760AE82A2E59E63C00B8 /* PersonaApp.swift */; };
+		EAD752E431AADAD74C43B5EA /* FlowUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E981FB8A3CC0892B81E038EB /* FlowUITests.swift */; };
 		F04E99E38678FFFEF0675296 /* KeyboardLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13FC5556657E000B7CA763ED /* KeyboardLink.swift */; };
 		F179CA0A610DACB9BB6A4B21 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF857FE7F3E3E29B7A785076 /* Theme.swift */; };
 		FC1755DFC8B089D67EAF023C /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A4171FFD049740E668E8666 /* Models.swift */; };
@@ -41,6 +42,13 @@
 			remoteInfo = PersonaKeyboard;
 		};
 		79212F1E7B9B924714CF759C /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 3E891787503FF9B7C1A7538D /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = F6396991FF8525220CBA804C;
+			remoteInfo = PersonaIze;
+		};
+		E8CBC553EB06CDB736948979 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 3E891787503FF9B7C1A7538D /* Project object */;
 			proxyType = 1;
@@ -73,6 +81,7 @@
 		21D15657CF1892500780613C /* PersonaIze.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = PersonaIze.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		2A4171FFD049740E668E8666 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		41314A6AF4974D7E7BC8DC46 /* LoginLogicTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginLogicTests.swift; sourceTree = "<group>"; };
+		4F6E47F8BF5FF5CB965E2974 /* PersonaIzeUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = PersonaIzeUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		50B090C82E69E9171A208558 /* ContactGraphView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactGraphView.swift; sourceTree = "<group>"; };
 		63C0760AE82A2E59E63C00B8 /* PersonaApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonaApp.swift; sourceTree = "<group>"; };
 		72CC54FD92EDDDBDA4BE8660 /* ImportParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImportParser.swift; sourceTree = "<group>"; };
@@ -88,6 +97,7 @@
 		CACE38E6845FA3BA652D0016 /* KeyboardController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardController.swift; sourceTree = "<group>"; };
 		D02744E7766F1F302B2886AD /* ImportParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImportParserTests.swift; sourceTree = "<group>"; };
 		DA71B1FF087D052BF97AF339 /* HistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryView.swift; sourceTree = "<group>"; };
+		E981FB8A3CC0892B81E038EB /* FlowUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FlowUITests.swift; sourceTree = "<group>"; };
 		EF7BB4E1880DB646D5D3BA09 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -118,6 +128,7 @@
 			children = (
 				21D15657CF1892500780613C /* PersonaIze.app */,
 				003502A261D4996C76691F35 /* PersonaIzeTests.xctest */,
+				4F6E47F8BF5FF5CB965E2974 /* PersonaIzeUITests.xctest */,
 				AB1AE5CAF335B93CE53F90D7 /* PersonaKeyboard.appex */,
 			);
 			name = Products;
@@ -130,6 +141,7 @@
 				DF4DBE8D3454EF91B3B5D93E /* Keyboard */,
 				11DE9CCABDCCB2A94B67456D /* Shared */,
 				009D1D47158603989DB55980 /* Tests */,
+				E9591DB930D7B4095E92F461 /* UITests */,
 				40F7C4D42F5DD24D6FF51DE5 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -163,9 +175,35 @@
 			path = Keyboard;
 			sourceTree = "<group>";
 		};
+		E9591DB930D7B4095E92F461 /* UITests */ = {
+			isa = PBXGroup;
+			children = (
+				E981FB8A3CC0892B81E038EB /* FlowUITests.swift */,
+			);
+			path = UITests;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		14FCB42912F2ED805E68E4B0 /* PersonaIzeUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 10A1FBAEBE7BEEF89B469D83 /* Build configuration list for PBXNativeTarget "PersonaIzeUITests" */;
+			buildPhases = (
+				3AFA34B3FC498B8196AB739A /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A7F613256337B36226774A36 /* PBXTargetDependency */,
+			);
+			name = PersonaIzeUITests;
+			packageProductDependencies = (
+			);
+			productName = PersonaIzeUITests;
+			productReference = 4F6E47F8BF5FF5CB965E2974 /* PersonaIzeUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 		165A7A7DFD83B184C8546EF2 /* PersonaIzeTests */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = E43B1A3CC84A6AD9D6848855 /* Build configuration list for PBXNativeTarget "PersonaIzeTests" */;
@@ -230,6 +268,10 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
+					14FCB42912F2ED805E68E4B0 = {
+						ProvisioningStyle = Automatic;
+						TestTargetID = F6396991FF8525220CBA804C;
+					};
 					165A7A7DFD83B184C8546EF2 = {
 						ProvisioningStyle = Automatic;
 					};
@@ -257,6 +299,7 @@
 			targets = (
 				F6396991FF8525220CBA804C /* PersonaIze */,
 				165A7A7DFD83B184C8546EF2 /* PersonaIzeTests */,
+				14FCB42912F2ED805E68E4B0 /* PersonaIzeUITests */,
 				89315CEE17A869112531BDB6 /* PersonaKeyboard */,
 			);
 		};
@@ -274,6 +317,14 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		3AFA34B3FC498B8196AB739A /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				EAD752E431AADAD74C43B5EA /* FlowUITests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		452D1B3E55C120D1411DCEBF /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -323,6 +374,11 @@
 			isa = PBXTargetDependency;
 			target = 89315CEE17A869112531BDB6 /* PersonaKeyboard */;
 			targetProxy = 56EA5DF02030F0ED5188F213 /* PBXContainerItemProxy */;
+		};
+		A7F613256337B36226774A36 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = F6396991FF8525220CBA804C /* PersonaIze */;
+			targetProxy = E8CBC553EB06CDB736948979 /* PBXContainerItemProxy */;
 		};
 		A8C8A316D34109A6FE4BD130 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
@@ -498,6 +554,40 @@
 			};
 			name = Release;
 		};
+		AC60ECF7AA2D1FA563FF27A1 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(PERSONA_BUNDLE_ID).uitests";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = PersonaIze;
+			};
+			name = Debug;
+		};
+		C6F00A159FA0AE4FA8154A43 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(PERSONA_BUNDLE_ID).uitests";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = PersonaIze;
+			};
+			name = Release;
+		};
 		F982525E04F875B8ECF191ED /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -570,6 +660,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		10A1FBAEBE7BEEF89B469D83 /* Build configuration list for PBXNativeTarget "PersonaIzeUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AC60ECF7AA2D1FA563FF27A1 /* Debug */,
+				C6F00A159FA0AE4FA8154A43 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
 		5648981D586730E59B8CAFD7 /* Build configuration list for PBXProject "PersonaIze" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

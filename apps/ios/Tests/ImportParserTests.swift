@@ -411,3 +411,104 @@ final class IgnoredRolesNoteTests: XCTestCase {
         XCTAssertTrue(note?.head.contains("김민수('나'로 골랐지만 '상대'로 저장된 메시지 0개)") ?? false)
     }
 }
+
+/// 앱 그룹 파일 왕복. 테스트 호스트가 앱이라 `Bundle.main`의 `PersonaAppGroup`으로 컨테이너가 열린다.
+/// 파일은 테스트끼리 공유하므로 매번 지워 순서 의존을 없앤다.
+final class AppGroupFileTests: XCTestCase {
+    private let linkFile = "keyboard-link.json"
+
+    override func setUpWithError() throws {
+        try XCTSkipIf(containerURL() == nil, "앱 그룹 컨테이너를 열 수 없다(서명·entitlements 확인)")
+        wipe()
+    }
+
+    override func tearDown() { wipe() }
+
+    private func containerURL() -> URL? {
+        guard let group = Bundle.main.object(forInfoDictionaryKey: "PersonaAppGroup") as? String else { return nil }
+        return FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group)
+    }
+
+    private func wipe() {
+        try? KeyboardMessage.clear()
+        KeyboardLink.clear()
+    }
+
+    private func link() -> KeyboardLink {
+        KeyboardLink(server: "https://example.test", token: "tok-1",
+                     contacts: [.init(id: "a", alias: "팀장님", ready: true), .init(id: "b", alias: "친구", ready: false)],
+                     selected: "a", recents: ["a"])
+    }
+
+    func testAppGroupContainerOpensInTestHost() {
+        XCTAssertNotNil(containerURL())
+        XCTAssertNoThrow(try SharedContainer.file("probe.txt"))
+    }
+
+    func testMessageRoundTripsAndClears() throws {
+        XCTAssertNil(KeyboardMessage.read())
+        try KeyboardMessage.save("넵 확인했습니다.")
+        XCTAssertEqual(KeyboardMessage.read(), "넵 확인했습니다.")
+        try KeyboardMessage.clear()
+        XCTAssertNil(KeyboardMessage.read())
+        XCTAssertNoThrow(try KeyboardMessage.clear(), "없는 파일을 지워도 오류가 아니다")
+    }
+
+    func testMessageOverwriteReplacesPreviousText() throws {
+        try KeyboardMessage.save("첫 번째 글")
+        try KeyboardMessage.save("둘째")
+        XCTAssertEqual(KeyboardMessage.read(), "둘째")
+    }
+
+    func testMessageKeepsEmptyEmojiNewlinesAndLongText() throws {
+        try KeyboardMessage.save("")
+        XCTAssertEqual(KeyboardMessage.read(), "")
+        for text in ["네😊👨‍👩‍👧 감사합니다", "첫 줄\n\n셋째 줄\r\n끝", String(repeating: "가나다 라마바\n", count: 5000)] {
+            try KeyboardMessage.save(text)
+            XCTAssertEqual(KeyboardMessage.read(), text)
+        }
+    }
+
+    func testLinkRoundTripsThroughFile() throws {
+        XCTAssertNil(KeyboardLink.load())
+        var value = link()
+        value.choose("b")
+        try value.save()
+        XCTAssertEqual(KeyboardLink.load(), value)
+        XCTAssertEqual(KeyboardLink.load()?.recents, ["b", "a"])
+        XCTAssertEqual(KeyboardLink.load()?.selected, "b")
+    }
+
+    func testLinkSaveOverwritesAndClearRemoves() throws {
+        try link().save()
+        var changed = link()
+        changed.token = "tok-2"
+        try changed.save()
+        XCTAssertEqual(KeyboardLink.load()?.token, "tok-2")
+        KeyboardLink.clear()
+        XCTAssertNil(KeyboardLink.load())
+        KeyboardLink.clear() // 없는 파일을 또 지워도 죽지 않는다
+    }
+
+    func testCorruptedOrOldLinkFileLoadsAsNil() throws {
+        let url = try SharedContainer.file(linkFile)
+        try Data("{ 깨진 json".utf8).write(to: url)
+        XCTAssertNil(KeyboardLink.load())
+        try Data().write(to: url)
+        XCTAssertNil(KeyboardLink.load())
+        try Data(#"{"server":"https://example.test","cookie":"c","csrf":"x","contacts":[],"selected":"","recents":[]}"#.utf8).write(to: url)
+        XCTAssertNil(KeyboardLink.load(), "쿠키 시절 파일은 읽지 않는다")
+        try link().save()
+        XCTAssertEqual(KeyboardLink.load(), link(), "깨진 파일 위에 새로 써도 된다")
+    }
+
+    func testMessageAndLinkFilesDoNotInterfere() throws {
+        try link().save()
+        try KeyboardMessage.save("글")
+        try KeyboardMessage.clear()
+        XCTAssertEqual(KeyboardLink.load(), link())
+        KeyboardLink.clear()
+        try KeyboardMessage.save("글")
+        XCTAssertEqual(KeyboardMessage.read(), "글")
+    }
+}

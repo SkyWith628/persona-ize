@@ -4,6 +4,17 @@ iOS 16 이상용 SwiftUI 앱과 보조 키보드 확장이다. 앱은 탭 네 �
 
 단위 테스트는 `xcodebuild -project PersonaIze.xcodeproj -scheme PersonaIze -destination 'platform=iOS Simulator,name=iPhone 17 Pro' test`로 돌린다. 명령줄에서 실기기로 빌드할 때는 `DEVELOPMENT_TEAM=<팀 ID> -allowProvisioningUpdates`를 붙인다. App Group은 Xcode의 Signing & Capabilities에서 Team을 한 번 선택해야 등록된다.
 
+## 화면 흐름 검사 (시뮬레이터, 맥)
+
+`scripts/ios_ui_check.sh [시뮬레이터 이름·UDID]`가 XCUITest(`UITests/FlowUITests.swift`, 스킴 `PersonaIzeUITests`)를 돌린다: 예시 화면 건너뛰기 → 가입 → 첫 상대 만들기 → 초안 다듬기 → 이력 → 완전히 끄고 다시 열기(로그인 유지) → 로그아웃 → 다시 열기(로그인 화면). 두 번째 검사(`testImportPastedKakaoWithSpeakerGuide`)는 새로 가입한 뒤 상대 화면에서 대화방을 추가하고, 카카오톡 방법으로 지어낸 대화(안드로이드 꼴, 제목 줄 없음)를 '가져올 대화' 칸에 넣어 가져온다 → 내 이름을 비워 둬 뜨는 화자 안내("누가 나인지 알 수 없어요" + 파일의 이름)를 확인 → 내 이름을 넣고 다시 가져와 '말투 분석 완료'와 건수(내가 쓴 것 2개)를 본다. 세 번째 검사(`testExpiredTokenReturnsToSignInWithNotice`)는 토큰 만료 안내를 두 경로로 본다: 가입 뒤 앱을 끄고 토큰을 폐기 → 다시 열면 로그인 화면과 "로그인이 만료됐어요. 다시 로그인해 주세요." → 다시 로그인 → 쓰는 중 폐기 → 이력 탭의 요청이 401 `invalid_token` → 같은 안내 → 다시 열어도 로그인 화면. 폐기는 서버의 실제 기능이다: 검사 실행기가 같은 계정으로 `POST /v1/auth/token`을 받아 `POST /v1/auth/logout-all`(그 토큰만 남기고 다른 세션·토큰 전부 폐기, Bearer라 CSRF 불필요)을 부른다. 실행기도 시뮬레이터 안에서 돌아 스크립트가 등록한 루트 인증서로 localhost HTTPS를 믿는다. 스크립트가 임시 인증서를 만들어 시뮬레이터에 등록하고, 가짜 모델·메모리 저장소 서버를 `https://localhost:8443`에 띄웠다가 내린다(Docker·DB·모델 키 불필요, 계정은 실행마다 새로 만든다).
+
+- 네 번째 검사(`testRewriteRetryAfterServerError`)는 오류 뒤 재시도다. 스크립트는 서버를 `PORT+1`(`BACKEND_PORT`)에 띄우고 그 앞 `PORT`에 HTTPS 중계(`scripts/ios_ui_relay.py`, 표준 라이브러리)를 둔다. 검사가 같은 주소의 `/__relay/down`(서버에 닿기 전 끊기)·`drop`(서버는 처리, 응답만 버리기)·`up`으로 바꿔 가며 다듬기를 누르고, 안내가 뜨고 초안이 남는지 → 되돌린 뒤 같은 버튼으로 추천이 뜨는지 → 사용량이 1회인지와 중계 기록(`/__relay/log`)의 `Idempotency-Key`가 세 번 모두 같은지 본다. 중계 없이 띄운 서버에서는 건너뛴다.
+- 기본 스킴(`PersonaIze`)의 `test`에는 들어 있지 않다 — 서버가 있어야 돌기 때문이다. CI는 이 검사를 돌리지 않는다.
+- 검사는 `-server <주소>` 실행 인자로 로그인 화면의 서버 주소를 덮어쓰고, 로컬 주소가 아니면 시작하지 않는다. 빌드에 든 기본 서버(운영)로는 요청이 가지 않는다. `-uiTestReset`(디버그 빌드 전용)은 앱 설정을 지워 처음 상태에서 시작하게 한다.
+- 서명을 끄고(`CODE_SIGNING_ALLOWED=NO`) 빌드하면 키체인 저장이 조용히 실패해 '다시 열기' 단계가 깨진다. 단위 테스트는 꺼도 되지만 이 검사는 켠 채로 돌린다.
+- 보지 않는 것: 키보드 확장(앱 그룹 읽기·메모 앱에 넣기), 대화 파일 첨부(fileImporter)와 서버가 따르지 않은 화자 지정 안내, 실제 모델의 원문 유지 응답 — 아래 실기기 순서로 확인한다.
+- 램 8GB 맥에서는 시뮬레이터 첫 부팅 뒤 몇 분 동안 부하가 커서 검사 실행기가 멈춰 죽는다(11/27). 부하가 가라앉은 뒤 다시 돌린다.
+
 ## 실기기 설치
 
 1. iOS SDK가 설치된 Xcode에서 PersonaIze.xcodeproj를 연다. 이미 생성된 프로젝트를 사용하면 XcodeGen 설치는 필요 없다.

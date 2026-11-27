@@ -216,3 +216,286 @@ final class LoginLogicTests: XCTestCase {
         XCTAssertEqual(error.localizedDescription, "승인 대기 중인 계정입니다.")
     }
 }
+
+// MARK: - 토큰 만료 처리 (가짜 전송)
+
+/// 요청을 네트워크로 보내지 않고 `StubTransport.respond`로 정한 응답을 돌려준다.
+/// 받은 요청은 `requests`에 남는다 (Authorization 헤더 확인용).
+final class StubTransport: URLProtocol {
+    enum Reply {
+        case http(status: Int, headers: [String: String], body: Data)
+        case failure(URLError.Code)
+    }
+
+    private static let lock = NSLock()
+    private static var reply: Reply = .failure(.notConnectedToInternet)
+    private static var seen: [URLRequest] = []
+
+    static func respond(_ next: Reply) {
+        lock.lock(); defer { lock.unlock() }
+        reply = next
+    }
+
+    static var requests: [URLRequest] {
+        lock.lock(); defer { lock.unlock() }
+        return seen
+    }
+
+    static func reset() {
+        lock.lock(); defer { lock.unlock() }
+        reply = .failure(.notConnectedToInternet)
+        seen = []
+    }
+
+    static func configuration() -> URLSessionConfiguration {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [StubTransport.self]
+        return configuration
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        Self.lock.lock()
+        Self.seen.append(request)
+        let reply = Self.reply
+        Self.lock.unlock()
+        switch reply {
+        case .http(let status, let headers, let body):
+            let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: "HTTP/1.1",
+                                           headerFields: headers)!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: body)
+            client?.urlProtocolDidFinishLoading(self)
+        case .failure(let code):
+            client?.urlProtocol(self, didFailWithError: URLError(code))
+        }
+    }
+
+    override func stopLoading() {}
+}
+
+@MainActor
+final class TokenExpiryTests: XCTestCase {
+    private let server = "https://expiry.test"
+    private let rejected = ["WWW-Authenticate": #"Bearer error="invalid_token""#]
+    private let failureBody = Data(#"{"code":"unauthorized","message":"로그인이 필요해요."}"#.utf8)
+
+    override func setUp() async throws {
+        StubTransport.reset()
+        Self.clearDevice()
+    }
+
+    override func tearDown() async throws {
+        StubTransport.reset()
+        Self.clearDevice()
+    }
+
+    private static func clearDevice() {
+        TokenStore.clear()
+        KeyboardLink.clear()
+        try? KeyboardMessage.clear()
+    }
+
+    private func client(token: String = "t1") throws -> API {
+        try API(server: server, token: token, configuration: StubTransport.configuration())
+    }
+
+    private func authorization(_ index: Int) -> String? {
+        StubTransport.requests[index].value(forHTTPHeaderField: "Authorization")
+    }
+
+    // MARK: API
+
+    func testInvalidTokenChallengeClearsTokenAndCallsOnExpiredOnce() async throws {
+        let api = try client()
+        var expired = 0
+        api.onExpired = { expired += 1 }
+        StubTransport.respond(.http(status: 401, headers: rejected, body: failureBody))
+
+        do {
+            _ = try await api.contacts()
+            XCTFail("401은 오류여야 한다")
+        } catch let error as ServiceError {
+            XCTAssertEqual(error.status, 401)
+        }
+        XCTAssertEqual(expired, 1)
+        XCTAssertEqual(authorization(0), "Bearer t1")
+        XCTAssertNil(api.keyboardCredentials(), "거절된 토큰은 비운다")
+        XCTAssertNil(api.savedLogin(username: "mina"))
+
+        // 비운 토큰은 다시 보내지 않고, 같은 401이 또 와도 다시 부르지 않는다.
+        _ = try? await api.contacts()
+        XCTAssertEqual(StubTransport.requests.count, 2)
+        XCTAssertNil(authorization(1))
+        XCTAssertEqual(expired, 1)
+    }
+
+    func testOtherFailuresKeepTokenAndDoNotExpire() async throws {
+        let cases: [(Int, [String: String])] = [
+            (401, [:]),                                 // 헤더 없는 401
+            (401, ["WWW-Authenticate": "Bearer"]),      // invalid_token이 아닌 도전
+            (403, rejected),                            // 403은 만료가 아니다
+            (500, [:]),
+        ]
+        for (status, headers) in cases {
+            StubTransport.reset()
+            let api = try client()
+            var expired = 0
+            api.onExpired = { expired += 1 }
+            StubTransport.respond(.http(status: status, headers: headers, body: failureBody))
+
+            do {
+                _ = try await api.contacts()
+                XCTFail("\(status)은 오류여야 한다")
+            } catch let error as ServiceError {
+                XCTAssertEqual(error.status, status)
+            }
+            XCTAssertEqual(expired, 0, "\(status) \(headers)")
+            XCTAssertEqual(api.keyboardCredentials()?.token, "t1", "\(status) \(headers)")
+            _ = try? await api.contacts()
+            XCTAssertEqual(authorization(1), "Bearer t1", "토큰을 그대로 계속 보낸다")
+        }
+    }
+
+    func testConnectionFailureDoesNotExpire() async throws {
+        let api = try client()
+        var expired = 0
+        api.onExpired = { expired += 1 }
+        StubTransport.respond(.failure(.cannotConnectToHost))
+
+        do {
+            _ = try await api.contacts()
+            XCTFail("연결 실패는 오류여야 한다")
+        } catch {
+            XCTAssertTrue(error is URLError)
+        }
+        XCTAssertEqual(expired, 0)
+        XCTAssertEqual(api.keyboardCredentials()?.token, "t1")
+    }
+
+    // MARK: Session.restore
+
+    private func saveLogin() throws -> SavedLogin {
+        let saved = SavedLogin(server: server, username: "mina", token: "t1")
+        try TokenStore.save(saved)
+        XCTAssertEqual(TokenStore.load(), saved, "테스트 호스트에서 키체인 왕복이 돼야 한다")
+        return saved
+    }
+
+    func testRestoreWithRejectedTokenEndsAndShowsExpiredNotice() async throws {
+        _ = try saveLogin()
+        StubTransport.respond(.http(status: 401, headers: rejected, body: failureBody))
+        let session = Session(transport: StubTransport.configuration)
+
+        await session.restore()
+
+        XCTAssertEqual(StubTransport.requests.count, 1)
+        XCTAssertEqual(authorization(0), "Bearer t1")
+        XCTAssertNil(session.api)
+        XCTAssertFalse(session.restoring)
+        XCTAssertEqual(session.notice, Session.expiredNotice)
+        XCTAssertNil(TokenStore.load(), "거절된 토큰은 기기에서 지운다")
+        XCTAssertNil(KeyboardLink.load())
+    }
+
+    func testRestoreOfflineKeepsTokenAndShowsOfflineNotice() async throws {
+        let saved = try saveLogin()
+        StubTransport.respond(.failure(.notConnectedToInternet))
+        let session = Session(transport: StubTransport.configuration)
+
+        await session.restore()
+
+        XCTAssertNil(session.api)
+        XCTAssertFalse(session.restoring)
+        XCTAssertEqual(session.notice, Session.offlineNotice)
+        XCTAssertEqual(TokenStore.load(), saved, "연결 문제면 토큰을 남겨 다음에 다시 쓴다")
+    }
+
+    func testRestoreServerErrorKeepsTokenAndIsNotCalledOffline() async throws {
+        let saved = try saveLogin()
+        let body = Data(#"{"code":"internal_error","message":"잠시 후 다시 시도해 주세요."}"#.utf8)
+        StubTransport.respond(.http(status: 500, headers: [:], body: body))
+        let session = Session(transport: StubTransport.configuration)
+
+        await session.restore()
+
+        XCTAssertNil(session.api)
+        XCTAssertEqual(session.notice, Session.serverErrorNotice, "서버 오류를 연결 문제로 보이지 않는다")
+        XCTAssertEqual(TokenStore.load(), saved, "일시적인 서버 오류면 토큰을 남긴다")
+    }
+
+    func testRestoreUnreadableResponseIsServerError() async throws {
+        let saved = try saveLogin()
+        let json = ["Content-Type": "application/json"]
+        StubTransport.respond(.http(status: 200, headers: json, body: Data("not json".utf8)))
+        let session = Session(transport: StubTransport.configuration)
+
+        await session.restore()
+
+        XCTAssertNil(session.api)
+        XCTAssertEqual(session.notice, Session.serverErrorNotice)
+        XCTAssertEqual(TokenStore.load(), saved)
+    }
+
+    func testRestoreBlockedAccountEndsAndShowsAccountNotice() async throws {
+        for (code, state) in [("account_pending", AccountState.pending), ("account_suspended", .suspended)] {
+            _ = try saveLogin()
+            let body = Data(#"{"code":"\#(code)","message":"계정 상태 때문에 쓸 수 없어요."}"#.utf8)
+            StubTransport.respond(.http(status: 403, headers: [:], body: body))
+            let session = Session(transport: StubTransport.configuration)
+
+            await session.restore()
+
+            XCTAssertNil(session.api, code)
+            XCTAssertEqual(session.notice, state.notice, code)
+            XCTAssertNil(TokenStore.load(), "\(code): 쓸 수 없는 토큰은 지운다")
+        }
+    }
+
+    func testRestoreWithoutSavedLoginSendsNothing() async {
+        let session = Session(transport: StubTransport.configuration)
+        await session.restore()
+        XCTAssertTrue(StubTransport.requests.isEmpty)
+        XCTAssertNil(session.api)
+        XCTAssertFalse(session.restoring)
+        XCTAssertEqual(session.notice, "")
+    }
+
+    // MARK: Session.expire
+
+    func testLaterRejectionExpiresAndClearsKeyboardLinkAndPreparedMessage() async throws {
+        _ = try saveLogin()
+        let json = ["Content-Type": "application/json"]
+        StubTransport.respond(.http(status: 200, headers: json, body: Data("[]".utf8)))
+        let session = Session(transport: StubTransport.configuration)
+        await session.restore()
+        let api = try XCTUnwrap(session.api, "저장된 토큰으로 되살아나야 한다")
+        XCTAssertEqual(session.username, "mina")
+        XCTAssertEqual(session.notice, "")
+
+        // 키보드 확장과 나누는 앱 그룹 파일이 테스트 호스트에서도 왕복돼야 이 검사가 뜻이 있다.
+        XCTAssertEqual(KeyboardLink.load()?.token, "t1", "start가 키보드 링크를 쓴다")
+        try KeyboardMessage.save("내일 회의는 3시예요.")
+        XCTAssertEqual(KeyboardMessage.read(), "내일 회의는 3시예요.")
+
+        // 이후 요청에서 토큰이 거절되면 onExpired → expire.
+        StubTransport.respond(.http(status: 401, headers: rejected, body: failureBody))
+        _ = try? await api.contacts()
+
+        XCTAssertNil(session.api)
+        XCTAssertEqual(session.notice, Session.expiredNotice)
+        XCTAssertEqual(session.username, "")
+        XCTAssertTrue(session.contacts.isEmpty)
+        XCTAssertNil(KeyboardLink.load(), "키보드가 거절된 토큰을 계속 쓰지 않게 지운다")
+        XCTAssertNil(KeyboardMessage.read(), "준비한 문장도 지운다")
+        XCTAssertNil(TokenStore.load())
+    }
+
+    func testExpireWithoutLoginDoesNothing() {
+        let session = Session(transport: StubTransport.configuration)
+        session.expire()
+        XCTAssertEqual(session.notice, "")
+    }
+}
