@@ -3,6 +3,18 @@ import SwiftUI
 @main
 struct PersonaApp: App {
     @StateObject private var session = Session()
+
+    init() {
+        #if DEBUG
+        // 화면 흐름 검사(UITests)가 매번 같은 처음 상태에서 시작하게 한다. 설정을 지우면
+        // 키체인에 남은 토큰도 쓰지 않는다(TokenStore의 표시가 함께 지워진다). 출시 빌드에는 없다.
+        if ProcessInfo.processInfo.arguments.contains("-uiTestReset"),
+           let domain = Bundle.main.bundleIdentifier {
+            UserDefaults.standard.removePersistentDomain(forName: domain)
+        }
+        #endif
+    }
+
     var body: some Scene { WindowGroup { Root().environmentObject(session) } }
 }
 

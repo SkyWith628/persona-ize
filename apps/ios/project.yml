@@ -77,6 +77,18 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: $(PERSONA_BUNDLE_ID).tests
     dependencies:
       - target: PersonaIze
+  # 화면 흐름 검사(XCUITest). 로컬 서버가 떠 있어야 해서 기본 스킴의 test에는 넣지 않는다 (README).
+  PersonaIzeUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [UITests]
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: $(PERSONA_BUNDLE_ID).uitests
+        TEST_TARGET_NAME: PersonaIze
+    dependencies:
+      - target: PersonaIze
 schemes:
   PersonaIze:
     build:
@@ -86,3 +98,10 @@ schemes:
       targets: [PersonaIzeTests]
     archive:
       config: Release
+  PersonaIzeUITests:
+    build:
+      targets:
+        PersonaIze: all
+        PersonaIzeUITests: [test]
+    test:
+      targets: [PersonaIzeUITests]
